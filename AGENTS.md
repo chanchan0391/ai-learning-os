@@ -12,6 +12,7 @@ The project uses Node.js, Vite, React, TypeScript, and Vitest. Canonical command
 
 ```sh
 npm run dev     # start the local prototype
+npm start       # start the prototype and open it in a browser
 npm test        # run automated tests once
 npm run build   # type-check and create a production build
 npm run check   # run all required validation

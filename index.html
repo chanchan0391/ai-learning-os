@@ -7,8 +7,19 @@
     <title>AI Learning OS</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <style>
+        .launch-help { max-width: 620px; margin: 12vh auto; padding: 36px; color: #17201c; background: #fafaf7; border: 1px solid #d8ddd7; border-radius: 20px; box-shadow: 0 20px 60px rgba(30,50,40,.1); font-family: system-ui, sans-serif; }
+        .launch-help strong { display: block; margin-bottom: 12px; color: #153f32; font-family: Georgia, serif; font-size: 30px; }
+        .launch-help p { color: #64706a; line-height: 1.7; }
+        .launch-help code { padding: 3px 7px; color: #fff; background: #153f32; border-radius: 6px; }
+      </style>
+      <div class="launch-help">
+        <strong>AI Learning OS</strong>
+        <p>应用需要通过本地服务启动，不能直接打开这个 HTML 文件。</p>
+        <p>请双击项目中的 <code>Start AI Learning OS.command</code>，或在项目目录运行 <code>npm start</code>。</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
