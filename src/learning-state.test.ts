@@ -9,6 +9,7 @@ import {
   learningStateExportFilename,
   learningStreak,
   parseLearningState,
+  parseLearningStateExport,
   saveEvaluation,
   saveTeachingSession,
   saveUnderstandingResponse,
@@ -75,6 +76,28 @@ describe("multi-day learning state", () => {
     });
     expect(JSON.parse(serializeLearningStateExport(state, exportedAt))).toEqual(payload);
     expect(learningStateExportFilename(exportedAt)).toBe("ai-learning-os-learning-data-2026-07-31.json");
+  });
+
+  it("validates a portable export before allowing it to be restored", () => {
+    const state = completedState();
+    const serialized = serializeLearningStateExport(state, new Date("2026-07-31T14:30:00.000Z"));
+
+    expect(parseLearningStateExport(serialized)).toEqual({
+      status: "valid",
+      data: JSON.parse(serialized),
+    });
+  });
+
+  it("rejects malformed, unsupported, and tampered learning exports", () => {
+    const valid = createLearningStateExport(completedState());
+
+    expect(parseLearningStateExport("{broken")).toMatchObject({ status: "invalid" });
+    expect(parseLearningStateExport(JSON.stringify({ ...valid, exportVersion: 99 }))).toMatchObject({ status: "invalid" });
+    expect(parseLearningStateExport(JSON.stringify({ ...valid, state: { ...valid.state, currentDay: 99 } }))).toMatchObject({ status: "invalid" });
+    expect(parseLearningStateExport(JSON.stringify({
+      ...valid,
+      state: { ...valid.state, plan: { ...valid.state.plan, stages: [{ anything: "passes" }] } },
+    }))).toMatchObject({ status: "invalid" });
   });
 
   it("requires every task before closing the day", () => {

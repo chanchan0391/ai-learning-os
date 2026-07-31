@@ -20,12 +20,24 @@ export interface LearningStateExport {
   state: LearningState;
 }
 
+export type ParsedLearningStateExport =
+  | { status: "valid"; data: LearningStateExport }
+  | { status: "invalid"; error: string };
+
 function dateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isValidDate(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 
 function isDailyTask(value: unknown): value is DailyTask {
@@ -42,33 +54,55 @@ function isDailyTask(value: unknown): value is DailyTask {
 function isLearningPlan(value: unknown): value is LearningPlan {
   if (!isRecord(value) || !isRecord(value.goal)) return false;
   const goal = value.goal;
-  return typeof value.id === "string"
-    && typeof value.createdAt === "string"
-    && typeof goal.subject === "string"
-    && typeof goal.currentLevel === "string"
-    && typeof goal.targetOutcome === "string"
-    && Number.isInteger(goal.dailyMinutes)
-    && Number.isInteger(goal.durationWeeks)
-    && Array.isArray(value.stages)
-    && Array.isArray(value.today)
-    && value.today.length > 0
-    && value.today.every(isDailyTask);
+  if (!isNonEmptyString(value.id)
+    || !isValidDate(value.createdAt)
+    || !isNonEmptyString(goal.subject)
+    || !isNonEmptyString(goal.currentLevel)
+    || !isNonEmptyString(goal.targetOutcome)
+  ) return false;
+  if (!Number.isInteger(goal.dailyMinutes) || Number(goal.dailyMinutes) < 15 || Number(goal.dailyMinutes) > 240
+    || !Number.isInteger(goal.durationWeeks) || Number(goal.durationWeeks) < 1 || Number(goal.durationWeeks) > 52
+    || !Array.isArray(value.stages) || value.stages.length === 0
+    || !Array.isArray(value.today) || value.today.length === 0 || !value.today.every(isDailyTask)) return false;
+  const stages: unknown[] = value.stages;
+  const today: DailyTask[] = value.today;
+  const stagesValid = stages.every((stage, index) => isRecord(stage)
+    && isNonEmptyString(stage.id)
+    && isNonEmptyString(stage.title)
+    && isNonEmptyString(stage.outcome)
+    && Number.isInteger(stage.startWeek)
+    && Number.isInteger(stage.endWeek)
+    && Number(stage.startWeek) === (index === 0 ? 1 : Number((stages[index - 1] as Record<string, unknown>).endWeek) + 1)
+    && Number(stage.endWeek) >= Number(stage.startWeek)
+    && Number(stage.endWeek) <= Number(goal.durationWeeks));
+  const stageIds = stages.map((stage) => isRecord(stage) ? stage.id : undefined);
+  const taskIds = today.map((task) => task.id);
+  return stagesValid
+    && Number((stages.at(-1) as Record<string, unknown>).endWeek) === Number(goal.durationWeeks)
+    && new Set(stageIds).size === stageIds.length
+    && new Set(taskIds).size === taskIds.length
+    && today.reduce((sum, task) => sum + task.minutes, 0) === Number(goal.dailyMinutes);
 }
 
 function isTeachingSession(value: unknown): value is TeachingSession {
   return isRecord(value)
-    && typeof value.concept === "string"
-    && typeof value.explanation === "string"
-    && typeof value.workedExample === "string"
-    && typeof value.practicePrompt === "string"
+    && isNonEmptyString(value.concept)
+    && isNonEmptyString(value.explanation)
+    && isNonEmptyString(value.workedExample)
+    && isNonEmptyString(value.practicePrompt)
     && Array.isArray(value.completionSignals)
-    && value.completionSignals.every((signal) => typeof signal === "string")
+    && value.completionSignals.length > 0
+    && value.completionSignals.every(isNonEmptyString)
     && Array.isArray(value.understandingChecks)
+    && value.understandingChecks.length >= 2
+    && value.understandingChecks.length <= 3
     && value.understandingChecks.every((check) => isRecord(check)
-      && typeof check.id === "string"
-      && typeof check.prompt === "string"
+      && isNonEmptyString(check.id)
+      && isNonEmptyString(check.prompt)
       && Array.isArray(check.expectedSignals)
-      && check.expectedSignals.every((signal) => typeof signal === "string"));
+      && check.expectedSignals.length > 0
+      && check.expectedSignals.every(isNonEmptyString))
+    && new Set(value.understandingChecks.map((check) => isRecord(check) ? check.id : undefined)).size === value.understandingChecks.length;
 }
 
 function isEvaluationResult(value: unknown): value is EvaluationResult {
@@ -83,11 +117,13 @@ function isEvaluationResult(value: unknown): value is EvaluationResult {
     && typeof item.feedback === "string");
   const scores = value.rubric.map((item) => isRecord(item) ? Number(item.score) : 0);
   const rubricDimensions = value.rubric.map((item) => isRecord(item) ? String(item.dimension) : "");
+  const total = scores.reduce((sum, score) => sum + score, 0);
+  const expectedMastery = total <= 7 ? "needs-support" : total <= 12 ? "developing" : "ready";
   return rubricValid
     && new Set(rubricDimensions).size === 4
     && Number.isInteger(value.totalScore)
-    && Number(value.totalScore) === scores.reduce((sum, score) => sum + score, 0)
-    && ["needs-support", "developing", "ready"].includes(String(value.masteryLevel))
+    && Number(value.totalScore) === total
+    && value.masteryLevel === expectedMastery
     && Array.isArray(value.misconceptions)
     && value.misconceptions.every((item) => typeof item === "string")
     && typeof value.nextAction === "string";
@@ -112,7 +148,7 @@ function isDailyRecord(value: unknown): value is DailyLearningRecord {
     && typeof value.feedback.reflection === "string"
   );
   const validCompletion = value.status === "active" || (
-    typeof value.completedAt === "string"
+    isValidDate(value.completedAt)
     && hasValidFeedback
     && isRecord(value.feedback)
   );
@@ -122,24 +158,29 @@ function isDailyRecord(value: unknown): value is DailyLearningRecord {
       && isLearningTaskArtifact(artifact));
   return Number.isInteger(value.day)
     && Number(value.day) > 0
-    && typeof value.date === "string"
+    && /^\d{4}-\d{2}-\d{2}$/.test(String(value.date))
     && (value.status === "active" || value.status === "completed")
     && Array.isArray(value.tasks)
     && value.tasks.length > 0
     && value.tasks.every(isDailyTask)
+    && new Set(value.tasks.map((task) => task.id)).size === value.tasks.length
     && artifactsValid
+    && hasValidFeedback
     && validCompletion;
 }
 
 function isLearningState(value: unknown): value is LearningState {
   if (!isRecord(value)) return false;
-  if (!Array.isArray(value.days)) return false;
+  if (!Array.isArray(value.days) || !isLearningPlan(value.plan)) return false;
   const days = value.days;
+  const plan = value.plan;
   return value.version === LEARNING_STATE_VERSION
-    && isLearningPlan(value.plan)
     && Number.isInteger(value.currentDay)
+    && Number(value.currentDay) <= plan.goal.durationWeeks * 7
     && value.days.length > 0
     && days.every(isDailyRecord)
+    && days.every((day) => isRecord(day) && Array.isArray(day.tasks)
+      && day.tasks.reduce((sum, task) => sum + (isRecord(task) ? Number(task.minutes) : 0), 0) === plan.goal.dailyMinutes)
     && days.every((day, index) => isRecord(day) && day.day === index + 1)
     && isRecord(days.at(-1))
     && days.at(-1)?.day === value.currentDay
@@ -191,6 +232,27 @@ export function createLearningStateExport(state: LearningState, now = new Date()
 
 export function serializeLearningStateExport(state: LearningState, now = new Date()): string {
   return `${JSON.stringify(createLearningStateExport(state, now), null, 2)}\n`;
+}
+
+export function parseLearningStateExport(raw: string): ParsedLearningStateExport {
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!isRecord(value) || value.format !== "ai-learning-os-learning-data") {
+      return { status: "invalid", error: "这不是 AI Learning OS 学习记录文件。" };
+    }
+    if (value.exportVersion !== LEARNING_EXPORT_VERSION) {
+      return { status: "invalid", error: "此学习记录版本暂不受支持。" };
+    }
+    if (typeof value.exportedAt !== "string" || !Number.isFinite(Date.parse(value.exportedAt))) {
+      return { status: "invalid", error: "学习记录缺少有效的导出时间。" };
+    }
+    if (!isLearningState(value.state)) {
+      return { status: "invalid", error: "学习记录内容不完整或已损坏。" };
+    }
+    return { status: "valid", data: value as unknown as LearningStateExport };
+  } catch {
+    return { status: "invalid", error: "无法读取此 JSON 学习记录。" };
+  }
 }
 
 export function learningStateExportFilename(now = new Date()): string {

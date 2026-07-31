@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
 import {
   completeTeachingTask,
   completeCurrentDay,
@@ -7,6 +7,7 @@ import {
   initializeLearningState,
   learningStateExportFilename,
   learningStreak,
+  parseLearningStateExport,
   parseLearningState,
   saveEvaluation,
   saveTeachingSession,
@@ -15,11 +16,13 @@ import {
   toggleCurrentTask,
 } from "./learning-state";
 import { completionRate, validateGoal } from "./planner";
+import type { LearningStateExport } from "./learning-state";
 import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, TaskDifficulty, TeachingSession } from "./types";
 
 const STORAGE_KEY = "ai-learning-os-state-v3";
 const PREVIOUS_STORAGE_KEY = "ai-learning-os-state-v2";
 const LEGACY_STORAGE_KEY = "ai-learning-os-plan-v1";
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 
 const INITIAL_GOAL: LearningGoal = {
   subject: "AI Agent 工程",
@@ -57,7 +60,10 @@ export function App() {
   const [busyTaskId, setBusyTaskId] = useState("");
   const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+  const [pendingImport, setPendingImport] = useState<LearningStateExport | null>(null);
   const [storageNotice, setStorageNotice] = useState(initialLoad.status === "recovered" ? "本地进度无法读取，已安全重置。" : "");
+  const [storageNoticeIsError, setStorageNoticeIsError] = useState(initialLoad.status === "recovered");
+  const importInput = useRef<HTMLInputElement>(null);
   const plan = learningState?.plan ?? null;
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
@@ -193,6 +199,44 @@ export function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
+  async function selectImportFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setStorageNotice("");
+    if (file.size > MAX_IMPORT_BYTES) {
+      setStorageNotice("学习记录文件不能超过 5 MB。");
+      setStorageNoticeIsError(true);
+      return;
+    }
+    try {
+      const parsed = parseLearningStateExport(await file.text());
+      if (parsed.status === "invalid") {
+        setStorageNotice(parsed.error);
+        setStorageNoticeIsError(true);
+        return;
+      }
+      setPendingImport(parsed.data);
+    } catch {
+      setStorageNotice("无法读取所选学习记录文件。");
+      setStorageNoticeIsError(true);
+    }
+  }
+
+  function importLearningData() {
+    if (!pendingImport) return;
+    saveState(pendingImport.state);
+    setGoal(pendingImport.state.plan.goal);
+    setSubmissionDrafts({});
+    setDifficulty("");
+    setReflection("");
+    setAgentError("");
+    setErrors([]);
+    setPendingImport(null);
+    setStorageNotice(`已恢复“${pendingImport.state.plan.goal.subject}”的第 ${pendingImport.state.currentDay} 天进度。`);
+    setStorageNoticeIsError(false);
+  }
+
   function deleteLearningData() {
     saveState(null);
     setSubmissionDrafts({});
@@ -201,11 +245,35 @@ export function App() {
     setDeleteConfirmationOpen(false);
   }
 
+  const importControl = (
+    <>
+      <input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" aria-label="选择学习记录文件" onChange={selectImportFile} />
+      <button className="text-button" onClick={() => importInput.current?.click()}>导入学习记录</button>
+    </>
+  );
+
+  const importDialog = pendingImport && (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) setPendingImport(null);
+    }}>
+      <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="import-dialog-title" aria-describedby="import-dialog-description">
+        <p className="eyebrow">已验证学习记录</p>
+        <h2 id="import-dialog-title">恢复“{pendingImport.state.plan.goal.subject}”？</h2>
+        <p id="import-dialog-description">将恢复到第 {pendingImport.state.currentDay} 天，并替换当前浏览器中的学习进度。导出时间：{new Date(pendingImport.exportedAt).toLocaleString("zh-CN")}。</p>
+        <div className="dialog-actions">
+          <button className="secondary-action" autoFocus onClick={() => setPendingImport(null)}>取消</button>
+          <button className="primary-dialog-action" onClick={importLearningData}>确认恢复</button>
+        </div>
+      </section>
+    </div>
+  );
+
   if (!plan || !learningState || !currentRecord) {
     return (
       <main className="shell onboarding">
-        <header className="brand"><span className="brand-mark">A</span> AI Learning OS <span className="beta">PROTOTYPE</span></header>
-        {storageNotice && <div className="storage-notice" role="status">{storageNotice}</div>}
+        <header className="topbar"><div className="brand"><span className="brand-mark">A</span> AI Learning OS <span className="beta">PROTOTYPE</span></div><div className="data-actions">{importControl}</div></header>
+        {storageNotice && <div className="storage-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
+        {importDialog}
         <section className="hero">
           <div>
             <p className="eyebrow">你的目标，不再停在愿望里</p>
@@ -236,10 +304,13 @@ export function App() {
       <header className="topbar">
         <div className="brand"><span className="brand-mark">A</span> AI Learning OS</div>
         <div className="data-actions" aria-label="学习数据控制">
+          {importControl}
           <button className="text-button" onClick={exportLearningData}>导出学习记录</button>
           <button className="text-button danger-text" onClick={() => setDeleteConfirmationOpen(true)}>删除本地数据</button>
         </div>
       </header>
+      {storageNotice && <div className="storage-notice dashboard-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
+      {importDialog}
       {deleteConfirmationOpen && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setDeleteConfirmationOpen(false);
