@@ -18,6 +18,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - 多天进度记录：连续学习天数、最近历史和每日反馈
 - 版本化本地保存：保存教学回答、成果和评估，自动迁移旧计划并安全恢复异常数据
 - 学习数据控制：导出或验证恢复版本化 JSON 副本，并通过二次确认删除本地记录
+- 可替换持久化边界：页面通过仓库接口保存进度，为账号与跨设备同步预留并发模型
 - 响应式界面：支持桌面和移动端
 - 自动化测试：覆盖输入校验、路线分期、时间预算、学习状态、关键界面交互和可访问性扫描
 - 持续集成：推送和 Pull Request 自动运行测试与生产构建
@@ -62,6 +63,7 @@ npm run build
 src/
   App.tsx           页面与本地交互状态
   learning-state.ts 多天状态、教学成果、评估、迁移与下一天生成
+  learning-storage.ts 本地持久化仓库与版本键迁移
   planner.ts        Planner Agent 领域逻辑
   planner.test.ts   自动化测试
   types.ts          核心领域类型
@@ -73,6 +75,7 @@ server/
 docs/
   ai-architecture.md AI 能力架构与安全边界
   mvp-spec.md       MVP 范围与产品决策
+  persistence-model.md 持久化、所有权与同步设计
   todo.md           当前产品待办列表
 ```
 

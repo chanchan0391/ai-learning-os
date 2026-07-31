@@ -8,21 +8,19 @@ import {
   learningStateExportFilename,
   learningStreak,
   parseLearningStateExport,
-  parseLearningState,
   saveEvaluation,
   saveTeachingSession,
   saveUnderstandingResponse,
   serializeLearningStateExport,
   toggleCurrentTask,
 } from "./learning-state";
+import { BrowserLearningStateRepository } from "./learning-storage";
 import { completionRate, validateGoal } from "./planner";
 import type { LearningStateExport } from "./learning-state";
 import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, TaskDifficulty, TeachingSession } from "./types";
 
-const STORAGE_KEY = "ai-learning-os-state-v3";
-const PREVIOUS_STORAGE_KEY = "ai-learning-os-state-v2";
-const LEGACY_STORAGE_KEY = "ai-learning-os-plan-v1";
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+const learningStateRepository = new BrowserLearningStateRepository(localStorage);
 
 const INITIAL_GOAL: LearningGoal = {
   subject: "AI Agent 工程",
@@ -32,24 +30,8 @@ const INITIAL_GOAL: LearningGoal = {
   durationWeeks: 12,
 };
 
-function readState(): ReturnType<typeof parseLearningState> {
-  const current = localStorage.getItem(STORAGE_KEY);
-  const source = current ?? localStorage.getItem(PREVIOUS_STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
-  const result = parseLearningState(source);
-  if (result.state && result.status === "migrated") {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(result.state));
-    localStorage.removeItem(PREVIOUS_STORAGE_KEY);
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
-  } else if (result.status === "recovered") {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(PREVIOUS_STORAGE_KEY);
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
-  }
-  return result;
-}
-
 export function App() {
-  const [initialLoad] = useState(readState);
+  const [initialLoad] = useState(() => learningStateRepository.load());
   const [learningState, setLearningState] = useState<LearningState | null>(initialLoad.state);
   const [goal, setGoal] = useState<LearningGoal>(INITIAL_GOAL);
   const [errors, setErrors] = useState<string[]>([]);
@@ -70,19 +52,15 @@ export function App() {
 
   function saveState(next: LearningState | null) {
     setLearningState(next);
-    if (next) localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    else {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(PREVIOUS_STORAGE_KEY);
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
-    }
+    if (next) learningStateRepository.save(next);
+    else learningStateRepository.clear();
   }
 
   function updateState(update: (current: LearningState) => LearningState) {
     setLearningState((current) => {
       if (!current) return current;
       const next = update(current);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      learningStateRepository.save(next);
       return next;
     });
   }

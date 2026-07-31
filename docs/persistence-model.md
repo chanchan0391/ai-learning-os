@@ -1,0 +1,80 @@
+# AI Learning OS 持久化模型
+
+## 目标
+
+在不破坏当前本地优先体验的前提下，为账号与跨设备同步建立稳定的数据边界。当前版本仍只写入浏览器；本设计定义未来服务端的记录粒度、所有权、并发和迁移规则，避免直接把整份浏览器 JSON 当作长期数据库模型。
+
+## 当前实现边界
+
+React 页面通过 `LearningStateRepository` 读写学习状态，默认实现是 `BrowserLearningStateRepository`。该适配器负责：
+
+- 按 `v3 → v2 → v1` 顺序发现本地记录；
+- 复用领域层校验和迁移，不在存储层复制规则；
+- 把迁移结果提升到当前键并删除旧键；
+- 对损坏数据安全重置；
+- 清除所有受支持的本地版本。
+
+这让界面不依赖 `localStorage` 的键名。未来可增加远端仓库或本地与远端组合仓库，而无需改写学习闭环。
+
+## 服务端关系模型
+
+服务端以 PostgreSQL 为首选持久层。结构化列用于查询、所有权和并发控制；Agent 产物保留为带版本的 JSON，避免模型输出迭代导致频繁拆表。
+
+| 表 | 关键字段 | 约束与用途 |
+| --- | --- | --- |
+| `users` | `id`, `created_at`, `deleted_at` | 身份主体；删除采用可审计的异步清除流程 |
+| `learning_plans` | `id`, `user_id`, `subject`, `current_level`, `target_outcome`, `daily_minutes`, `duration_weeks`, `created_at`, `updated_at`, `revision` | `user_id` 强制所有权；`revision` 支持乐观并发 |
+| `learning_stages` | `id`, `plan_id`, `position`, `title`, `outcome`, `start_week`, `end_week` | `(plan_id, position)` 与 `(plan_id, id)` 唯一 |
+| `daily_records` | `id`, `plan_id`, `day_number`, `local_date`, `status`, `completed_at`, `difficulty`, `reflection`, `revision` | `(plan_id, day_number)` 唯一；每天独立同步 |
+| `daily_tasks` | `id`, `daily_record_id`, `position`, `type`, `title`, `description`, `minutes`, `completed` | `(daily_record_id, position)` 与 `(daily_record_id, id)` 唯一 |
+| `task_artifacts` | `daily_task_id`, `schema_version`, `teaching_session`, `understanding_responses`, `submission`, `evaluation`, `updated_at` | 每个任务最多一个产物集合；JSON 写入前必须走领域校验 |
+| `sync_devices` | `id`, `user_id`, `label`, `last_seen_at`, `revoked_at` | 可撤销设备身份，不保存浏览器指纹 |
+| `sync_operations` | `id`, `user_id`, `device_id`, `operation_id`, `entity_type`, `entity_id`, `base_revision`, `created_at` | `(user_id, operation_id)` 唯一，保证重试幂等 |
+
+所有业务表都包含 `user_id` 或通过不可绕过的外键链归属用户。数据库访问必须在事务内绑定已认证用户，任何客户端提交的 `user_id` 都不可信。
+
+## 同步契约
+
+首版同步使用按实体的拉取与条件写入，不采用最后写入获胜覆盖整份计划。
+
+```text
+GET  /api/sync/changes?cursor=<opaque>
+PUT  /api/sync/daily-records/:id
+     If-Match: "<revision>"
+     Idempotency-Key: <uuid>
+
+200  返回新 revision
+409  返回服务端当前实体，客户端提示用户选择保留版本
+```
+
+- 服务端游标是不透明、单调推进的值；客户端不能从时间戳推导游标。
+- 每次写入携带 `base_revision` 与幂等键；重复请求返回第一次写入的结果。
+- 不自动合并同一任务的长文本、理解回答或评估。不同学习日可独立同步。
+- 离线创建的 ID 使用 UUID，避免设备之间碰撞。
+- 完成日和评估写入在同一事务中验证，不能产生“已完成但缺少必需成果”的状态。
+
+## 版本与迁移
+
+需要区分三个版本：
+
+1. `LearningState.version`：浏览器领域快照版本，当前为 3。
+2. `task_artifacts.schema_version`：Agent 产物形状版本。
+3. 数据库迁移版本：由迁移工具维护，只描述物理结构。
+
+导入旧快照时先在应用层升级并完整校验，再拆分写入服务端表。服务端读取旧 Agent 产物时使用显式升级器；未知版本不得静默丢字段。
+
+## 隐私、保留与恢复
+
+- 默认只收集学习闭环需要的内容，不保存模型密钥、浏览器指纹或原始模型请求日志。
+- 删除账号后立即撤销会话并进入限时清除队列；具体保留期限须在上线前写入隐私政策。
+- 备份加密、传输加密和按用户授权是上线阻断项。
+- 导出继续使用可移植快照；恢复到已有云计划前必须预览并确认。
+- 服务端写入、同步冲突和删除流程都要有不含学习正文的安全审计事件。
+
+## 分阶段实施
+
+1. **已完成：本地仓库边界。** 页面不再直接管理键发现、迁移和删除。
+2. **下一步：认证与远端仓库。** 选择身份方案，建立最小表和用户隔离测试。
+3. **同步试点。** 只同步计划与每日记录，加入 revision、游标和幂等测试。
+4. **离线与冲突界面。** 展示待同步、失败和冲突状态，不静默覆盖。
+5. **上线准备。** 完成数据删除、备份恢复、隐私告知和容量监控演练。
