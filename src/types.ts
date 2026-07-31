@@ -31,3 +31,25 @@ export interface LearningPlan {
   today: DailyTask[];
 }
 
+export type TaskDifficulty = "too-easy" | "just-right" | "too-hard";
+
+export interface DailyFeedback {
+  difficulty: TaskDifficulty;
+  reflection: string;
+}
+
+export interface DailyLearningRecord {
+  day: number;
+  date: string;
+  tasks: DailyTask[];
+  status: "active" | "completed";
+  completedAt?: string;
+  feedback?: DailyFeedback;
+}
+
+export interface LearningState {
+  version: 2;
+  plan: LearningPlan;
+  currentDay: number;
+  days: DailyLearningRecord[];
+}

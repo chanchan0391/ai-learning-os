@@ -10,10 +10,12 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - Planner Agent 领域逻辑：生成分阶段学习路线
 - 服务端 Agent API：浏览器不接触模型密钥
 - 可替换模型层：OpenAI Responses API 与确定性开发实现
-- Coach Agent 起始闭环：诊断、学习、实践、复盘四类每日任务
-- 本地进度保存：刷新页面后保留当前计划和完成状态
+- Coach Agent 起始闭环：诊断、学习、实践、复盘四类每日任务，并根据难度反馈生成下一天
+- 多天进度记录：连续学习天数、最近历史和每日反馈
+- 版本化本地保存：自动迁移旧计划并安全恢复异常数据
 - 响应式界面：支持桌面和移动端
 - 自动化测试：覆盖输入校验、路线分期、时间预算和完成率
+- 持续集成：推送和 Pull Request 自动运行测试与生产构建
 
 ## 本地运行
 
@@ -54,6 +56,7 @@ npm run build
 ```text
 src/
   App.tsx           页面与本地交互状态
+  learning-state.ts 多天状态、反馈、迁移与下一天生成
   planner.ts        Planner Agent 领域逻辑
   planner.test.ts   自动化测试
   types.ts          核心领域类型
