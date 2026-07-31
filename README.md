@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现了第一条可运行的 MVP 闭环，并建立了服务端 AI 能力层：用户输入学习目标，Planner Agent 通过可替换模型提供者生成阶段路线和当天任务，用户完成任务并获得即时进度反馈。
+AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现了第一条可运行的 AI 学习闭环：Planner Agent 生成路线，Teacher Agent 提供短教学和主动理解检查，Evaluator Agent 根据成果证据反馈，并把最小下一步带入后续计划。
 
 ## 当前能力
 
@@ -11,10 +11,11 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - 服务端 Agent API：浏览器不接触模型密钥
 - 可替换模型层：OpenAI Responses API 与确定性开发实现
 - Coach Agent 起始闭环：诊断、学习、实践、复盘四类每日任务，并根据难度反馈生成下一天
-- Teacher Agent 服务端契约：短讲解、示例、主动理解检查和可观察完成信号
-- Evaluator Agent 服务端契约：四维证据量表、领域一致性校验和最小下一步
+- Teacher Agent 教学会话：短讲解、示例、书面主动理解检查和可观察完成信号
+- Evaluator Agent 成果反馈：四维证据量表、领域一致性校验和最小下一步
+- 自适应次日计划：同时结合任务难度、评估结果和已识别误解
 - 多天进度记录：连续学习天数、最近历史和每日反馈
-- 版本化本地保存：自动迁移旧计划并安全恢复异常数据
+- 版本化本地保存：保存教学回答、成果和评估，自动迁移旧计划并安全恢复异常数据
 - 响应式界面：支持桌面和移动端
 - 自动化测试：覆盖输入校验、路线分期、时间预算和完成率
 - 持续集成：推送和 Pull Request 自动运行测试与生产构建
@@ -58,7 +59,7 @@ npm run build
 ```text
 src/
   App.tsx           页面与本地交互状态
-  learning-state.ts 多天状态、反馈、迁移与下一天生成
+  learning-state.ts 多天状态、教学成果、评估、迁移与下一天生成
   planner.ts        Planner Agent 领域逻辑
   planner.test.ts   自动化测试
   types.ts          核心领域类型

@@ -38,6 +38,13 @@ export interface DailyFeedback {
   reflection: string;
 }
 
+export interface LearningTaskArtifact {
+  teachingSession?: TeachingSession;
+  understandingResponses?: Record<string, string>;
+  submission?: string;
+  evaluation?: EvaluationResult;
+}
+
 export interface DailyLearningRecord {
   day: number;
   date: string;
@@ -45,10 +52,11 @@ export interface DailyLearningRecord {
   status: "active" | "completed";
   completedAt?: string;
   feedback?: DailyFeedback;
+  artifacts: Record<string, LearningTaskArtifact>;
 }
 
 export interface LearningState {
-  version: 2;
+  version: 3;
   plan: LearningPlan;
   currentDay: number;
   days: DailyLearningRecord[];

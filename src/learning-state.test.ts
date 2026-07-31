@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  completeTeachingTask,
   completeCurrentDay,
   completedDayCount,
   getCurrentRecord,
   initializeLearningState,
   learningStreak,
   parseLearningState,
+  saveEvaluation,
+  saveTeachingSession,
+  saveUnderstandingResponse,
   toggleCurrentTask,
 } from "./learning-state";
 import { generateLearningPlan } from "./planner";
@@ -31,13 +35,28 @@ describe("multi-day learning state", () => {
     const result = parseLearningState(JSON.stringify(plan), new Date("2026-07-31T08:00:00.000Z"));
 
     expect(result.status).toBe("migrated");
-    expect(result.state).toMatchObject({ version: 2, currentDay: 1 });
+    expect(result.state).toMatchObject({ version: 3, currentDay: 1 });
     expect(result.state?.days[0].tasks).toHaveLength(4);
+    expect(result.state?.days[0].artifacts).toEqual({});
+  });
+
+  it("migrates version 2 learning history without losing completed days", () => {
+    const state = completeCurrentDay(completedState(), { difficulty: "just-right", reflection: "保留我" });
+    const legacy = { ...state, version: 2, days: state.days.map(({ artifacts: _artifacts, ...day }) => day) };
+    const result = parseLearningState(JSON.stringify(legacy));
+
+    expect(result.status).toBe("migrated");
+    expect(result.state).toMatchObject({ version: 3, currentDay: 2 });
+    expect(result.state?.days[0].feedback?.reflection).toBe("保留我");
+    expect(result.state?.days.every((day) => Object.keys(day.artifacts).length === 0)).toBe(true);
   });
 
   it("rejects corrupt saved data instead of trusting a partial object", () => {
     expect(parseLearningState("{broken").status).toBe("recovered");
     expect(parseLearningState(JSON.stringify({ version: 2, days: [] })).state).toBeNull();
+    const state = initializeLearningState(generateLearningPlan(goal));
+    state.days[0].artifacts[state.days[0].tasks[0].id] = { evaluation: { totalScore: 99 } } as never;
+    expect(parseLearningState(JSON.stringify(state)).status).toBe("recovered");
   });
 
   it("requires every task before closing the day", () => {
@@ -60,6 +79,48 @@ describe("multi-day learning state", () => {
     expect(state.days[1].tasks[1].description).toContain("先缩小范围");
     expect(completedDayCount(state)).toBe(1);
     expect(learningStreak(state)).toBe(1);
+  });
+
+  it("persists teaching checks before completing a learn task", () => {
+    let state = initializeLearningState(generateLearningPlan(goal));
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "learn")!;
+    const session = {
+      concept: "工具调用", explanation: "解释", workedExample: "示例", practicePrompt: "练习",
+      understandingChecks: [
+        { id: "recall", prompt: "解释机制", expectedSignals: ["机制"] },
+        { id: "apply", prompt: "迁移应用", expectedSignals: ["步骤"] },
+      ],
+      completionSignals: ["可解释"],
+    };
+    state = saveTeachingSession(state, task.id, session);
+    state = saveUnderstandingResponse(state, task.id, "recall", "我的解释");
+    expect(() => completeTeachingTask(state, task.id)).toThrow("请先回答全部理解检查");
+    state = saveUnderstandingResponse(state, task.id, "apply", "我的应用步骤");
+    state = completeTeachingTask(state, task.id);
+
+    expect(getCurrentRecord(state).tasks.find((item) => item.id === task.id)?.completed).toBe(true);
+    expect(getCurrentRecord(state).artifacts[task.id].understandingResponses).toEqual({ recall: "我的解释", apply: "我的应用步骤" });
+  });
+
+  it("uses persisted evaluation feedback to focus the next day", () => {
+    let state = completedState();
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "practice")!;
+    state = saveEvaluation(state, task.id, "可复查的学习成果", {
+      rubric: [
+        { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 1, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 7,
+      masteryLevel: "needs-support",
+      misconceptions: ["忽略超时"],
+      nextAction: "补充失败恢复测试",
+    });
+    state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "" });
+
+    expect(state.days[1].tasks[1].description).toContain("补充失败恢复测试");
+    expect(state.days[1].tasks[1].description).toContain("忽略超时");
   });
 
   it("preserves prior history while advancing consecutive days", () => {

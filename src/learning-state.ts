@@ -2,12 +2,15 @@ import type {
   DailyFeedback,
   DailyLearningRecord,
   DailyTask,
+  EvaluationResult,
   LearningPlan,
   LearningState,
   LearningStage,
+  LearningTaskArtifact,
+  TeachingSession,
 } from "./types";
 
-export const LEARNING_STATE_VERSION = 2 as const;
+export const LEARNING_STATE_VERSION = 3 as const;
 
 function dateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -44,6 +47,55 @@ function isLearningPlan(value: unknown): value is LearningPlan {
     && value.today.every(isDailyTask);
 }
 
+function isTeachingSession(value: unknown): value is TeachingSession {
+  return isRecord(value)
+    && typeof value.concept === "string"
+    && typeof value.explanation === "string"
+    && typeof value.workedExample === "string"
+    && typeof value.practicePrompt === "string"
+    && Array.isArray(value.completionSignals)
+    && value.completionSignals.every((signal) => typeof signal === "string")
+    && Array.isArray(value.understandingChecks)
+    && value.understandingChecks.every((check) => isRecord(check)
+      && typeof check.id === "string"
+      && typeof check.prompt === "string"
+      && Array.isArray(check.expectedSignals)
+      && check.expectedSignals.every((signal) => typeof signal === "string"));
+}
+
+function isEvaluationResult(value: unknown): value is EvaluationResult {
+  const dimensions = ["understanding", "application", "evidence", "reflection"];
+  if (!isRecord(value) || !Array.isArray(value.rubric) || value.rubric.length !== 4) return false;
+  const rubricValid = value.rubric.every((item) => isRecord(item)
+    && dimensions.includes(String(item.dimension))
+    && Number.isInteger(item.score)
+    && Number(item.score) >= 0
+    && Number(item.score) <= 4
+    && typeof item.evidence === "string"
+    && typeof item.feedback === "string");
+  const scores = value.rubric.map((item) => isRecord(item) ? Number(item.score) : 0);
+  const rubricDimensions = value.rubric.map((item) => isRecord(item) ? String(item.dimension) : "");
+  return rubricValid
+    && new Set(rubricDimensions).size === 4
+    && Number.isInteger(value.totalScore)
+    && Number(value.totalScore) === scores.reduce((sum, score) => sum + score, 0)
+    && ["needs-support", "developing", "ready"].includes(String(value.masteryLevel))
+    && Array.isArray(value.misconceptions)
+    && value.misconceptions.every((item) => typeof item === "string")
+    && typeof value.nextAction === "string";
+}
+
+function isLearningTaskArtifact(value: unknown): value is LearningTaskArtifact {
+  if (!isRecord(value)) return false;
+  const responsesValid = value.understandingResponses === undefined || (
+    isRecord(value.understandingResponses) && Object.values(value.understandingResponses).every((response) => typeof response === "string")
+  );
+  return responsesValid
+    && (value.teachingSession === undefined || isTeachingSession(value.teachingSession))
+    && (value.submission === undefined || typeof value.submission === "string")
+    && (value.evaluation === undefined || isEvaluationResult(value.evaluation));
+}
+
 function isDailyRecord(value: unknown): value is DailyLearningRecord {
   if (!isRecord(value)) return false;
   const hasValidFeedback = value.feedback === undefined || (
@@ -56,6 +108,10 @@ function isDailyRecord(value: unknown): value is DailyLearningRecord {
     && hasValidFeedback
     && isRecord(value.feedback)
   );
+  const artifactsValid = isRecord(value.artifacts)
+    && Object.entries(value.artifacts).every(([taskId, artifact]) => value.tasks instanceof Array
+      && value.tasks.some((task) => isRecord(task) && task.id === taskId)
+      && isLearningTaskArtifact(artifact));
   return Number.isInteger(value.day)
     && Number(value.day) > 0
     && typeof value.date === "string"
@@ -63,6 +119,7 @@ function isDailyRecord(value: unknown): value is DailyLearningRecord {
     && Array.isArray(value.tasks)
     && value.tasks.length > 0
     && value.tasks.every(isDailyTask)
+    && artifactsValid
     && validCompletion;
 }
 
@@ -86,7 +143,7 @@ export function initializeLearningState(plan: LearningPlan, now = new Date()): L
     version: LEARNING_STATE_VERSION,
     plan,
     currentDay: 1,
-    days: [{ day: 1, date: dateKey(now), tasks: plan.today, status: "active" }],
+    days: [{ day: 1, date: dateKey(now), tasks: plan.today, status: "active", artifacts: {} }],
   };
 }
 
@@ -100,6 +157,14 @@ export function parseLearningState(raw: string | null, now = new Date()): Parsed
   try {
     const value: unknown = JSON.parse(raw);
     if (isLearningState(value)) return { state: value, status: "valid" };
+    if (isRecord(value) && value.version === 2 && Array.isArray(value.days)) {
+      const migrated = {
+        ...value,
+        version: LEARNING_STATE_VERSION,
+        days: value.days.map((day) => isRecord(day) ? { ...day, artifacts: {} } : day),
+      };
+      if (isLearningState(migrated)) return { state: migrated, status: "migrated" };
+    }
     if (isLearningPlan(value)) return { state: initializeLearningState(value, now), status: "migrated" };
     return { state: null, status: "recovered" };
   } catch {
@@ -124,6 +189,51 @@ export function toggleCurrentTask(state: LearningState, taskId: string): Learnin
   };
 }
 
+function updateCurrentRecord(state: LearningState, update: (record: DailyLearningRecord) => DailyLearningRecord): LearningState {
+  return { ...state, days: state.days.map((day) => day.day === state.currentDay ? update(day) : day) };
+}
+
+export function saveTeachingSession(state: LearningState, taskId: string, session: TeachingSession): LearningState {
+  return updateCurrentRecord(state, (record) => ({
+    ...record,
+    artifacts: { ...record.artifacts, [taskId]: { ...record.artifacts[taskId], teachingSession: session } },
+  }));
+}
+
+export function saveUnderstandingResponse(state: LearningState, taskId: string, checkId: string, response: string): LearningState {
+  return updateCurrentRecord(state, (record) => ({
+    ...record,
+    artifacts: {
+      ...record.artifacts,
+      [taskId]: {
+        ...record.artifacts[taskId],
+        understandingResponses: { ...record.artifacts[taskId]?.understandingResponses, [checkId]: response },
+      },
+    },
+  }));
+}
+
+export function completeTeachingTask(state: LearningState, taskId: string): LearningState {
+  const record = getCurrentRecord(state);
+  const artifact = record.artifacts[taskId];
+  const checks = artifact?.teachingSession?.understandingChecks ?? [];
+  if (checks.length === 0 || checks.some((check) => !artifact.understandingResponses?.[check.id]?.trim())) {
+    throw new Error("请先回答全部理解检查");
+  }
+  return toggleCurrentTask(state, taskId);
+}
+
+export function saveEvaluation(state: LearningState, taskId: string, submission: string, evaluation: EvaluationResult): LearningState {
+  return updateCurrentRecord(state, (record) => ({
+    ...record,
+    tasks: record.tasks.map((task) => task.id === taskId ? { ...task, completed: true } : task),
+    artifacts: {
+      ...record.artifacts,
+      [taskId]: { ...record.artifacts[taskId], submission: submission.trim(), evaluation },
+    },
+  }));
+}
+
 function stageForDay(stages: LearningStage[], day: number): LearningStage {
   const week = Math.ceil(day / 7);
   return stages.find((stage) => week >= stage.startWeek && week <= stage.endWeek) ?? stages.at(-1)!;
@@ -146,6 +256,11 @@ export function buildNextDayTasks(state: LearningState, feedback: DailyFeedback)
     : feedback.difficulty === "too-easy"
       ? "提高约束，尝试独立完成更接近真实场景的挑战"
       : "保持当前节奏，把昨天的薄弱点再推进一步";
+  const evaluations = Object.values(getCurrentRecord(state).artifacts).flatMap((artifact) => artifact.evaluation ? [artifact.evaluation] : []);
+  const evaluation = evaluations.sort((a, b) => a.totalScore - b.totalScore)[0];
+  const evaluationFocus = evaluation
+    ? `评估反馈：${evaluation.nextAction}${evaluation.misconceptions.length > 0 ? `；重点纠正：${evaluation.misconceptions.join("、")}` : ""}`
+    : "根据昨天的自评继续推进";
 
   return [
     {
@@ -155,7 +270,7 @@ export function buildNextDayTasks(state: LearningState, feedback: DailyFeedback)
     },
     {
       id: `day-${day}-learn`, type: "learn", title: `推进：${stage.title}`,
-      description: `${adjustment}。围绕“${stage.outcome}”补充一个关键概念和一个反例。`,
+      description: `${adjustment}。${evaluationFocus}。围绕“${stage.outcome}”补充一个关键概念和一个反例。`,
       minutes: learn, completed: false,
     },
     {
@@ -192,6 +307,7 @@ export function completeCurrentDay(state: LearningState, feedback: DailyFeedback
       date: dateKey(now),
       tasks: buildNextDayTasks(state, feedback),
       status: "active",
+      artifacts: {},
     }],
   };
 }

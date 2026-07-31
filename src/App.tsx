@@ -1,17 +1,22 @@
 import { FormEvent, useMemo, useState } from "react";
 import {
+  completeTeachingTask,
   completeCurrentDay,
   completedDayCount,
   getCurrentRecord,
   initializeLearningState,
   learningStreak,
   parseLearningState,
+  saveEvaluation,
+  saveTeachingSession,
+  saveUnderstandingResponse,
   toggleCurrentTask,
 } from "./learning-state";
 import { completionRate, validateGoal } from "./planner";
-import type { LearningGoal, LearningPlan, LearningState, TaskDifficulty } from "./types";
+import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, TaskDifficulty, TeachingSession } from "./types";
 
-const STORAGE_KEY = "ai-learning-os-state-v2";
+const STORAGE_KEY = "ai-learning-os-state-v3";
+const PREVIOUS_STORAGE_KEY = "ai-learning-os-state-v2";
 const LEGACY_STORAGE_KEY = "ai-learning-os-plan-v1";
 
 const INITIAL_GOAL: LearningGoal = {
@@ -24,13 +29,15 @@ const INITIAL_GOAL: LearningGoal = {
 
 function readState(): ReturnType<typeof parseLearningState> {
   const current = localStorage.getItem(STORAGE_KEY);
-  const source = current ?? localStorage.getItem(LEGACY_STORAGE_KEY);
+  const source = current ?? localStorage.getItem(PREVIOUS_STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
   const result = parseLearningState(source);
   if (result.state && result.status === "migrated") {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(result.state));
+    localStorage.removeItem(PREVIOUS_STORAGE_KEY);
     localStorage.removeItem(LEGACY_STORAGE_KEY);
   } else if (result.status === "recovered") {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(PREVIOUS_STORAGE_KEY);
     localStorage.removeItem(LEGACY_STORAGE_KEY);
   }
   return result;
@@ -44,6 +51,9 @@ export function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [difficulty, setDifficulty] = useState<TaskDifficulty | "">("");
   const [reflection, setReflection] = useState("");
+  const [agentError, setAgentError] = useState("");
+  const [busyTaskId, setBusyTaskId] = useState("");
+  const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
   const [storageNotice, setStorageNotice] = useState(initialLoad.status === "recovered" ? "本地进度无法读取，已安全重置。" : "");
   const plan = learningState?.plan ?? null;
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
@@ -54,8 +64,18 @@ export function App() {
     if (next) localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     else {
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(PREVIOUS_STORAGE_KEY);
       localStorage.removeItem(LEGACY_STORAGE_KEY);
     }
+  }
+
+  function updateState(update: (current: LearningState) => LearningState) {
+    setLearningState((current) => {
+      if (!current) return current;
+      const next = update(current);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
   }
 
   async function createPlan(event: FormEvent) {
@@ -84,6 +104,64 @@ export function App() {
   function toggleTask(taskId: string) {
     if (!learningState) return;
     saveState(toggleCurrentTask(learningState, taskId));
+  }
+
+  async function startTeaching(task: DailyTask) {
+    if (!learningState) return;
+    setBusyTaskId(task.id);
+    setAgentError("");
+    try {
+      const recentErrors = learningState.days.flatMap((day) => Object.values(day.artifacts)
+        .flatMap((artifact) => artifact.evaluation?.misconceptions ?? [])).slice(-3);
+      const response = await fetch("/api/teaching-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: plan?.goal, task, learnerContext: { knownConcepts: [plan?.goal.currentLevel ?? ""], recentErrors } }),
+      });
+      const body = await response.json() as TeachingSession | { error: string };
+      if (!response.ok) throw new Error("error" in body ? body.error : "教学会话生成失败");
+      updateState((current) => saveTeachingSession(current, task.id, body as TeachingSession));
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : "教学会话生成失败");
+    } finally {
+      setBusyTaskId("");
+    }
+  }
+
+  function updateUnderstanding(taskId: string, checkId: string, response: string) {
+    if (learningState) updateState((current) => saveUnderstandingResponse(current, taskId, checkId, response));
+  }
+
+  function finishTeaching(taskId: string) {
+    if (!learningState) return;
+    try {
+      saveState(completeTeachingTask(learningState, taskId));
+      setAgentError("");
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : "无法完成理解检查");
+    }
+  }
+
+  async function evaluatePractice(task: DailyTask) {
+    if (!learningState || !plan) return;
+    const submission = submissionDrafts[task.id] ?? currentRecord?.artifacts[task.id]?.submission ?? "";
+    if (!submission.trim()) return setAgentError("请先提交可评估的学习成果");
+    setBusyTaskId(task.id);
+    setAgentError("");
+    try {
+      const response = await fetch("/api/evaluations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: plan.goal, task, submission }),
+      });
+      const body = await response.json() as EvaluationResult | { error: string };
+      if (!response.ok) throw new Error("error" in body ? body.error : "学习成果评估失败");
+      updateState((current) => saveEvaluation(current, task.id, submission, body as EvaluationResult));
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : "学习成果评估失败");
+    } finally {
+      setBusyTaskId("");
+    }
   }
 
   function startNextDay() {
@@ -121,7 +199,7 @@ export function App() {
             </div>
             {errors.length > 0 && <div className="errors">{errors.join(" · ")}</div>}
             <button type="submit" disabled={isGenerating}>{isGenerating ? "Planner Agent 正在规划…" : "生成我的学习路线"} <span>→</span></button>
-            <p className="privacy">数据仅保存在当前浏览器中</p>
+            <p className="privacy">进度保存在当前浏览器；启用实时模型后，学习内容会发送给所选模型服务</p>
           </form>
         </section>
       </main>
@@ -149,14 +227,62 @@ export function App() {
         <section className="panel today-panel">
           <div className="section-title"><div><span>第 {learningState.currentDay} 天任务</span><h2>{plan.goal.dailyMinutes} 分钟学习闭环</h2></div><small>{currentRecord.tasks.filter((task) => task.completed).length}/{currentRecord.tasks.length} 完成</small></div>
           <div className="task-list">
-            {currentRecord.tasks.map((task, index) => (
-              <button className={`task ${task.completed ? "done" : ""}`} key={task.id} onClick={() => toggleTask(task.id)}>
-                <span className="check">{task.completed ? "✓" : index + 1}</span>
-                <span className="task-copy"><strong>{task.title}</strong><small>{task.description}</small></span>
-                <span className="minutes">{task.minutes}<small>MIN</small></span>
-              </button>
-            ))}
+            {currentRecord.tasks.map((task, index) => {
+              const artifact = currentRecord.artifacts[task.id];
+              const agentGuided = task.type === "learn" || task.type === "practice";
+              const submission = submissionDrafts[task.id] ?? artifact?.submission ?? "";
+              return (
+                <article className={`task-block ${task.completed ? "done" : ""}`} key={task.id}>
+                  <button className="task" onClick={() => toggleTask(task.id)} disabled={agentGuided && !task.completed}>
+                    <span className="check">{task.completed ? "✓" : index + 1}</span>
+                    <span className="task-copy"><strong>{task.title}</strong><small>{task.description}</small></span>
+                    <span className="minutes">{task.minutes}<small>MIN</small></span>
+                  </button>
+
+                  {task.type === "learn" && !task.completed && (
+                    <div className="agent-workspace">
+                      {!artifact?.teachingSession ? (
+                        <button className="secondary-action" disabled={busyTaskId === task.id} onClick={() => startTeaching(task)}>
+                          {busyTaskId === task.id ? "Teacher Agent 正在准备…" : "开始短教学会话"}
+                        </button>
+                      ) : (
+                        <>
+                          <span className="agent-label">Teacher Agent · {artifact.teachingSession.concept}</span>
+                          <p>{artifact.teachingSession.explanation}</p>
+                          <div className="worked-example"><strong>示例</strong><p>{artifact.teachingSession.workedExample}</p></div>
+                          {artifact.teachingSession.understandingChecks.map((check, checkIndex) => (
+                            <label key={check.id}>理解检查 {checkIndex + 1}：{check.prompt}
+                              <textarea rows={2} value={artifact.understandingResponses?.[check.id] ?? ""} onChange={(event) => updateUnderstanding(task.id, check.id, event.target.value)} />
+                            </label>
+                          ))}
+                          <button className="primary-action" onClick={() => finishTeaching(task.id)}>提交理解检查并完成任务 <span>→</span></button>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {task.type === "practice" && !task.completed && (
+                    <div className="agent-workspace">
+                      <span className="agent-label">Evaluator Agent · 成果提交</span>
+                      <label>描述成果、关键步骤、验证证据和复盘
+                        <textarea rows={5} value={submission} onChange={(event) => setSubmissionDrafts({ ...submissionDrafts, [task.id]: event.target.value })} placeholder="例如：我实现了……；运行结果是……；失败案例是……；下一次我会……" />
+                      </label>
+                      <button className="primary-action" disabled={!submission.trim() || busyTaskId === task.id} onClick={() => evaluatePractice(task)}>{busyTaskId === task.id ? "Evaluator Agent 正在评估…" : "提交成果并获取反馈"} <span>→</span></button>
+                    </div>
+                  )}
+
+                  {artifact?.evaluation && (
+                    <div className="evaluation-result" role="status">
+                      <div><span className="agent-label">评估结果 · {artifact.evaluation.masteryLevel}</span><strong>{artifact.evaluation.totalScore}/16</strong></div>
+                      <p>{artifact.evaluation.nextAction}</p>
+                      <div className="rubric-grid">{artifact.evaluation.rubric.map((item) => <span key={item.dimension}>{item.dimension}<strong>{item.score}/4</strong></span>)}</div>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </div>
+          {agentError && <div className="errors agent-error" role="alert">{agentError}</div>}
           {progress === 100 && currentRecord.status === "active" && (
             <div className="day-feedback">
               <strong>今天的任务难度如何？</strong>
