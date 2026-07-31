@@ -1,0 +1,116 @@
+import { describe, expect, it } from "vitest";
+import { initializeLearningState } from "../../src/learning-state";
+import { generateLearningPlan } from "../../src/planner";
+import {
+  InMemorySyncStore,
+  SyncConflictError,
+  SyncRequestError,
+  type SyncPrincipal,
+} from "./sync-store";
+
+const alice: SyncPrincipal = { userId: "user-alice", deviceId: "device-phone" };
+const aliceLaptop: SyncPrincipal = { userId: "user-alice", deviceId: "device-laptop" };
+const bob: SyncPrincipal = { userId: "user-bob", deviceId: "device-phone" };
+const goal = {
+  subject: "分布式系统",
+  currentLevel: "了解单体应用",
+  targetOutcome: "能设计可恢复的服务",
+  dailyMinutes: 45,
+  durationWeeks: 8,
+};
+
+function setup() {
+  let cursor = 0;
+  const store = new InMemorySyncStore(
+    () => new Date("2026-07-31T12:00:00.000Z"),
+    () => `opaque-${++cursor}`,
+  );
+  const plan = generateLearningPlan(goal, new Date("2026-07-31T10:00:00.000Z"));
+  return { store, plan, state: initializeLearningState(plan) };
+}
+
+describe("in-memory sync store", () => {
+  it("creates and conditionally updates an entity with increasing revisions", () => {
+    const { store, plan } = setup();
+    const created = store.putPlan(alice, { operationId: "op-create", entityId: plan.id, baseRevision: null, value: plan });
+    const updatedPlan = { ...plan, goal: { ...plan.goal, targetOutcome: "能评审可恢复的服务" } };
+    const updated = store.putPlan(aliceLaptop, { operationId: "op-update", entityId: plan.id, baseRevision: 1, value: updatedPlan });
+
+    expect(created.revision).toBe(1);
+    expect(updated).toMatchObject({ revision: 2, value: { goal: { targetOutcome: "能评审可恢复的服务" } } });
+  });
+
+  it("returns the current entity when a stale device causes a revision conflict", () => {
+    const { store, plan } = setup();
+    store.putPlan(alice, { operationId: "op-create", entityId: plan.id, baseRevision: null, value: plan });
+    store.putPlan(alice, { operationId: "op-update", entityId: plan.id, baseRevision: 1, value: { ...plan, createdAt: "2026-07-31T11:00:00.000Z" } });
+
+    expect(() => store.putPlan(aliceLaptop, {
+      operationId: "op-stale",
+      entityId: plan.id,
+      baseRevision: 1,
+      value: plan,
+    })).toThrow(SyncConflictError);
+    try {
+      store.putPlan(aliceLaptop, { operationId: "op-stale-2", entityId: plan.id, baseRevision: 1, value: plan });
+    } catch (error) {
+      expect(error).toBeInstanceOf(SyncConflictError);
+      expect((error as SyncConflictError).current?.revision).toBe(2);
+    }
+  });
+
+  it("makes retries idempotent and rejects operation ID reuse with different content", () => {
+    const { store, plan } = setup();
+    const request = { operationId: "op-create", entityId: plan.id, baseRevision: null, value: plan };
+    const first = store.putPlan(alice, request);
+    const retry = store.putPlan(aliceLaptop, request);
+
+    expect(retry).toEqual(first);
+    expect(store.getChanges(alice).changes).toHaveLength(1);
+    expect(() => store.putPlan(alice, { ...request, value: { ...plan, createdAt: "2026-08-01T10:00:00.000Z" } })).toThrowError(
+      expect.objectContaining<Partial<SyncRequestError>>({ code: "idempotency-mismatch" }),
+    );
+  });
+
+  it("returns only changes after an opaque cursor", () => {
+    const { store, plan, state } = setup();
+    store.putPlan(alice, { operationId: "op-plan", entityId: plan.id, baseRevision: null, value: plan });
+    const firstPull = store.getChanges(aliceLaptop);
+    store.putDailyRecord(alice, {
+      operationId: "op-day",
+      entityId: `${plan.id}:day-1`,
+      baseRevision: null,
+      value: { planId: plan.id, record: state.days[0] },
+    });
+    const secondPull = store.getChanges(aliceLaptop, firstPull.cursor);
+
+    expect(firstPull.changes.map((change) => change.entityType)).toEqual(["learning-plan"]);
+    expect(secondPull.changes.map((change) => change.entityType)).toEqual(["daily-record"]);
+    expect(store.getChanges(aliceLaptop, secondPull.cursor).changes).toEqual([]);
+  });
+
+  it("isolates entities, operations, and cursors by authenticated user", () => {
+    const { store, plan } = setup();
+    store.putPlan(alice, { operationId: "same-operation", entityId: plan.id, baseRevision: null, value: plan });
+    store.putPlan(bob, { operationId: "same-operation", entityId: plan.id, baseRevision: null, value: plan });
+    const alicePull = store.getChanges(alice);
+
+    expect(alicePull.changes).toHaveLength(1);
+    expect(store.getChanges(bob).changes).toHaveLength(1);
+    expect(() => store.getChanges(bob, alicePull.cursor)).toThrowError(
+      expect.objectContaining<Partial<SyncRequestError>>({ code: "invalid-cursor" }),
+    );
+  });
+
+  it("does not allow a daily record to reference another user's plan", () => {
+    const { store, plan, state } = setup();
+    store.putPlan(alice, { operationId: "op-plan", entityId: plan.id, baseRevision: null, value: plan });
+
+    expect(() => store.putDailyRecord(bob, {
+      operationId: "op-day",
+      entityId: `${plan.id}:day-1`,
+      baseRevision: null,
+      value: { planId: plan.id, record: state.days[0] },
+    })).toThrowError(expect.objectContaining<Partial<SyncRequestError>>({ code: "missing-plan" }));
+  });
+});
