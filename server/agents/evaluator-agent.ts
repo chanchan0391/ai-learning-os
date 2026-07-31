@@ -70,7 +70,7 @@ function assertEvaluation(value: EvaluationResult): void {
 
 export function createEvaluatorAgent(provider: ModelProvider) {
   return {
-    async evaluate(request: EvaluationRequest): Promise<EvaluationResult> {
+    async evaluate(request: EvaluationRequest, signal?: AbortSignal): Promise<EvaluationResult> {
       validateRequest(request);
       const result = await provider.generateStructured<EvaluationResult>({
         instructions: [
@@ -82,6 +82,7 @@ export function createEvaluatorAgent(provider: ModelProvider) {
           "只返回符合给定 JSON Schema 的数据。",
         ].join("\n"),
         input: JSON.stringify(request),
+        signal,
         schema: { name: "learning_evaluation", value: EVALUATION_SCHEMA },
       });
       assertEvaluation(result.value);

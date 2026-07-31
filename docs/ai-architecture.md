@@ -56,6 +56,7 @@ ModelProvider
 - `instructions`：稳定的 Agent 身份、职责和规则
 - `input`：当前学习者上下文
 - `schema`：返回数据的 JSON Schema
+- `signal`：可选的取消信号，用于终止已失去调用方的工作
 
 它返回：
 
@@ -64,6 +65,12 @@ ModelProvider
 - 可选的厂商请求 ID，便于排查问题
 
 OpenAI 实现采用 Responses API，并使用 Structured Outputs 约束返回格式。OpenAI 当前建议将 Responses API 用于推理、工具调用和多轮工作流；模型通过环境变量显式选择，不在代码中绑定某个型号。参考：[Responses API](https://developers.openai.com/api/reference/resources/responses)、[模型指南](https://developers.openai.com/api/docs/guides/latest-model)。
+
+### 调用可靠性
+
+OpenAI Provider 对每次尝试设置 30 秒超时，并对网络错误、408、409、429 和 5xx 响应最多重试两次。重试使用有上限的指数退避；服务返回 `Retry-After` 时优先遵循该值。每次尝试都发送唯一的 `X-Client-Request-Id`，便于在没有收到厂商响应 ID 的超时场景中排查。400 等永久请求错误不会重试。
+
+同一次 Agent 调用只向领域层返回一次最终结果，重试过程不会写入学习状态；OpenAI 请求继续使用 `store: false`。浏览器断开连接时，本地 API 会沿 `AbortSignal` 取消正在执行的 Agent 调用，避免无调用方的模型工作继续消耗资源。超时最终映射为 504，主动取消映射为 499，其他厂商错误保留安全状态码和可选请求 ID。此策略遵循官方的[错误处理建议](https://developers.openai.com/api/docs/guides/error-codes)与[客户端请求 ID 指南](https://developers.openai.com/api/reference/overview#supplying-your-own-request-id-with-x-client-request-id)。
 
 ## 配置与安全
 
@@ -130,7 +137,7 @@ AI_API_PORT=8787
 
 ## 测试策略
 
-- Provider 契约测试：请求结构、响应解析、错误映射和密钥边界
+- Provider 契约测试：请求结构、响应解析、错误映射、超时、取消、有限重试和密钥边界
 - Agent 领域测试：学习规则不能被格式正确但内容错误的模型输出绕过
 - API 测试：状态、输入校验和完整计划生成
 - Teacher/Evaluator 契约测试：必需教学元素、理解检查唯一性、固定量表、总分和掌握等级一致性

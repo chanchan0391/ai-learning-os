@@ -63,7 +63,7 @@ function assertGeneratedPlan(value: GeneratedPlan, goal: LearningGoal): void {
 
 export function createPlannerAgent(provider: ModelProvider) {
   return {
-    async createPlan(goal: LearningGoal, now = new Date()): Promise<LearningPlan> {
+    async createPlan(goal: LearningGoal, now = new Date(), signal?: AbortSignal): Promise<LearningPlan> {
       const errors = validateGoal(goal);
       if (errors.length > 0) throw new TypeError(errors.join("；"));
 
@@ -75,6 +75,7 @@ export function createPlannerAgent(provider: ModelProvider) {
           "只返回符合给定 JSON Schema 的数据，不添加说明文字。",
         ].join("\n"),
         input: JSON.stringify(goal),
+        signal,
         schema: { name: "learning_plan", value: LEARNING_PLAN_SCHEMA },
       });
 

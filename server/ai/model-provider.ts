@@ -3,6 +3,7 @@ export type JsonSchema = Record<string, unknown>;
 export interface StructuredGenerationRequest {
   instructions: string;
   input: string;
+  signal?: AbortSignal;
   schema: {
     name: string;
     value: JsonSchema;

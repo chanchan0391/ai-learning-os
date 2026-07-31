@@ -30,21 +30,26 @@ export function createApp(provider: ModelProvider) {
   const teacher = createTeacherAgent(provider);
   const evaluator = createEvaluatorAgent(provider);
   return createServer(async (request, response) => {
+    const controller = new AbortController();
+    request.once("aborted", () => controller.abort());
+    response.once("close", () => {
+      if (!response.writableEnded) controller.abort();
+    });
     try {
       if (request.method === "GET" && request.url === "/api/health") {
         return sendJson(response, 200, { status: "ok", provider: provider.id, aiEnabled: provider.isAiEnabled });
       }
       if (request.method === "POST" && request.url === "/api/plans") {
         const goal = await readJson(request) as LearningGoal;
-        return sendJson(response, 201, await planner.createPlan(goal));
+        return sendJson(response, 201, await planner.createPlan(goal, new Date(), controller.signal));
       }
       if (request.method === "POST" && request.url === "/api/teaching-sessions") {
         const teachingRequest = await readJson(request) as TeachingSessionRequest;
-        return sendJson(response, 201, await teacher.createSession(teachingRequest));
+        return sendJson(response, 201, await teacher.createSession(teachingRequest, controller.signal));
       }
       if (request.method === "POST" && request.url === "/api/evaluations") {
         const evaluationRequest = await readJson(request) as EvaluationRequest;
-        return sendJson(response, 201, await evaluator.evaluate(evaluationRequest));
+        return sendJson(response, 201, await evaluator.evaluate(evaluationRequest, controller.signal));
       }
       return sendJson(response, 404, { error: "Not found" });
     } catch (error) {

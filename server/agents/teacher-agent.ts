@@ -67,7 +67,7 @@ function assertSession(value: TeachingSession): void {
 
 export function createTeacherAgent(provider: ModelProvider) {
   return {
-    async createSession(request: TeachingSessionRequest): Promise<TeachingSession> {
+    async createSession(request: TeachingSessionRequest, signal?: AbortSignal): Promise<TeachingSession> {
       validateRequest(request);
       const result = await provider.generateStructured<TeachingSession>({
         instructions: [
@@ -78,6 +78,7 @@ export function createTeacherAgent(provider: ModelProvider) {
           "只返回符合给定 JSON Schema 的数据。",
         ].join("\n"),
         input: JSON.stringify(request),
+        signal,
         schema: { name: "teaching_session", value: TEACHING_SESSION_SCHEMA },
       });
       assertSession(result.value);

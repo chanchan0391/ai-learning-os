@@ -2,12 +2,13 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { DeterministicModelProvider } from "./ai/deterministic-provider";
+import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
 
 const servers: ReturnType<typeof createApp>[] = [];
 afterEach(() => servers.splice(0).forEach((server) => server.close()));
 
-async function startApi() {
-  const server = createApp(new DeterministicModelProvider());
+async function startApi(provider: ModelProvider = new DeterministicModelProvider()) {
+  const server = createApp(provider);
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
@@ -66,5 +67,34 @@ describe("AI Learning OS API", () => {
       body: JSON.stringify({ goal, task, submission: "  " }),
     });
     expect(response.status).toBe(400);
+  });
+
+  it("cancels an Agent call when its client disconnects", async () => {
+    let markStarted!: () => void;
+    let markAborted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const aborted = new Promise<void>((resolve) => { markAborted = resolve; });
+    const provider: ModelProvider = {
+      id: "cancellation-test",
+      isAiEnabled: true,
+      generateStructured: ({ signal }) => new Promise((_resolve, reject) => {
+        markStarted();
+        signal?.addEventListener("abort", () => {
+          markAborted();
+          reject(new ModelProviderError("cancelled", 499));
+        }, { once: true });
+      }),
+    };
+    const baseUrl = await startApi(provider);
+    const controller = new AbortController();
+    const fetchResult = fetch(`${baseUrl}/api/plans`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(goal), signal: controller.signal,
+    });
+    await started;
+    controller.abort();
+
+    await expect(fetchResult).rejects.toThrow();
+    await expect(aborted).resolves.toBeUndefined();
   });
 });
