@@ -5,11 +5,13 @@ import {
   completedDayCount,
   getCurrentRecord,
   initializeLearningState,
+  learningStateExportFilename,
   learningStreak,
   parseLearningState,
   saveEvaluation,
   saveTeachingSession,
   saveUnderstandingResponse,
+  serializeLearningStateExport,
   toggleCurrentTask,
 } from "./learning-state";
 import { completionRate, validateGoal } from "./planner";
@@ -54,6 +56,7 @@ export function App() {
   const [agentError, setAgentError] = useState("");
   const [busyTaskId, setBusyTaskId] = useState("");
   const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
+  const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [storageNotice, setStorageNotice] = useState(initialLoad.status === "recovered" ? "本地进度无法读取，已安全重置。" : "");
   const plan = learningState?.plan ?? null;
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
@@ -176,6 +179,28 @@ export function App() {
     }
   }
 
+  function exportLearningData() {
+    if (!learningState) return;
+    const now = new Date();
+    const blob = new Blob([serializeLearningStateExport(learningState, now)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = learningStateExportFilename(now);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function deleteLearningData() {
+    saveState(null);
+    setSubmissionDrafts({});
+    setAgentError("");
+    setErrors([]);
+    setDeleteConfirmationOpen(false);
+  }
+
   if (!plan || !learningState || !currentRecord) {
     return (
       <main className="shell onboarding">
@@ -210,8 +235,26 @@ export function App() {
     <main className="shell dashboard">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">A</span> AI Learning OS</div>
-        <button className="text-button" onClick={() => saveState(null)}>重新设定目标</button>
+        <div className="data-actions" aria-label="学习数据控制">
+          <button className="text-button" onClick={exportLearningData}>导出学习记录</button>
+          <button className="text-button danger-text" onClick={() => setDeleteConfirmationOpen(true)}>删除本地数据</button>
+        </div>
       </header>
+      {deleteConfirmationOpen && (
+        <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setDeleteConfirmationOpen(false);
+        }}>
+          <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-dialog-title" aria-describedby="delete-dialog-description">
+            <p className="eyebrow">不可撤销操作</p>
+            <h2 id="delete-dialog-title">删除当前浏览器中的学习数据？</h2>
+            <p id="delete-dialog-description">学习计划、任务历史、教学回答、成果和评估都会被永久删除。需要保留副本时，请先导出学习记录。</p>
+            <div className="dialog-actions">
+              <button className="secondary-action" autoFocus onClick={() => setDeleteConfirmationOpen(false)}>取消</button>
+              <button className="danger-action" onClick={deleteLearningData}>确认删除</button>
+            </div>
+          </section>
+        </div>
+      )}
       <section className="welcome">
         <div><p className="eyebrow">DAY {learningState.currentDay} · 持续推进你的学习系统</p><h1>{plan.goal.subject}</h1><p>目标：{plan.goal.targetOutcome}</p></div>
         <div className="progress-ring" style={{ "--progress": `${progress * 3.6}deg` } as React.CSSProperties}><strong>{progress}%</strong><span>今日完成</span></div>

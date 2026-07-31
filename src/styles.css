@@ -39,6 +39,15 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .topbar { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #d7dbd5; }
 .topbar .brand { height: 74px; }
 .text-button { color: #66716b; background: transparent; border: 0; font-size: 12px; }
+.data-actions { display: flex; align-items: center; gap: 10px; }
+.danger-text { color: #9d3d2d; }
+.dialog-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(18,31,25,.55); }
+.confirmation-dialog { width: min(460px, 100%); padding: 28px; background: #fafaf7; border: 1px solid #d8ddd7; border-radius: 18px; box-shadow: 0 24px 80px rgba(18,31,25,.3); }
+.confirmation-dialog .eyebrow { margin-bottom: 10px; }
+.confirmation-dialog h2 { margin: 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 24px; font-weight: 500; }
+.confirmation-dialog > p:last-of-type { margin: 14px 0 22px; color: #64706a; font-size: 13px; line-height: 1.65; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.danger-action { padding: 10px 13px; color: white; background: #9d3d2d; border: 1px solid #9d3d2d; border-radius: 9px; font-weight: 600; }
 .welcome { display: flex; justify-content: space-between; align-items: center; padding: 50px 0 38px; }
 .welcome .eyebrow { margin-bottom: 12px; }
 .welcome h1 { font-size: clamp(38px, 5vw, 60px); }
@@ -113,4 +122,4 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .history span { font-size: 11px; font-weight: 700; }
 .history small { color: #9fbbb0; font-size: 10px; }
 @media (max-width: 800px) { .hero, .dashboard-grid { grid-template-columns: 1fr; } .hero { padding-top: 20px; } .welcome { align-items: flex-end; } }
-@media (max-width: 520px) { .shell { width: min(100% - 24px, 1180px); } .goal-card, .today-panel, .roadmap-panel { padding: 20px; } .hero h1 { font-size: 39px; } .field-row { grid-template-columns: 1fr; gap: 0; } .loop { gap: 7px; } .welcome { padding-top: 35px; } .progress-ring { width: 84px; height: 84px; } .learning-stats { grid-template-columns: 1fr; } .task { grid-template-columns: 34px 1fr; } .minutes { display: none; } .difficulty-options, .rubric-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .shell { width: min(100% - 24px, 1180px); } .goal-card, .today-panel, .roadmap-panel { padding: 20px; } .hero h1 { font-size: 39px; } .field-row { grid-template-columns: 1fr; gap: 0; } .loop { gap: 7px; } .topbar { align-items: flex-start; } .data-actions { flex-direction: column; align-items: flex-end; padding: 15px 0; gap: 6px; } .welcome { padding-top: 35px; } .progress-ring { width: 84px; height: 84px; } .learning-stats { grid-template-columns: 1fr; } .task { grid-template-columns: 34px 1fr; } .minutes { display: none; } .difficulty-options, .rubric-grid { grid-template-columns: 1fr 1fr; } }

@@ -11,6 +11,14 @@ import type {
 } from "./types";
 
 export const LEARNING_STATE_VERSION = 3 as const;
+export const LEARNING_EXPORT_VERSION = 1 as const;
+
+export interface LearningStateExport {
+  format: "ai-learning-os-learning-data";
+  exportVersion: typeof LEARNING_EXPORT_VERSION;
+  exportedAt: string;
+  state: LearningState;
+}
 
 function dateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -170,6 +178,23 @@ export function parseLearningState(raw: string | null, now = new Date()): Parsed
   } catch {
     return { state: null, status: "recovered" };
   }
+}
+
+export function createLearningStateExport(state: LearningState, now = new Date()): LearningStateExport {
+  return {
+    format: "ai-learning-os-learning-data",
+    exportVersion: LEARNING_EXPORT_VERSION,
+    exportedAt: now.toISOString(),
+    state,
+  };
+}
+
+export function serializeLearningStateExport(state: LearningState, now = new Date()): string {
+  return `${JSON.stringify(createLearningStateExport(state, now), null, 2)}\n`;
+}
+
+export function learningStateExportFilename(now = new Date()): string {
+  return `ai-learning-os-learning-data-${dateKey(now)}.json`;
 }
 
 export function getCurrentRecord(state: LearningState): DailyLearningRecord {

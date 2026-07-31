@@ -3,13 +3,16 @@ import {
   completeTeachingTask,
   completeCurrentDay,
   completedDayCount,
+  createLearningStateExport,
   getCurrentRecord,
   initializeLearningState,
+  learningStateExportFilename,
   learningStreak,
   parseLearningState,
   saveEvaluation,
   saveTeachingSession,
   saveUnderstandingResponse,
+  serializeLearningStateExport,
   toggleCurrentTask,
 } from "./learning-state";
 import { generateLearningPlan } from "./planner";
@@ -57,6 +60,21 @@ describe("multi-day learning state", () => {
     const state = initializeLearningState(generateLearningPlan(goal));
     state.days[0].artifacts[state.days[0].tasks[0].id] = { evaluation: { totalScore: 99 } } as never;
     expect(parseLearningState(JSON.stringify(state)).status).toBe("recovered");
+  });
+
+  it("creates a versioned, portable export without changing learning data", () => {
+    const state = completedState();
+    const exportedAt = new Date("2026-07-31T14:30:00.000Z");
+    const payload = createLearningStateExport(state, exportedAt);
+
+    expect(payload).toEqual({
+      format: "ai-learning-os-learning-data",
+      exportVersion: 1,
+      exportedAt: "2026-07-31T14:30:00.000Z",
+      state,
+    });
+    expect(JSON.parse(serializeLearningStateExport(state, exportedAt))).toEqual(payload);
+    expect(learningStateExportFilename(exportedAt)).toBe("ai-learning-os-learning-data-2026-07-31.json");
   });
 
   it("requires every task before closing the day", () => {
