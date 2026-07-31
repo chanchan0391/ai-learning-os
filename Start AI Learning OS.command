@@ -18,5 +18,4 @@ fi
 
 echo "正在启动 AI Learning OS..."
 echo "关闭此窗口即可停止应用。"
-(sleep 1 && open "http://127.0.0.1:5173/") &
-exec npm run dev -- --host 127.0.0.1
+exec npm start

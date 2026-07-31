@@ -1,0 +1,123 @@
+# AI Learning OS AI 架构
+
+## 目标
+
+建立一个可替换、可测试、可评估的 AI 能力层，让 Planner Agent、Teacher Agent、Coach Agent 和 Evaluator Agent 可以共享模型基础设施，同时保持产品逻辑独立于具体模型厂商。
+
+## 核心原则
+
+1. **模型不是产品本身。** 产品价值来自学习闭环、学习者上下文、任务反馈和能力评估。
+2. **Agent 不依赖具体厂商。** Agent 只依赖 `ModelProvider` 契约，不直接调用 OpenAI、Claude 或本地模型。
+3. **密钥只存在于服务端。** 浏览器不能读取、保存或转发模型 API 密钥。
+4. **结构化输出必须验证。** JSON Schema 约束模型格式，领域校验继续验证时间预算和学习规则。
+5. **确定性逻辑保留为测试基线。** 没有凭据时仍可开发产品流程，并可比较 AI 计划与规则计划的质量。
+
+## 系统结构
+
+```text
+React UI
+   │  POST /api/plans
+   ▼
+Local API
+   │
+   ▼
+Planner Agent
+   ├── Prompt 与学习规则
+   ├── JSON Schema 输出契约
+   └── 领域校验
+   │
+   ▼
+ModelProvider
+   ├── OpenAIResponsesProvider
+   ├── DeterministicPlannerProvider（开发与测试）
+   ├── ClaudeProvider（后续）
+   └── LocalModelProvider（后续）
+```
+
+## 当前请求流程
+
+1. 用户在浏览器填写学习目标。
+2. 浏览器把目标发送到本地 `POST /api/plans`。
+3. Planner Agent 验证输入并构造系统指令、用户上下文和 JSON Schema。
+4. `ModelProvider` 选择已配置的模型；没有凭据时使用确定性开发实现。
+5. Planner Agent 验证模型输出，包括阶段范围、任务初始状态和每日分钟总数。
+6. API 只把验证后的 `LearningPlan` 返回浏览器。
+7. 浏览器保存计划和完成进度。
+
+## 模型提供者契约
+
+`ModelProvider.generateStructured` 接收：
+
+- `instructions`：稳定的 Agent 身份、职责和规则
+- `input`：当前学习者上下文
+- `schema`：返回数据的 JSON Schema
+
+它返回：
+
+- 解析后的结构化数据
+- 实际模型名称
+- 可选的厂商请求 ID，便于排查问题
+
+OpenAI 实现采用 Responses API，并使用 Structured Outputs 约束返回格式。OpenAI 当前建议将 Responses API 用于推理、工具调用和多轮工作流；模型通过环境变量显式选择，不在代码中绑定某个型号。参考：[Responses API](https://developers.openai.com/api/reference/resources/responses)、[模型指南](https://developers.openai.com/api/docs/guides/latest-model)。
+
+## 配置与安全
+
+本地实时模型通过 `.env.local` 配置：
+
+```sh
+OPENAI_API_KEY=你的密钥
+OPENAI_MODEL=你选择的模型 ID
+AI_API_PORT=8787
+```
+
+安全约束：
+
+- `.env.local` 已加入 `.gitignore`。
+- API 密钥不进入前端构建、浏览器存储、日志或 Git。
+- 模型错误只向客户端返回安全信息和可选请求 ID。
+- 请求体限制为 1 MB，响应禁止缓存。
+- OpenAI 请求使用 `store: false`；正式上线前仍需完成隐私、保留策略和用户告知设计。
+
+## 开发模式与 AI 模式
+
+### 开发模式
+
+未配置 OpenAI 环境变量时，API 使用 `DeterministicPlannerProvider`。`GET /api/health` 返回 `aiEnabled: false`，界面和 Agent 流程仍可完整测试。
+
+### AI 模式
+
+同时配置 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 后，API 使用 `OpenAIResponsesProvider`，健康检查返回 `aiEnabled: true`。仅配置其中一项会拒绝启动，防止误以为 AI 已启用。
+
+## Agent 边界
+
+### Planner Agent
+
+当前已实现。负责把目标转化为阶段路线和每日任务，并保证任务总时长符合用户预算。
+
+### Teacher Agent
+
+下一阶段实现。输入应包含当前概念、学习者水平、历史错误和本次教学目标；输出包含讲解、示例、检查问题和理解信号。
+
+### Evaluator Agent
+
+下一阶段实现。必须使用明确量表输出分项得分、证据、错误类型和下一步建议，不能只给主观总分。
+
+### Coach Agent
+
+在多天数据模型完成后实现。它根据完成情况、难度反馈和中断记录调整任务，而不是直接改变长期目标。
+
+## 测试策略
+
+- Provider 契约测试：请求结构、响应解析、错误映射和密钥边界
+- Agent 领域测试：学习规则不能被格式正确但内容错误的模型输出绕过
+- API 测试：状态、输入校验和完整计划生成
+- Evals：使用固定学习者样本比较相关性、难度、可执行性和时间预算
+- 端到端测试：浏览器创建目标并获得来自本地 API 的计划
+
+## 暂不采用
+
+- 自行训练基础模型
+- 首版即引入复杂 Multi-Agent 编排框架
+- 让浏览器直接调用模型厂商
+- 在没有 Evals 的情况下自动切换模型
+- 把所有学习历史一次性放入 Prompt

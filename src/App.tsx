@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from "react";
-import { completionRate, generateLearningPlan, validateGoal } from "./planner";
+import { completionRate, validateGoal } from "./planner";
 import type { LearningGoal, LearningPlan } from "./types";
 
 const STORAGE_KEY = "ai-learning-os-plan-v1";
@@ -25,6 +25,7 @@ export function App() {
   const [plan, setPlan] = useState<LearningPlan | null>(readPlan);
   const [goal, setGoal] = useState<LearningGoal>(INITIAL_GOAL);
   const [errors, setErrors] = useState<string[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
   const progress = useMemo(() => completionRate(plan?.today ?? []), [plan]);
 
   function savePlan(next: LearningPlan | null) {
@@ -33,11 +34,26 @@ export function App() {
     else localStorage.removeItem(STORAGE_KEY);
   }
 
-  function createPlan(event: FormEvent) {
+  async function createPlan(event: FormEvent) {
     event.preventDefault();
     const nextErrors = validateGoal(goal);
     setErrors(nextErrors);
-    if (nextErrors.length === 0) savePlan(generateLearningPlan(goal));
+    if (nextErrors.length > 0) return;
+    setIsGenerating(true);
+    try {
+      const response = await fetch("/api/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(goal),
+      });
+      const body = await response.json() as LearningPlan | { error: string };
+      if (!response.ok) throw new Error("error" in body ? body.error : "学习计划生成失败");
+      savePlan(body as LearningPlan);
+    } catch (error) {
+      setErrors([error instanceof Error ? error.message : "学习计划生成失败"]);
+    } finally {
+      setIsGenerating(false);
+    }
   }
 
   function toggleTask(taskId: string) {
@@ -69,7 +85,7 @@ export function App() {
               <label>学习周期<div className="input-unit"><input type="number" min="1" max="52" value={goal.durationWeeks} onChange={(event) => setGoal({ ...goal, durationWeeks: Number(event.target.value) })} /><span>周</span></div></label>
             </div>
             {errors.length > 0 && <div className="errors">{errors.join(" · ")}</div>}
-            <button type="submit">生成我的学习路线 <span>→</span></button>
+            <button type="submit" disabled={isGenerating}>{isGenerating ? "Planner Agent 正在规划…" : "生成我的学习路线"} <span>→</span></button>
             <p className="privacy">数据仅保存在当前浏览器中</p>
           </form>
         </section>
@@ -118,4 +134,3 @@ export function App() {
     </main>
   );
 }
-

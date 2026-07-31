@@ -2,7 +2,7 @@
 
 ## Project Structure & Content Organization
 
-This repository contains the product-start document and first runnable prototype for **AI Learning OS**, an AI-native personal learning system. The primary brief is [`AI School.md`](./AI%20School.md). Product decisions and the active backlog live in `docs/`; the React prototype and its tests live in `src/`.
+This repository contains the product-start document and runnable prototype for **AI Learning OS**, an AI-native personal learning system. The primary brief is [`AI School.md`](./AI%20School.md). Product decisions and the active backlog live in `docs/`; the React client lives in `src/`; the local API, Agents, and model adapters live in `server/`. Tests are colocated with their modules.
 
 Keep future materials organized by purpose rather than mixing drafts into the root. Suggested paths are `docs/` for product and technical documentation, `src/` for application code, `tests/` for automated tests, and `assets/` for images or diagrams. Update this guide when that structure becomes real.
 
@@ -11,8 +11,10 @@ Keep future materials organized by purpose rather than mixing drafts into the ro
 The project uses Node.js, Vite, React, TypeScript, and Vitest. Canonical commands are:
 
 ```sh
-npm run dev     # start the local prototype
-npm start       # start the prototype and open it in a browser
+npm run dev     # start the web client and local Agent API in watch mode
+npm start       # start the web client and Agent API, then open a browser
+npm run dev:web # start only the Vite web client
+npm run dev:api # start only the local Agent API
 npm test        # run automated tests once
 npm run build   # type-check and create a production build
 npm run check   # run all required validation

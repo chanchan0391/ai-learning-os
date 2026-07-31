@@ -1,11 +1,13 @@
 # AI Learning OS
 
-AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现了第一条可运行的 MVP 闭环：用户输入学习目标，系统生成阶段路线和当天任务，用户完成任务并获得即时进度反馈。
+AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现了第一条可运行的 MVP 闭环，并建立了服务端 AI 能力层：用户输入学习目标，Planner Agent 通过可替换模型提供者生成阶段路线和当天任务，用户完成任务并获得即时进度反馈。
 
 ## 当前能力
 
 - 创建学习目标：主题、当前基础、目标结果、每日时间和学习周期
 - Planner Agent 领域逻辑：生成分阶段学习路线
+- 服务端 Agent API：浏览器不接触模型密钥
+- 可替换模型层：OpenAI Responses API 与确定性开发实现
 - Coach Agent 起始闭环：诊断、学习、实践、复盘四类每日任务
 - 本地进度保存：刷新页面后保留当前计划和完成状态
 - 响应式界面：支持桌面和移动端
@@ -13,7 +15,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 
 ## 本地运行
 
-需要 Node.js 20 或更高版本。
+需要 Node.js 20.12 或更高版本。
 
 ### 最简单方式（macOS）
 
@@ -29,6 +31,14 @@ npm start
 ```
 
 `npm start` 会启动应用并自动打开浏览器。
+
+默认使用不需要凭据的确定性开发模式。要启用真实 AI 模型：
+
+```sh
+cp .env.example .env.local
+```
+
+然后在 `.env.local` 中填写 `OPENAI_API_KEY` 和 `OPENAI_MODEL`，重新运行 `npm start`。密钥文件不会被 Git 提交。
 
 ## 验证
 
@@ -46,11 +56,16 @@ src/
   planner.test.ts   自动化测试
   types.ts          核心领域类型
   styles.css        视觉系统与响应式布局
+server/
+  agents/           Agent 编排、Prompt 和领域校验
+  ai/               模型提供者契约与厂商适配器
+  app.ts            本地 HTTP API
 docs/
+  ai-architecture.md AI 能力架构与安全边界
   mvp-spec.md       MVP 范围与产品决策
   todo.md           当前产品待办列表
 ```
 
 ## 设计原则
 
-第一阶段使用确定性规则生成计划，以便快速验证体验、建立测试基线，并保持零 API 凭据依赖。后续接入 LLM 时，页面和领域模型无需重写，只替换 Planner Agent 的生成实现。
+确定性规则作为开发和评估基线保留。配置模型后，Planner Agent 会通过同一个结构化契约调用实时 AI；页面和领域模型不依赖具体厂商。详细设计见 [`docs/ai-architecture.md`](docs/ai-architecture.md)。

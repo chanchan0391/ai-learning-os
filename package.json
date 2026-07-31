@@ -4,8 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "start": "vite --host 127.0.0.1 --open",
+    "dev": "concurrently -k -n web,api \"vite\" \"tsx watch server/index.ts\"",
+    "dev:web": "vite",
+    "dev:api": "tsx watch server/index.ts",
+    "start": "concurrently -k -n web,api \"vite --host 127.0.0.1 --open\" \"tsx server/index.ts\"",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "check": "npm run test && npm run build"
@@ -19,6 +21,9 @@
   "devDependencies": {
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@types/node": "latest",
+    "concurrently": "latest",
+    "tsx": "latest",
     "typescript": "latest",
     "vitest": "latest"
   }
