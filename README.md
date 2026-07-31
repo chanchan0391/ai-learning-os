@@ -1,5 +1,7 @@
 # AI Learning OS
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现了第一条可运行的 MVP 闭环，并建立了服务端 AI 能力层：用户输入学习目标，Planner Agent 通过可替换模型提供者生成阶段路线和当天任务，用户完成任务并获得即时进度反馈。
 
 ## 当前能力
@@ -69,3 +71,11 @@ docs/
 ## 设计原则
 
 确定性规则作为开发和评估基线保留。配置模型后，Planner Agent 会通过同一个结构化契约调用实时 AI；页面和领域模型不依赖具体厂商。详细设计见 [`docs/ai-architecture.md`](docs/ai-architecture.md)。
+
+## 参与贡献
+
+欢迎提交 Issue 和 Pull Request。开始前请阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)，并在提交代码前运行 `npm run check`。
+
+## License
+
+本项目采用 [MIT License](LICENSE)。

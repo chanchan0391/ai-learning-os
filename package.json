@@ -2,6 +2,11 @@
   "name": "ai-learning-os",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chanchan0391/ai-learning-os.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n web,api \"vite\" \"tsx watch server/index.ts\"",
