@@ -1,6 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { LearningGoal } from "../src/types";
-import { AgentOutputError, createPlannerAgent } from "./agents/planner-agent";
+import type { EvaluationRequest, LearningGoal, TeachingSessionRequest } from "../src/types";
+import { AgentOutputError } from "./agents/agent-errors";
+import { createEvaluatorAgent } from "./agents/evaluator-agent";
+import { createPlannerAgent } from "./agents/planner-agent";
+import { createTeacherAgent } from "./agents/teacher-agent";
 import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -24,6 +27,8 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
 
 export function createApp(provider: ModelProvider) {
   const planner = createPlannerAgent(provider);
+  const teacher = createTeacherAgent(provider);
+  const evaluator = createEvaluatorAgent(provider);
   return createServer(async (request, response) => {
     try {
       if (request.method === "GET" && request.url === "/api/health") {
@@ -32,6 +37,14 @@ export function createApp(provider: ModelProvider) {
       if (request.method === "POST" && request.url === "/api/plans") {
         const goal = await readJson(request) as LearningGoal;
         return sendJson(response, 201, await planner.createPlan(goal));
+      }
+      if (request.method === "POST" && request.url === "/api/teaching-sessions") {
+        const teachingRequest = await readJson(request) as TeachingSessionRequest;
+        return sendJson(response, 201, await teacher.createSession(teachingRequest));
+      }
+      if (request.method === "POST" && request.url === "/api/evaluations") {
+        const evaluationRequest = await readJson(request) as EvaluationRequest;
+        return sendJson(response, 201, await evaluator.evaluate(evaluationRequest));
       }
       return sendJson(response, 404, { error: "Not found" });
     } catch (error) {

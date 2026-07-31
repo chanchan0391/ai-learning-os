@@ -16,12 +16,12 @@
 
 ```text
 React UI
-   │  POST /api/plans
+   │  POST /api/plans、/api/teaching-sessions、/api/evaluations
    ▼
 Local API
    │
    ▼
-Planner Agent
+Planner / Teacher / Evaluator Agent
    ├── Prompt 与学习规则
    ├── JSON Schema 输出契约
    └── 领域校验
@@ -29,7 +29,7 @@ Planner Agent
    ▼
 ModelProvider
    ├── OpenAIResponsesProvider
-   ├── DeterministicPlannerProvider（开发与测试）
+   ├── DeterministicModelProvider（开发与测试）
    ├── ClaudeProvider（后续）
    └── LocalModelProvider（后续）
 ```
@@ -82,7 +82,7 @@ AI_API_PORT=8787
 
 ### 开发模式
 
-未配置 OpenAI 环境变量时，API 使用 `DeterministicPlannerProvider`。`GET /api/health` 返回 `aiEnabled: false`，界面和 Agent 流程仍可完整测试。
+未配置 OpenAI 环境变量时，API 使用 `DeterministicModelProvider`。`GET /api/health` 返回 `aiEnabled: false`，界面和 Agent 流程仍可完整测试。
 
 ### AI 模式
 
@@ -96,11 +96,28 @@ AI_API_PORT=8787
 
 ### Teacher Agent
 
-下一阶段实现。输入应包含当前概念、学习者水平、历史错误和本次教学目标；输出包含讲解、示例、检查问题和理解信号。
+当前服务端契约与 API 已实现。`POST /api/teaching-sessions` 接收学习目标、当前任务，以及已知概念和近期错误；输出一个短教学会话：
+
+- 单一核心概念与针对当前水平的解释
+- 一个完整示例
+- 2–3 个要求主动回忆或迁移的理解检查
+- 一个最小实践题
+- 可观察、可供后续评估的完成信号
+
+理解检查 ID 必须唯一，检查和完成信号不能为空。当前页面尚未接入此流程。
 
 ### Evaluator Agent
 
-下一阶段实现。必须使用明确量表输出分项得分、证据、错误类型和下一步建议，不能只给主观总分。
+当前服务端契约与 API 已实现。`POST /api/evaluations` 接收学习目标、当前任务和学习者成果，使用四个固定维度评分，每项 0–4 分：
+
+| 维度 | 评估重点 |
+| --- | --- |
+| `understanding` | 能否准确解释核心概念和机制 |
+| `application` | 能否把概念应用于当前任务或新场景 |
+| `evidence` | 是否提供可复查的结果、测试或观察 |
+| `reflection` | 能否识别错误、边界和改进方向 |
+
+总分 0–7 为 `needs-support`，8–12 为 `developing`，13–16 为 `ready`。Agent 领域层会重新计算总分并校验等级，防止格式正确但自相矛盾的模型输出进入产品。每项必须包含提交内容中的证据和可执行反馈，结果还包含误解列表和唯一的最小下一步。当前页面和版本化学习记录尚未接入此结果。
 
 ### Coach Agent
 
@@ -111,6 +128,7 @@ AI_API_PORT=8787
 - Provider 契约测试：请求结构、响应解析、错误映射和密钥边界
 - Agent 领域测试：学习规则不能被格式正确但内容错误的模型输出绕过
 - API 测试：状态、输入校验和完整计划生成
+- Teacher/Evaluator 契约测试：必需教学元素、理解检查唯一性、固定量表、总分和掌握等级一致性
 - Evals：使用固定学习者样本比较相关性、难度、可执行性和时间预算
 - 端到端测试：浏览器创建目标并获得来自本地 API 的计划
 

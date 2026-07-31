@@ -1,17 +1,13 @@
 import { validateGoal } from "../../src/planner";
 import type { DailyTask, LearningGoal, LearningPlan, LearningStage } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
+import { AgentOutputError } from "./agent-errors";
+
+export { AgentOutputError } from "./agent-errors";
 
 interface GeneratedPlan {
   stages: LearningStage[];
   today: DailyTask[];
-}
-
-export class AgentOutputError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "AgentOutputError";
-  }
 }
 
 export const LEARNING_PLAN_SCHEMA: JsonSchema = {

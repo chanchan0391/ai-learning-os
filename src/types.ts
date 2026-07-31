@@ -53,3 +53,52 @@ export interface LearningState {
   currentDay: number;
   days: DailyLearningRecord[];
 }
+
+export interface TeachingSessionRequest {
+  goal: LearningGoal;
+  task: DailyTask;
+  learnerContext: {
+    knownConcepts: string[];
+    recentErrors: string[];
+  };
+}
+
+export interface UnderstandingCheck {
+  id: string;
+  prompt: string;
+  expectedSignals: string[];
+}
+
+export interface TeachingSession {
+  concept: string;
+  explanation: string;
+  workedExample: string;
+  understandingChecks: UnderstandingCheck[];
+  practicePrompt: string;
+  completionSignals: string[];
+}
+
+export interface EvaluationRequest {
+  goal: LearningGoal;
+  task: DailyTask;
+  submission: string;
+}
+
+export type EvaluationDimension = "understanding" | "application" | "evidence" | "reflection";
+
+export interface RubricScore {
+  dimension: EvaluationDimension;
+  score: number;
+  evidence: string;
+  feedback: string;
+}
+
+export type MasteryLevel = "needs-support" | "developing" | "ready";
+
+export interface EvaluationResult {
+  rubric: RubricScore[];
+  totalScore: number;
+  masteryLevel: MasteryLevel;
+  misconceptions: string[];
+  nextAction: string;
+}

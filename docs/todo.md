@@ -28,10 +28,12 @@
 
 - [ ] 重启 Codex 后验证官方 OpenAI 文档连接器
 - [ ] 使用用户本地凭据完成一次实时模型烟雾测试
-- [ ] 定义 Teacher Agent 的教学会话契约
-- [ ] 定义 Evaluator Agent 的评分量表与结构化输出
+- [x] 定义并实现 Teacher Agent 的教学会话契约与 API
+- [x] 定义并实现 Evaluator Agent 的固定量表、结构化输出与 API
 - [x] 用可替换适配器接入第一个 LLM 服务
 - [x] 添加任务难度反馈并让 Planner Agent 调整后续任务
+- [ ] 在学习任务界面接入短教学会话、主动理解检查和成果提交
+- [ ] 把 Evaluator 结果写入版本化学习记录，并据此调整下一天任务
 
 ### P2：工程化
 
