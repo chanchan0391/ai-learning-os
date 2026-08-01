@@ -20,6 +20,7 @@ import {
   saveReviewPerformance,
   saveTeachingSession,
   saveUnderstandingResponse,
+  scheduledReviewItems,
   serializeLearningStateExport,
   serializeStageNoteMarkdown,
   stageNoteMarkdownFilename,
@@ -386,6 +387,41 @@ describe("multi-day learning state", () => {
     reviewTask = getCurrentRecord(state).tasks.find((item) => item.type === "diagnose")!;
     state = saveReviewPerformance(state, reviewTask.id, "easy");
     expect(dueReviewItems(state, 24)).toHaveLength(1);
+  });
+
+  it("previews due and upcoming reviews without extending beyond the plan", () => {
+    let state = completedState();
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "practice")!;
+    state = saveEvaluation(state, task.id, "成果", {
+      rubric: [
+        { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 8,
+      masteryLevel: "developing",
+      misconceptions: ["混淆重试与恢复"],
+      nextAction: "画出恢复路径",
+    });
+    state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+
+    expect(scheduledReviewItems(state)).toEqual([{
+      sourceDay: 1,
+      dueDay: 2,
+      misconceptions: ["混淆重试与恢复"],
+      nextAction: "画出恢复路径",
+    }]);
+
+    const reviewTask = getCurrentRecord(state).tasks.find((item) => item.type === "diagnose")!;
+    state = saveReviewPerformance(state, reviewTask.id, "easy");
+    expect(scheduledReviewItems(state)).toEqual([{
+      sourceDay: 1,
+      dueDay: 9,
+      misconceptions: ["混淆重试与恢复"],
+      nextAction: "画出恢复路径",
+    }]);
+    expect(() => scheduledReviewItems(state, -1)).toThrow("复习预览天数必须是非负整数");
   });
 
   it("preserves prior history while advancing consecutive days", () => {

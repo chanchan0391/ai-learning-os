@@ -18,6 +18,7 @@ import {
   saveReviewPerformance,
   saveTeachingSession,
   saveUnderstandingResponse,
+  scheduledReviewItems,
   serializeLearningStateExport,
   serializeStageNoteMarkdown,
   stageNoteMarkdownFilename,
@@ -104,6 +105,7 @@ export function App() {
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
   const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
+  const reviewSchedule = useMemo(() => learningState ? scheduledReviewItems(learningState) : [], [learningState]);
   const currentStage = plan?.stages.find((stage) => {
     const week = Math.ceil((learningState?.currentDay ?? 1) / 7);
     return week >= stage.startWeek && week <= stage.endWeek;
@@ -784,6 +786,25 @@ export function App() {
         <div><strong>{learningStreak(learningState)}</strong><span>连续学习日</span></div>
         <div><strong>{completedDayCount(learningState)}</strong><span>已完成天数</span></div>
         <div><strong>{plan.goal.durationWeeks * 7}</strong><span>计划学习日</span></div>
+      </section>
+
+      <section className="panel review-schedule" aria-labelledby="review-schedule-title">
+        <div className="review-schedule-heading">
+          <div><span className="agent-label">Review Agent · 未来 14 天</span><h2 id="review-schedule-title">即将复习的薄弱点</h2></div>
+          <small>{reviewSchedule.length} 项待复习</small>
+        </div>
+        {reviewSchedule.length > 0 ? (
+          <ol>
+            {reviewSchedule.map((item) => (
+              <li key={`${item.sourceDay}-${item.dueDay}`}>
+                <span className={item.dueDay === learningState.currentDay ? "due-now" : ""}>
+                  {item.dueDay === learningState.currentDay ? "今天" : `第 ${item.dueDay} 天`}
+                </span>
+                <div><strong>回顾第 {item.sourceDay} 天</strong><p>{item.misconceptions.length > 0 ? `纠正：${item.misconceptions.join("、")}；` : ""}{item.nextAction}</p></div>
+              </li>
+            ))}
+          </ol>
+        ) : <p className="empty-notes">未来 14 天暂无待复习薄弱点；新的评估反馈会自动进入这里。</p>}
       </section>
 
       <section className="panel notes-panel" aria-labelledby="notes-title">

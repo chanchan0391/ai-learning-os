@@ -555,6 +555,10 @@ export interface DueReviewItem {
   misconceptions: string[];
 }
 
+export interface ScheduledReviewItem extends DueReviewItem {
+  dueDay: number;
+}
+
 export function dueReviewItems(state: LearningState, targetDay = state.currentDay + 1): DueReviewItem[] {
   return state.days.flatMap((record) => {
     const evaluation = Object.values(record.artifacts)
@@ -587,6 +591,16 @@ export function dueReviewItems(state: LearningState, targetDay = state.currentDa
       misconceptions: evaluation.misconceptions,
     }];
   }).sort((a, b) => b.sourceDay - a.sourceDay);
+}
+
+export function scheduledReviewItems(state: LearningState, horizonDays = 14): ScheduledReviewItem[] {
+  if (!Number.isInteger(horizonDays) || horizonDays < 0) throw new Error("复习预览天数必须是非负整数");
+  const finalDay = Math.min(state.plan.goal.durationWeeks * 7, state.currentDay + horizonDays);
+  const schedule: ScheduledReviewItem[] = [];
+  for (let dueDay = state.currentDay; dueDay <= finalDay; dueDay += 1) {
+    schedule.push(...dueReviewItems(state, dueDay).map((item) => ({ ...item, dueDay })));
+  }
+  return schedule;
 }
 
 export function saveReviewPerformance(state: LearningState, taskId: string, recall: ReviewRecall): LearningState {

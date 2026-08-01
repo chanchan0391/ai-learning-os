@@ -103,7 +103,12 @@ describe("learning data controls", () => {
     render(<App />);
 
     expect(screen.getByRole("group", { name: "复习回忆表现" })).toBeTruthy();
+    const schedule = screen.getByRole("region", { name: "即将复习的薄弱点" });
+    expect(within(schedule).getByText("今天")).toBeTruthy();
+    expect(within(schedule).getByText(/独立解释关键机制/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "轻松想起 · 延长间隔" }));
+
+    expect(within(schedule).getByText("第 9 天")).toBeTruthy();
 
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
     const reviewTask = saved.days[1].tasks.find((task: { type: string }) => task.type === "diagnose");
