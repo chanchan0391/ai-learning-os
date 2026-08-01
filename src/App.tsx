@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   completeTeachingTask,
   completeCurrentDay,
@@ -16,11 +16,13 @@ import {
 } from "./learning-state";
 import { BrowserLearningStateRepository } from "./learning-storage";
 import { completionRate, validateGoal } from "./planner";
+import { BrowserSyncClient, type AuthState } from "./sync-client";
 import type { LearningStateExport } from "./learning-state";
 import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, TaskDifficulty, TeachingSession } from "./types";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
+const syncClient = new BrowserSyncClient(localStorage);
 
 const INITIAL_GOAL: LearningGoal = {
   subject: "AI Agent 工程",
@@ -45,10 +47,20 @@ export function App() {
   const [pendingImport, setPendingImport] = useState<LearningStateExport | null>(null);
   const [storageNotice, setStorageNotice] = useState(initialLoad.status === "recovered" ? "本地进度无法读取，已安全重置。" : "");
   const [storageNoticeIsError, setStorageNoticeIsError] = useState(initialLoad.status === "recovered");
+  const [authState, setAuthState] = useState<AuthState>({ status: "checking" });
+  const [isSyncing, setIsSyncing] = useState(false);
   const importInput = useRef<HTMLInputElement>(null);
   const plan = learningState?.plan ?? null;
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
+
+  useEffect(() => {
+    let active = true;
+    void syncClient.getAuthState().then((state) => {
+      if (active) setAuthState(state);
+    });
+    return () => { active = false; };
+  }, []);
 
   function saveState(next: LearningState | null) {
     setLearningState(next);
@@ -217,10 +229,47 @@ export function App() {
 
   function deleteLearningData() {
     saveState(null);
+    syncClient.clearMetadata();
     setSubmissionDrafts({});
     setAgentError("");
     setErrors([]);
     setDeleteConfirmationOpen(false);
+  }
+
+  async function syncLearningData() {
+    setIsSyncing(true);
+    setStorageNotice("");
+    try {
+      const result = await syncClient.sync(learningState);
+      if (result.state) {
+        saveState(result.state);
+        setGoal(result.state.plan.goal);
+      }
+      const changes = [
+        result.uploaded > 0 ? `上传 ${result.uploaded} 项` : "",
+        result.downloaded > 0 ? `下载 ${result.downloaded} 项` : "",
+      ].filter(Boolean).join("，");
+      setStorageNotice(changes ? `同步完成：${changes}。` : "本地与云端进度已一致。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "同步失败，请稍后重试。");
+      setStorageNoticeIsError(true);
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
+  async function logout() {
+    try {
+      await syncClient.logout();
+      syncClient.clearMetadata();
+      setAuthState({ status: "signed-out" });
+      setStorageNotice("已退出账号，本地学习记录仍保留在此浏览器中。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "退出登录失败");
+      setStorageNoticeIsError(true);
+    }
   }
 
   const importControl = (
@@ -229,6 +278,18 @@ export function App() {
       <button className="text-button" onClick={() => importInput.current?.click()}>导入学习记录</button>
     </>
   );
+
+  const accountControls = authState.status === "signed-in" ? (
+    <div className="account-controls" aria-label="账号与同步">
+      <span className="sync-status">已登录</span>
+      <button className="text-button sync-button" disabled={isSyncing} onClick={syncLearningData}>{isSyncing ? "正在同步…" : "立即同步"}</button>
+      <button className="text-button" onClick={logout}>退出</button>
+    </div>
+  ) : authState.status === "signed-out" ? (
+    <a className="text-button account-link" href={`/api/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`}>登录并同步</a>
+  ) : authState.status === "local-only" ? (
+    <span className="sync-status">仅本地</span>
+  ) : null;
 
   const importDialog = pendingImport && (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
@@ -249,7 +310,7 @@ export function App() {
   if (!plan || !learningState || !currentRecord) {
     return (
       <main className="shell onboarding">
-        <header className="topbar"><div className="brand"><span className="brand-mark">A</span> AI Learning OS <span className="beta">PROTOTYPE</span></div><div className="data-actions">{importControl}</div></header>
+        <header className="topbar"><div className="brand"><span className="brand-mark">A</span> AI Learning OS <span className="beta">PROTOTYPE</span></div><div className="data-actions">{accountControls}{importControl}</div></header>
         {storageNotice && <div className="storage-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
         {importDialog}
         <section className="hero">
@@ -282,6 +343,7 @@ export function App() {
       <header className="topbar">
         <div className="brand"><span className="brand-mark">A</span> AI Learning OS</div>
         <div className="data-actions" aria-label="学习数据控制">
+          {accountControls}
           {importControl}
           <button className="text-button" onClick={exportLearningData}>导出学习记录</button>
           <button className="text-button danger-text" onClick={() => setDeleteConfirmationOpen(true)}>删除本地数据</button>

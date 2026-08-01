@@ -41,6 +41,11 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .topbar { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #d7dbd5; }
 .topbar .brand { height: 74px; }
 .text-button { color: #66716b; background: transparent; border: 0; font-size: 12px; }
+.text-button:disabled { cursor: wait; opacity: .55; }
+.account-controls { display: flex; align-items: center; gap: 8px; padding-right: 10px; border-right: 1px solid #d7dbd5; }
+.account-link { text-decoration: none; }
+.sync-status { color: #64706a; font-size: 11px; }
+.sync-button { color: #1c674c; font-weight: 700; }
 .data-actions { display: flex; align-items: center; gap: 10px; }
 .danger-text { color: #9d3d2d; }
 .dialog-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(18,31,25,.55); }

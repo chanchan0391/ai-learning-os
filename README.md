@@ -23,6 +23,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - PostgreSQL 同步适配器：事务化条件写入、设备校验、持久幂等记录和可执行迁移
 - 服务端会话生命周期：映射验证后的 OIDC 身份、登记设备，只保存不透明令牌哈希，并支持会话查询、原子轮换和登出撤销
 - Provider-neutral OIDC 登录：discovery、签名 state/nonce 事务、S256 PKCE、授权码交换和 JWKS ID Token 验证
+- 账号与跨设备同步界面：显示会话状态，显式上传或恢复进度，并在两端同时更改时拒绝静默覆盖
 - 响应式界面：支持桌面和移动端
 - 自动化测试：覆盖输入校验、路线分期、时间预算、学习状态、关键界面交互和可访问性扫描
 - 持续集成：推送和 Pull Request 自动运行测试与生产构建
@@ -61,7 +62,7 @@ npm test
 npm run build
 ```
 
-开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。启用登录还需同时配置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`；浏览器从 `/api/auth/login` 进入登录流程。身份方案和 HTTP 契约见 [`docs/authentication-design.md`](docs/authentication-design.md)。
+开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。启用登录还需同时配置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`；配置完成后，页面会显示登录与“立即同步”控制。身份方案和 HTTP 契约见 [`docs/authentication-design.md`](docs/authentication-design.md)。
 
 ## 项目结构
 
@@ -70,6 +71,7 @@ src/
   App.tsx           页面与本地交互状态
   learning-state.ts 多天状态、教学成果、评估、迁移与下一天生成
   learning-storage.ts 本地持久化仓库与版本键迁移
+  sync-client.ts     账号会话、条件同步、云端恢复与冲突保护
   planner.ts        Planner Agent 领域逻辑
   planner.test.ts   自动化测试
   types.ts          核心领域类型

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import axe from "axe-core";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -32,6 +32,7 @@ describe("learning data controls", () => {
     cleanup();
     localStorage.clear();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("renders the active learning dashboard without detectable accessibility violations", async () => {
@@ -112,5 +113,36 @@ describe("learning data controls", () => {
     expect(screen.getByRole("alert").textContent).toContain("版本暂不受支持");
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.goal.subject).toBe(goal.subject);
+  });
+
+  it("shows account controls and syncs local progress for an authenticated session", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") {
+        return Response.json({ authenticated: true, principal: { userId: "user-1", deviceId: "device-1" } });
+      }
+      if (url.pathname === "/api/sync/changes") return Response.json({ changes: [], cursor: "cursor-1" });
+      if (init?.method === "PUT") {
+        const value = JSON.parse(String(init.body));
+        const daily = url.pathname.includes("/daily-records/");
+        return Response.json({
+          entityType: daily ? "daily-record" : "learning-plan",
+          entityId: decodeURIComponent(url.pathname.split("/").at(-1)!),
+          revision: 1,
+          updatedAt: "2026-08-01T10:00:00.000Z",
+          value,
+        });
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+
+    expect(await screen.findByText("已登录")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "立即同步" }));
+
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("上传 2 项"));
+    expect(screen.getByRole("button", { name: "退出" })).toBeTruthy();
   });
 });
