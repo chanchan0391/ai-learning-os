@@ -284,6 +284,42 @@ export function learningStateExportFilename(now = new Date()): string {
   return `ai-learning-os-learning-data-${dateKey(now)}.json`;
 }
 
+function safeFilenamePart(value: string): string {
+  const cleaned = value
+    .trim()
+    .replace(/[\u0000-\u001f\u007f<>:"：/\\|?*%]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+  return cleaned || "stage-note";
+}
+
+export function stageNoteMarkdownFilename(note: StageLearningNote, now = new Date()): string {
+  return `${safeFilenamePart(note.title)}-${dateKey(now)}.md`;
+}
+
+export function serializeStageNoteMarkdown(plan: LearningPlan, noteId: string, now = new Date()): string {
+  const note = (plan.notes ?? []).find((item) => item.id === noteId);
+  if (!note) throw new Error("学习笔记不存在");
+  const stage = plan.stages.find((item) => item.id === note.stageId);
+  if (!stage) throw new Error("学习阶段不存在");
+  const title = note.title.replace(/[\r\n]+/g, " ").trim();
+  const sourceDays = note.sourceDays.length > 0 ? note.sourceDays.join("、") : "无";
+  return [
+    `# ${title}`,
+    "",
+    `> 学习目标：${plan.goal.subject}`,
+    `> 阶段：${stage.title}（第 ${stage.startWeek}${stage.endWeek > stage.startWeek ? `–${stage.endWeek}` : ""} 周）`,
+    `> 来源学习日：${sourceDays}`,
+    `> 笔记更新时间：${note.updatedAt}`,
+    `> 导出时间：${now.toISOString()}`,
+    "",
+    note.content.trim(),
+    "",
+  ].join("\n");
+}
+
 export function getCurrentRecord(state: LearningState): DailyLearningRecord {
   const current = state.days.find((day) => day.day === state.currentDay);
   if (!current) throw new Error("当前学习日不存在");
@@ -486,6 +522,17 @@ export function updateStageNote(
     plan: {
       ...state.plan,
       notes: (state.plan.notes ?? []).map((note) => note.id === noteId ? { ...note, title, content, updatedAt: now.toISOString() } : note),
+    },
+  };
+}
+
+export function deleteStageNote(state: LearningState, noteId: string): LearningState {
+  if (!(state.plan.notes ?? []).some((note) => note.id === noteId)) throw new Error("学习笔记不存在");
+  return {
+    ...state,
+    plan: {
+      ...state.plan,
+      notes: (state.plan.notes ?? []).filter((note) => note.id !== noteId),
     },
   };
 }

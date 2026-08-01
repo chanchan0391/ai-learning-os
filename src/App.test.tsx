@@ -151,6 +151,35 @@ describe("learning data controls", () => {
     expect(savedNote.sourceDays).toEqual([1]);
   });
 
+  it("exports a stage note as Markdown and requires confirmation before deleting it", async () => {
+    const user = userEvent.setup();
+    const downloads: string[] = [];
+    let state = initializeLearningState(generateLearningPlan(goal));
+    state.plan.notes = [{
+      id: "note-stage-1", stageId: "stage-1", title: "工具调用速查", content: "先校验参数。", sourceDays: [1], updatedAt: "2026-08-01T12:00:00.000Z",
+    }];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:stage-note") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) {
+      downloads.push(this.download);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "导出 Markdown" }));
+    expect(downloads).toEqual([expect.stringMatching(/^工具调用速查-\d{4}-\d{2}-\d{2}\.md$/)]);
+
+    await user.click(screen.getByRole("button", { name: "删除" }));
+    expect(screen.getByRole("alertdialog", { name: "删除“工具调用速查”？" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("heading", { name: "工具调用速查" })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "删除" }));
+    await user.click(screen.getByRole("button", { name: "确认删除笔记" }));
+    expect(screen.queryByRole("heading", { name: "工具调用速查" })).toBeNull();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.notes).toEqual([]);
+  });
+
   it("keeps data on cancellation and removes every local version after confirmation", async () => {
     const user = userEvent.setup();
     localStorage.setItem("ai-learning-os-state-v2", "legacy-state");

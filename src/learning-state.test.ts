@@ -6,6 +6,7 @@ import {
   completedDayCount,
   createStageNote,
   createLearningStateExport,
+  deleteStageNote,
   detectLearningInterruption,
   dueReviewItems,
   generateStageNote,
@@ -20,6 +21,8 @@ import {
   saveTeachingSession,
   saveUnderstandingResponse,
   serializeLearningStateExport,
+  serializeStageNoteMarkdown,
+  stageNoteMarkdownFilename,
   toggleCurrentTask,
   updateStageNote,
 } from "./learning-state";
@@ -226,6 +229,25 @@ describe("multi-day learning state", () => {
     expect(state.plan.notes?.[0].content).toContain("宿主校验并执行工具。");
     expect(() => appendStageNoteEvidence(state, "note-stage-1")).toThrow("没有可追加的新学习证据");
     expect(parseLearningState(JSON.stringify(state))).toMatchObject({ status: "valid" });
+  });
+
+  it("exports a stage note as Markdown and deletes only the selected note", () => {
+    let state = initializeLearningState(generateLearningPlan(goal));
+    state = createStageNote(state, "stage-1", { title: "工具/调用：速查", content: "人工结论：先定义执行边界。" }, new Date("2026-08-01T12:00:00.000Z"));
+    const note = state.plan.notes![0];
+
+    expect(stageNoteMarkdownFilename(note, new Date("2026-08-02T10:00:00.000Z"))).toBe("工具-调用-速查-2026-08-02.md");
+    const markdown = serializeStageNoteMarkdown(state.plan, note.id, new Date("2026-08-02T10:00:00.000Z"));
+    expect(markdown).toContain("# 工具/调用：速查");
+    expect(markdown).toContain("> 学习目标：AI Agent 工程");
+    expect(markdown).toContain("> 阶段：建立基础（第 1–3 周）");
+    expect(markdown).toContain("> 来源学习日：无");
+    expect(markdown).toContain("人工结论：先定义执行边界。");
+
+    state = deleteStageNote(state, note.id);
+    expect(state.plan.notes).toEqual([]);
+    expect(state.days).toHaveLength(1);
+    expect(() => deleteStageNote(state, note.id)).toThrow("学习笔记不存在");
   });
 
   it("uses persisted evaluation feedback to focus the next day", () => {

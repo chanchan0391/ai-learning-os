@@ -5,6 +5,7 @@ import {
   completeCurrentDay,
   completedDayCount,
   createStageNote,
+  deleteStageNote,
   detectLearningInterruption,
   dueReviewItems,
   generateStageNote,
@@ -18,6 +19,8 @@ import {
   saveTeachingSession,
   saveUnderstandingResponse,
   serializeLearningStateExport,
+  serializeStageNoteMarkdown,
+  stageNoteMarkdownFilename,
   toggleCurrentTask,
   updateStageNote,
 } from "./learning-state";
@@ -82,6 +85,7 @@ export function App() {
   const [noteQuery, setNoteQuery] = useState("");
   const [editingNoteId, setEditingNoteId] = useState("");
   const [creatingStageNote, setCreatingStageNote] = useState(false);
+  const [pendingDeleteNote, setPendingDeleteNote] = useState<StageLearningNote | null>(null);
   const [noteDraft, setNoteDraft] = useState({ title: "", content: "" });
   const importInput = useRef<HTMLInputElement>(null);
   const learningStateRef = useRef<LearningState | null>(initialLoad.state);
@@ -329,6 +333,32 @@ export function App() {
       setStorageNotice(error instanceof Error ? error.message : "无法保存阶段笔记");
       setStorageNoticeIsError(true);
     }
+  }
+
+  function exportStageNote(note: StageLearningNote) {
+    if (!plan) return;
+    const now = new Date();
+    const blob = new Blob([serializeStageNoteMarkdown(plan, note.id, now)], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = stageNoteMarkdownFilename(note, now);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setStorageNotice(`已导出“${note.title}”Markdown 笔记。`);
+    setStorageNoticeIsError(false);
+  }
+
+  function confirmDeleteStageNote() {
+    if (!pendingDeleteNote) return;
+    const title = pendingDeleteNote.title;
+    updateState((current) => deleteStageNote(current, pendingDeleteNote.id));
+    if (editingNoteId === pendingDeleteNote.id) setEditingNoteId("");
+    setPendingDeleteNote(null);
+    setStorageNotice(`已删除“${title}”阶段笔记。`);
+    setStorageNoticeIsError(false);
   }
 
   function exportLearningData() {
@@ -599,6 +629,22 @@ export function App() {
     </div>
   );
 
+  const noteDeleteDialog = pendingDeleteNote && (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) setPendingDeleteNote(null);
+    }}>
+      <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="note-delete-dialog-title" aria-describedby="note-delete-dialog-description">
+        <p className="eyebrow">删除阶段笔记</p>
+        <h2 id="note-delete-dialog-title">删除“{pendingDeleteNote.title}”？</h2>
+        <p id="note-delete-dialog-description">这只会删除这份阶段笔记，不会删除学习计划、任务历史或原始学习证据。删除后可重新新建或从证据生成。</p>
+        <div className="dialog-actions">
+          <button className="secondary-action" autoFocus onClick={() => setPendingDeleteNote(null)}>取消</button>
+          <button className="danger-action" onClick={confirmDeleteStageNote}>确认删除笔记</button>
+        </div>
+      </section>
+    </div>
+  );
+
   const accountDeleteDialog = accountDeleteConfirmationOpen && (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !isSyncing) setAccountDeleteConfirmationOpen(false);
@@ -710,6 +756,7 @@ export function App() {
       {storageNotice && <div className="storage-notice dashboard-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
       {importDialog}
       {conflictDialog}
+      {noteDeleteDialog}
       {logoutAllDialog}
       {deviceDialog}
       {accountDeleteDialog}
@@ -773,7 +820,7 @@ export function App() {
                       </>
                     ) : (
                       <>
-                        <div className="note-title"><div><small>{stage?.title ?? "学习阶段"} · 来源第 {note.sourceDays.length > 0 ? note.sourceDays.join("、") : "—"} 天</small><h3>{note.title}</h3></div><div className="note-actions"><button className="text-button sync-button" onClick={() => appendNewEvidence(note)}>追加新证据</button><button className="text-button sync-button" onClick={() => beginEditingNote(note)}>编辑</button></div></div>
+                        <div className="note-title"><div><small>{stage?.title ?? "学习阶段"} · 来源第 {note.sourceDays.length > 0 ? note.sourceDays.join("、") : "—"} 天</small><h3>{note.title}</h3></div><div className="note-actions"><button className="text-button sync-button" onClick={() => appendNewEvidence(note)}>追加新证据</button><button className="text-button sync-button" onClick={() => exportStageNote(note)}>导出 Markdown</button><button className="text-button sync-button" onClick={() => beginEditingNote(note)}>编辑</button><button className="text-button danger-text" onClick={() => setPendingDeleteNote(note)}>删除</button></div></div>
                         <p>{note.content}</p>
                       </>
                     )}
