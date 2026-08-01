@@ -20,6 +20,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - 学习数据控制：导出或验证恢复版本化 JSON 副本，并通过二次确认删除本地记录
 - 可替换持久化边界：页面通过仓库接口保存进度，为账号与跨设备同步预留并发模型
 - 同步领域契约：按认证用户隔离计划与每日记录，验证 revision 冲突、不透明游标和幂等重试
+- PostgreSQL 同步适配器：事务化条件写入、设备校验、持久幂等记录和可执行迁移
 - 响应式界面：支持桌面和移动端
 - 自动化测试：覆盖输入校验、路线分期、时间预算、学习状态、关键界面交互和可访问性扫描
 - 持续集成：推送和 Pull Request 自动运行测试与生产构建
@@ -58,6 +59,8 @@ npm test
 npm run build
 ```
 
+开发未来的账号同步服务时，在 `.env.local` 配置 `DATABASE_URL`，再运行 `npm run db:migrate`。当前应用尚未开放同步 HTTP API，不会默认连接数据库。身份方案见 [`docs/authentication-design.md`](docs/authentication-design.md)。
+
 ## 项目结构
 
 ```text
@@ -78,6 +81,7 @@ docs/
   ai-architecture.md AI 能力架构与安全边界
   mvp-spec.md       MVP 范围与产品决策
   persistence-model.md 持久化、所有权与同步设计
+  authentication-design.md OIDC、服务端会话与身份信任边界
   todo.md           当前产品待办列表
 ```
 

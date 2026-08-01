@@ -44,7 +44,7 @@ export class SyncConflictError extends Error {
 }
 
 export class SyncRequestError extends Error {
-  constructor(readonly code: "invalid-cursor" | "idempotency-mismatch" | "missing-plan", message: string) {
+  constructor(readonly code: "invalid-cursor" | "idempotency-mismatch" | "missing-plan" | "unknown-principal", message: string) {
     super(message);
     this.name = "SyncRequestError";
   }
@@ -69,19 +69,36 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-function requireIdentity(principal: SyncPrincipal): void {
+export function requireSyncIdentity(principal: SyncPrincipal): void {
   if (!principal.userId.trim() || !principal.deviceId.trim()) {
     throw new TypeError("An authenticated user and device are required");
   }
 }
 
-function requireWriteRequest(request: SyncWriteRequest<unknown>): void {
+export function requireSyncWriteRequest(request: SyncWriteRequest<unknown>): void {
   if (!request.operationId.trim() || !request.entityId.trim()) {
     throw new TypeError("Operation and entity IDs are required");
   }
   if (request.baseRevision !== null && (!Number.isInteger(request.baseRevision) || request.baseRevision < 1)) {
     throw new TypeError("Base revision must be null or a positive integer");
   }
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalize(entry)]),
+    );
+  }
+  return value;
+}
+
+export function syncOperationFingerprint(entityType: SyncEntityType, request: SyncWriteRequest<unknown>): string {
+  return JSON.stringify(canonicalize({ entityType, ...request }));
 }
 
 /**
@@ -107,7 +124,7 @@ export class InMemorySyncStore {
   }
 
   putDailyRecord(principal: SyncPrincipal, request: SyncWriteRequest<DailyRecordSyncValue>): SyncEntity<DailyRecordSyncValue> {
-    requireIdentity(principal);
+    requireSyncIdentity(principal);
     const planKey = this.entityKey(principal.userId, "learning-plan", request.value.planId);
     if (!this.entities.has(planKey)) {
       throw new SyncRequestError("missing-plan", "The daily record's plan does not belong to the authenticated user");
@@ -116,7 +133,7 @@ export class InMemorySyncStore {
   }
 
   getChanges(principal: SyncPrincipal, cursor?: string): SyncChanges {
-    requireIdentity(principal);
+    requireSyncIdentity(principal);
     let afterSequence = 0;
     if (cursor) {
       const position = this.cursors.get(cursor);
@@ -141,10 +158,10 @@ export class InMemorySyncStore {
   }
 
   private write<T>(principal: SyncPrincipal, entityType: SyncEntityType, request: SyncWriteRequest<T>): SyncEntity<T> {
-    requireIdentity(principal);
-    requireWriteRequest(request);
+    requireSyncIdentity(principal);
+    requireSyncWriteRequest(request);
     const operationKey = `${principal.userId}\0${request.operationId}`;
-    const fingerprint = JSON.stringify({ entityType, ...request });
+    const fingerprint = syncOperationFingerprint(entityType, request);
     const previousOperation = this.operations.get(operationKey);
     if (previousOperation) {
       if (previousOperation.fingerprint !== fingerprint) {

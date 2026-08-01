@@ -26,7 +26,7 @@
 
 ### P1：引入教学与评估
 
-- [ ] 重启 Codex 后验证官方 OpenAI 文档连接器
+- [x] 重启 Codex 后验证官方 OpenAI 文档连接器
 - [ ] 使用用户本地凭据完成一次实时模型烟雾测试
 - [x] 定义并实现 Teacher Agent 的教学会话契约与 API
 - [x] 定义并实现 Evaluator Agent 的固定量表、结构化输出与 API
@@ -45,5 +45,7 @@
 - [x] 设计首个后端 API
 - [x] 设计持久化模型并建立可替换的浏览器存储边界
 - [x] 建立用户隔离的同步领域契约，覆盖 revision、游标和幂等重试
-- [ ] 选择身份方案并实现 PostgreSQL 同步适配器
+- [x] 选择 provider-neutral OIDC + 服务端会话身份方案
+- [x] 实现 PostgreSQL 同步适配器、迁移与数据库契约测试
+- [ ] 实现 OIDC 会话、认证中间件与同步 HTTP API
 - [ ] 接入账号与跨设备同步界面

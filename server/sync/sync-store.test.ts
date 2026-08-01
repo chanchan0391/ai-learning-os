@@ -72,6 +72,33 @@ describe("in-memory sync store", () => {
     );
   });
 
+  it("treats equivalent JSON key orders as the same idempotent operation", () => {
+    const { store, plan } = setup();
+    const first = store.putPlan(alice, {
+      operationId: "op-create", entityId: plan.id, baseRevision: null, value: plan,
+    });
+    const reorderedPlan = {
+      today: plan.today,
+      stages: plan.stages,
+      goal: {
+        durationWeeks: plan.goal.durationWeeks,
+        dailyMinutes: plan.goal.dailyMinutes,
+        targetOutcome: plan.goal.targetOutcome,
+        currentLevel: plan.goal.currentLevel,
+        subject: plan.goal.subject,
+      },
+      createdAt: plan.createdAt,
+      id: plan.id,
+    };
+
+    expect(store.putPlan(aliceLaptop, {
+      value: reorderedPlan,
+      baseRevision: null,
+      entityId: plan.id,
+      operationId: "op-create",
+    })).toEqual(first);
+  });
+
   it("returns only changes after an opaque cursor", () => {
     const { store, plan, state } = setup();
     store.putPlan(alice, { operationId: "op-plan", entityId: plan.id, baseRevision: null, value: plan });
