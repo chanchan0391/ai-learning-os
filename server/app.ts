@@ -7,6 +7,8 @@ import { createPlannerAgent } from "./agents/planner-agent";
 import { createTeacherAgent } from "./agents/teacher-agent";
 import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
 import type { AuthenticatedPrincipalResolver } from "./auth/authenticated-principal";
+import type { SessionLifecycle } from "./auth/postgres-session-lifecycle";
+import { DEFAULT_SESSION_COOKIE_NAME, readSessionToken } from "./auth/postgres-session-resolver";
 import {
   SyncConflictError,
   SyncRequestError,
@@ -26,6 +28,14 @@ export interface AppOptions {
   syncStore?: SyncStore;
   resolvePrincipal?: AuthenticatedPrincipalResolver;
   allowedSyncOrigins?: readonly string[];
+  sessionLifecycle?: SessionLifecycle;
+  sessionCookieName?: string;
+}
+
+function sessionCookie(name: string, token?: string, maxAgeSeconds?: number): string {
+  const value = token ? `${name}=${token}` : `${name}=`;
+  const age = maxAgeSeconds === undefined ? "" : `; Max-Age=${maxAgeSeconds}`;
+  return `${value}; Path=/; HttpOnly; Secure; SameSite=Lax${age}`;
 }
 
 function requireHeader(request: IncomingMessage, name: string): string {
@@ -120,6 +130,37 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (request.method === "POST" && request.url === "/api/evaluations") {
         const evaluationRequest = await readJson(request) as EvaluationRequest;
         return sendJson(response, 201, await evaluator.evaluate(evaluationRequest, controller.signal));
+      }
+      if (url.pathname.startsWith("/api/auth/")) {
+        if (!options.resolvePrincipal || !options.sessionLifecycle) {
+          return sendJson(response, 503, { error: "Authentication is not configured" });
+        }
+        const cookieName = options.sessionCookieName ?? DEFAULT_SESSION_COOKIE_NAME;
+        if (request.method === "GET" && url.pathname === "/api/auth/session") {
+          const principal = await options.resolvePrincipal(request);
+          return principal ? sendJson(response, 200, { authenticated: true, principal })
+            : sendJson(response, 401, { authenticated: false });
+        }
+        if (request.method === "POST" && url.pathname === "/api/auth/session/refresh") {
+          requireAllowedOrigin(request, options.allowedSyncOrigins);
+          const token = readSessionToken(request.headers.cookie, cookieName);
+          const rotated = token ? await options.sessionLifecycle.rotate(token) : null;
+          if (!rotated) return sendJson(response, 401, { error: "Authentication required" }, {
+            "Set-Cookie": sessionCookie(cookieName, undefined, 0),
+          });
+          const maxAge = Math.max(0, Math.floor((Date.parse(rotated.expiresAt) - Date.now()) / 1000));
+          return sendJson(response, 200, { authenticated: true, principal: { userId: rotated.userId, deviceId: rotated.deviceId } }, {
+            "Set-Cookie": sessionCookie(cookieName, rotated.token, maxAge),
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/api/auth/logout") {
+          requireAllowedOrigin(request, options.allowedSyncOrigins);
+          const token = readSessionToken(request.headers.cookie, cookieName);
+          if (token) await options.sessionLifecycle.revoke(token);
+          return sendJson(response, 200, { authenticated: false }, {
+            "Set-Cookie": sessionCookie(cookieName, undefined, 0),
+          });
+        }
       }
       if (url.pathname.startsWith("/api/sync/")) {
         if (!options.syncStore || !options.resolvePrincipal) {

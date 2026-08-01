@@ -3,7 +3,7 @@ import type { IncomingMessage } from "node:http";
 import type { Pool, QueryResultRow } from "pg";
 import type { AuthenticatedPrincipalResolver } from "./authenticated-principal";
 
-const DEFAULT_COOKIE_NAME = "ai_learning_os_session";
+export const DEFAULT_SESSION_COOKIE_NAME = "ai_learning_os_session";
 const MAX_SESSION_TOKEN_LENGTH = 512;
 
 interface SessionRow extends QueryResultRow {
@@ -11,7 +11,7 @@ interface SessionRow extends QueryResultRow {
   device_id: string;
 }
 
-function readCookie(header: string | undefined, name: string): string | null {
+export function readSessionToken(header: string | undefined, name = DEFAULT_SESSION_COOKIE_NAME): string | null {
   if (!header) return null;
   for (const part of header.split(";")) {
     const separator = part.indexOf("=");
@@ -35,12 +35,12 @@ export function hashSessionToken(token: string): string {
 export class PostgresSessionPrincipalResolver {
   constructor(
     private readonly pool: Pool,
-    private readonly cookieName = DEFAULT_COOKIE_NAME,
+    private readonly cookieName = DEFAULT_SESSION_COOKIE_NAME,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
   readonly resolve: AuthenticatedPrincipalResolver = async (request: IncomingMessage) => {
-    const token = readCookie(request.headers.cookie, this.cookieName);
+    const token = readSessionToken(request.headers.cookie, this.cookieName);
     if (!token) return null;
     const result = await this.pool.query<SessionRow>(
       `SELECT s.user_id, s.device_id

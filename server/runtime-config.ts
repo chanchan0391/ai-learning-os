@@ -1,6 +1,7 @@
 import pg, { type Pool } from "pg";
 import type { AppOptions } from "./app";
 import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolver";
+import { PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { PostgresSyncStore } from "./sync/postgres-sync-store";
 
 export interface SyncRuntime {
@@ -53,11 +54,14 @@ export function createSyncRuntime(
 
   const pool = createPool(config.connectionString);
   const sessions = new PostgresSessionPrincipalResolver(pool, config.sessionCookieName);
+  const sessionLifecycle = new PostgresSessionLifecycle(pool);
   return {
     appOptions: {
       syncStore: new PostgresSyncStore(pool),
       resolvePrincipal: sessions.resolve,
       allowedSyncOrigins: config.allowedOrigins,
+      sessionLifecycle,
+      sessionCookieName: config.sessionCookieName,
     },
     close: () => pool.end(),
   };

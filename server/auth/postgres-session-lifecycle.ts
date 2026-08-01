@@ -1,0 +1,131 @@
+import { randomBytes, randomUUID } from "node:crypto";
+import type { Pool, PoolClient, QueryResultRow } from "pg";
+import { hashSessionToken } from "./postgres-session-resolver";
+
+const DEFAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+export interface VerifiedOidcIdentity {
+  issuer: string;
+  subject: string;
+  deviceLabel: string;
+}
+
+export interface IssuedSession {
+  token: string;
+  userId: string;
+  deviceId: string;
+  expiresAt: string;
+}
+
+export interface SessionLifecycle {
+  rotate(token: string): Promise<IssuedSession | null>;
+  revoke(token: string): Promise<boolean>;
+}
+
+interface SessionRow extends QueryResultRow {
+  user_id: string;
+  device_id: string;
+}
+
+function assertIdentity(identity: VerifiedOidcIdentity): void {
+  const issuer = new URL(identity.issuer);
+  if (issuer.origin + issuer.pathname.replace(/\/$/, "") !== identity.issuer.replace(/\/$/, "")) {
+    throw new TypeError("OIDC issuer must be an absolute URL without query or fragment");
+  }
+  if (!identity.subject.trim() || identity.subject.length > 255) throw new TypeError("OIDC subject is invalid");
+  if (!identity.deviceLabel.trim() || identity.deviceLabel.length > 100) throw new TypeError("Device label is invalid");
+}
+
+export class PostgresSessionLifecycle implements SessionLifecycle {
+  constructor(
+    private readonly pool: Pool,
+    private readonly now: () => Date = () => new Date(),
+    private readonly tokenFactory: () => string = () => randomBytes(32).toString("base64url"),
+    private readonly idFactory: () => string = () => randomUUID(),
+    private readonly ttlMs = DEFAULT_SESSION_TTL_MS,
+  ) {
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new TypeError("Session TTL must be positive");
+  }
+
+  async establishFromOidc(identity: VerifiedOidcIdentity): Promise<IssuedSession> {
+    assertIdentity(identity);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query<{ user_id: string }>(
+        "SELECT user_id FROM oidc_identities WHERE issuer = $1 AND subject = $2",
+        [identity.issuer.replace(/\/$/, ""), identity.subject],
+      );
+      const userId = existing.rows[0]?.user_id ?? this.idFactory();
+      if (existing.rowCount === 0) {
+        await client.query("INSERT INTO users (id) VALUES ($1)", [userId]);
+        await client.query(
+          "INSERT INTO oidc_identities (issuer, subject, user_id) VALUES ($1, $2, $3)",
+          [identity.issuer.replace(/\/$/, ""), identity.subject, userId],
+        );
+      }
+      const deviceId = this.idFactory();
+      await client.query(
+        "INSERT INTO sync_devices (user_id, id, label) VALUES ($1, $2, $3)",
+        [userId, deviceId, identity.deviceLabel.trim()],
+      );
+      const session = await this.insertSession(client, userId, deviceId);
+      await client.query("COMMIT");
+      return session;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async rotate(token: string): Promise<IssuedSession | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const current = await client.query<SessionRow>(
+        `SELECT s.user_id, s.device_id
+           FROM auth_sessions s
+           JOIN users u ON u.id = s.user_id
+           JOIN sync_devices d ON d.user_id = s.user_id AND d.id = s.device_id
+          WHERE s.token_hash = $1 AND s.expires_at > $2 AND s.revoked_at IS NULL
+            AND u.deleted_at IS NULL AND d.revoked_at IS NULL
+          FOR UPDATE`,
+        [hashSessionToken(token), this.now().toISOString()],
+      );
+      if (current.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      await client.query("UPDATE auth_sessions SET revoked_at = $2 WHERE token_hash = $1", [hashSessionToken(token), this.now().toISOString()]);
+      const session = await this.insertSession(client, current.rows[0].user_id, current.rows[0].device_id);
+      await client.query("UPDATE sync_devices SET last_seen_at = $3 WHERE user_id = $1 AND id = $2", [session.userId, session.deviceId, this.now().toISOString()]);
+      await client.query("COMMIT");
+      return session;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async revoke(token: string): Promise<boolean> {
+    const result = await this.pool.query(
+      "UPDATE auth_sessions SET revoked_at = $2 WHERE token_hash = $1 AND revoked_at IS NULL",
+      [hashSessionToken(token), this.now().toISOString()],
+    );
+    return result.rowCount === 1;
+  }
+
+  private async insertSession(client: PoolClient, userId: string, deviceId: string): Promise<IssuedSession> {
+    const token = this.tokenFactory();
+    const expiresAt = new Date(this.now().getTime() + this.ttlMs).toISOString();
+    await client.query(
+      "INSERT INTO auth_sessions (token_hash, user_id, device_id, expires_at) VALUES ($1, $2, $3, $4)",
+      [hashSessionToken(token), userId, deviceId, expiresAt],
+    );
+    return { token, userId, deviceId, expiresAt };
+  }
+}

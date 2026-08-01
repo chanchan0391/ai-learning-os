@@ -21,7 +21,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - 可替换持久化边界：页面通过仓库接口保存进度，为账号与跨设备同步预留并发模型
 - 同步领域契约：按认证用户隔离计划与每日记录，验证 revision 冲突、不透明游标和幂等重试
 - PostgreSQL 同步适配器：事务化条件写入、设备校验、持久幂等记录和可执行迁移
-- 服务端会话解析：只保存不透明令牌哈希，校验会话过期、撤销账号和撤销设备
+- 服务端会话生命周期：映射验证后的 OIDC 身份、登记设备，只保存不透明令牌哈希，并支持会话查询、原子轮换和登出撤销
 - 响应式界面：支持桌面和移动端
 - 自动化测试：覆盖输入校验、路线分期、时间预算、学习状态、关键界面交互和可访问性扫描
 - 持续集成：推送和 Pull Request 自动运行测试与生产构建
@@ -60,7 +60,7 @@ npm test
 npm run build
 ```
 
-开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。当前已接入同步 HTTP API 与服务端会话解析，但会话仍需由待实现的 OIDC 登录流程创建。身份方案见 [`docs/authentication-design.md`](docs/authentication-design.md)。
+开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。当前已接入同步 HTTP API、OIDC 身份映射和服务端会话生命周期；完整登录仍需待实现的 OIDC 授权发起与回调验证。身份方案见 [`docs/authentication-design.md`](docs/authentication-design.md)。
 
 ## 项目结构
 

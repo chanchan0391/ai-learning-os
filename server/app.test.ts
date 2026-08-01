@@ -7,8 +7,8 @@ import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
 const servers: ReturnType<typeof createApp>[] = [];
 afterEach(() => servers.splice(0).forEach((server) => server.close()));
 
-async function startApi(provider: ModelProvider = new DeterministicModelProvider()) {
-  const server = createApp(provider);
+async function startApi(provider: ModelProvider = new DeterministicModelProvider(), options: Parameters<typeof createApp>[1] = {}) {
+  const server = createApp(provider, options);
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
@@ -98,5 +98,53 @@ describe("AI Learning OS API", () => {
 
     await expect(fetchResult).rejects.toThrow();
     await expect(aborted).resolves.toBeUndefined();
+  });
+
+  it("reports, rotates, and revokes authenticated browser sessions", async () => {
+    const calls: string[] = [];
+    const options: Parameters<typeof createApp>[1] = {
+      allowedSyncOrigins: ["https://learn.example"],
+      sessionCookieName: "session",
+      resolvePrincipal: async (request) => request.headers.cookie === "session=old-token"
+        ? { userId: "user-1", deviceId: "device-1" } : null,
+      sessionLifecycle: {
+        rotate: async (token) => {
+          calls.push(`rotate:${token}`);
+          return { token: "new-token", userId: "user-1", deviceId: "device-1", expiresAt: new Date(Date.now() + 60_000).toISOString() };
+        },
+        revoke: async (token) => {
+          calls.push(`revoke:${token}`);
+          return true;
+        },
+      },
+    };
+    const baseUrl = await startApi(new DeterministicModelProvider(), options);
+
+    const current = await fetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: "session=old-token" } });
+    expect(current.status).toBe(200);
+    await expect(current.json()).resolves.toMatchObject({ authenticated: true, principal: { userId: "user-1" } });
+
+    const refreshed = await fetch(`${baseUrl}/api/auth/session/refresh`, {
+      method: "POST", headers: { Cookie: "session=old-token", Origin: "https://learn.example" },
+    });
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.headers.get("set-cookie")).toMatch(/^session=new-token;.*HttpOnly; Secure; SameSite=Lax/);
+
+    const logout = await fetch(`${baseUrl}/api/auth/logout`, {
+      method: "POST", headers: { Cookie: "session=new-token", Origin: "https://learn.example" },
+    });
+    expect(logout.status).toBe(200);
+    expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(calls).toEqual(["rotate:old-token", "revoke:new-token"]);
+  });
+
+  it("rejects cross-origin session changes", async () => {
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      allowedSyncOrigins: ["https://learn.example"],
+      resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
+      sessionLifecycle: { rotate: async () => null, revoke: async () => true },
+    });
+    const response = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: { Origin: "https://evil.example" } });
+    expect(response.status).toBe(403);
   });
 });
