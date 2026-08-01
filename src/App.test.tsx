@@ -51,6 +51,33 @@ describe("learning data controls", () => {
     expect(result.violations).toEqual([]);
   });
 
+  it("shows a weekly evidence review with a concrete next action", () => {
+    let state = initializeLearningState(generateLearningPlan(goal));
+    for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+    const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+    state = saveEvaluation(state, practice.id, "可验证成果", {
+      rubric: [
+        { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 8,
+      masteryLevel: "developing",
+      misconceptions: [],
+      nextAction: "独立解释关键机制",
+    });
+    state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+    render(<App />);
+
+    const review = screen.getByRole("region", { name: "学习周回顾" });
+    expect(within(review).getByText("60")).toBeTruthy();
+    expect(within(review).getByText("8/16")).toBeTruthy();
+    expect(within(review).getByText("独立解释关键机制")).toBeTruthy();
+  });
+
   it("offers and renders a low-pressure Coach plan after missed learning days", async () => {
     const user = userEvent.setup();
     const stale = initializeLearningState(generateLearningPlan(goal), new Date("2026-07-28T10:00:00.000Z"));

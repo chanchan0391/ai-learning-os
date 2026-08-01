@@ -27,6 +27,17 @@ export type ParsedLearningStateExport =
   | { status: "valid"; data: LearningStateExport }
   | { status: "invalid"; error: string };
 
+export interface WeeklyLearningReview {
+  completedDays: number;
+  totalMinutes: number;
+  evaluationCount: number;
+  averageEvaluationScore: number | null;
+  difficultDays: number;
+  successfulReviews: number;
+  headline: string;
+  nextAction: string;
+}
+
 function dateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -324,6 +335,38 @@ export function getCurrentRecord(state: LearningState): DailyLearningRecord {
   const current = state.days.find((day) => day.day === state.currentDay);
   if (!current) throw new Error("当前学习日不存在");
   return current;
+}
+
+export function weeklyLearningReview(state: LearningState): WeeklyLearningReview {
+  const completed = state.days.filter((day) => day.status === "completed").slice(-7);
+  const evaluations = completed.flatMap((day) => Object.values(day.artifacts)
+    .flatMap((artifact) => artifact.evaluation ? [{ day: day.day, result: artifact.evaluation }] : []));
+  const reviews = state.days.slice(-7).flatMap((day) => Object.values(day.artifacts)
+    .flatMap((artifact) => artifact.reviewPerformance ? [artifact.reviewPerformance] : []));
+  const totalScore = evaluations.reduce((sum, item) => sum + item.result.totalScore, 0);
+  const averageEvaluationScore = evaluations.length > 0 ? Math.round((totalScore / evaluations.length) * 10) / 10 : null;
+  const difficultDays = completed.filter((day) => day.feedback?.difficulty === "too-hard").length;
+  const weakestEvaluation = [...evaluations].sort((left, right) => left.result.totalScore - right.result.totalScore || right.day - left.day)[0];
+  const latestReflection = [...completed].reverse().find((day) => day.feedback?.reflection.trim())?.feedback?.reflection.trim();
+
+  let headline = "完成第一天后，这里会形成你的周回顾。";
+  if (completed.length > 0 && difficultDays >= 2) headline = "本周难度偏高，先缩小下一步。";
+  else if (averageEvaluationScore !== null && averageEvaluationScore >= 13) headline = "本周成果证据显示掌握正在变稳。";
+  else if (evaluations.length > 0) headline = "本周已经形成可用于调整计划的证据。";
+  else if (completed.length > 0) headline = "本周节奏已启动，下一步补充成果证据。";
+
+  return {
+    completedDays: completed.length,
+    totalMinutes: completed.reduce((sum, day) => sum + day.tasks.reduce((minutes, task) => minutes + task.minutes, 0), 0),
+    evaluationCount: evaluations.length,
+    averageEvaluationScore,
+    difficultDays,
+    successfulReviews: reviews.filter((review) => review.recall === "easy").length,
+    headline,
+    nextAction: weakestEvaluation?.result.nextAction
+      ?? latestReflection
+      ?? (completed.length > 0 ? "完成一次可验证的实践成果并获取评估。" : "完成今天的学习闭环。"),
+  };
 }
 
 export function detectLearningInterruption(state: LearningState, now = new Date()): LearningInterruption | null {

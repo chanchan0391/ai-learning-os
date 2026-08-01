@@ -26,6 +26,7 @@ import {
   stageNoteMarkdownFilename,
   toggleCurrentTask,
   updateStageNote,
+  weeklyLearningReview,
 } from "./learning-state";
 import { generateLearningPlan } from "./planner";
 
@@ -164,6 +165,45 @@ describe("multi-day learning state", () => {
     expect(state.days[1].tasks[1].description).toContain("先缩小范围");
     expect(completedDayCount(state)).toBe(1);
     expect(learningStreak(state)).toBe(1);
+  });
+
+  it("derives a seven-day learning review from effort, evaluation, and recall evidence", () => {
+    let state = completedState();
+    const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+    state = saveEvaluation(state, practice.id, "第一份成果", {
+      rubric: [
+        { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 1, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 7,
+      masteryLevel: "needs-support",
+      misconceptions: ["执行边界不清"],
+      nextAction: "补充失败案例并解释执行边界",
+    });
+    state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "需要缩小范围" });
+
+    expect(weeklyLearningReview(state)).toEqual({
+      completedDays: 1,
+      totalMinutes: 60,
+      evaluationCount: 1,
+      averageEvaluationScore: 7,
+      difficultDays: 1,
+      successfulReviews: 0,
+      headline: "本周已经形成可用于调整计划的证据。",
+      nextAction: "补充失败案例并解释执行边界",
+    });
+  });
+
+  it("gives a useful weekly-review prompt before evaluation evidence exists", () => {
+    expect(weeklyLearningReview(initializeLearningState(generateLearningPlan(goal)))).toMatchObject({
+      completedDays: 0,
+      totalMinutes: 0,
+      averageEvaluationScore: null,
+      headline: "完成第一天后，这里会形成你的周回顾。",
+      nextAction: "完成今天的学习闭环。",
+    });
   });
 
   it("persists teaching checks before completing a learn task", () => {

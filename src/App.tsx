@@ -24,6 +24,7 @@ import {
   stageNoteMarkdownFilename,
   toggleCurrentTask,
   updateStageNote,
+  weeklyLearningReview,
 } from "./learning-state";
 import { BrowserLearningStateRepository } from "./learning-storage";
 import { completionRate, validateGoal } from "./planner";
@@ -106,6 +107,7 @@ export function App() {
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
   const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
   const reviewSchedule = useMemo(() => learningState ? scheduledReviewItems(learningState) : [], [learningState]);
+  const weeklyReview = useMemo(() => learningState ? weeklyLearningReview(learningState) : null, [learningState]);
   const currentStage = plan?.stages.find((stage) => {
     const week = Math.ceil((learningState?.currentDay ?? 1) / 7);
     return week >= stage.startWeek && week <= stage.endWeek;
@@ -787,6 +789,23 @@ export function App() {
         <div><strong>{completedDayCount(learningState)}</strong><span>已完成天数</span></div>
         <div><strong>{plan.goal.durationWeeks * 7}</strong><span>计划学习日</span></div>
       </section>
+
+      {weeklyReview && (
+        <section className="panel weekly-review" aria-labelledby="weekly-review-title">
+          <div className="weekly-review-heading">
+            <div><span className="agent-label">最近 7 个完成日</span><h2 id="weekly-review-title">学习周回顾</h2></div>
+            <p>{weeklyReview.headline}</p>
+          </div>
+          <div className="weekly-review-metrics">
+            <div><strong>{weeklyReview.completedDays}</strong><span>完成日</span></div>
+            <div><strong>{weeklyReview.totalMinutes}</strong><span>投入分钟</span></div>
+            <div><strong>{weeklyReview.averageEvaluationScore === null ? "—" : `${weeklyReview.averageEvaluationScore}/16`}</strong><span>平均成果评分</span></div>
+            <div><strong>{weeklyReview.difficultDays}</strong><span>偏难日</span></div>
+            <div><strong>{weeklyReview.successfulReviews}</strong><span>轻松回忆</span></div>
+          </div>
+          <p className="weekly-next-action"><strong>本周最小下一步</strong>{weeklyReview.nextAction}</p>
+        </section>
+      )}
 
       <section className="panel review-schedule" aria-labelledby="review-schedule-title">
         <div className="review-schedule-heading">
