@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeLearningState, toggleCurrentTask } from "./learning-state";
 import { generateLearningPlan } from "./planner";
 import { BrowserSyncClient, SYNC_METADATA_KEY, SyncConflictError } from "./sync-client";
@@ -65,6 +65,27 @@ function fakeServer(initial: RemoteEntity[] = []) {
 
 describe("browser sync client", () => {
   beforeEach(() => localStorage.clear());
+
+  it("lists active devices and requests targeted revocation with an encoded ID", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (url === "/api/auth/devices") return Response.json({
+        devices: [{ id: "phone/1", label: "Phone", createdAt: "2026-08-01T10:00:00.000Z", lastSeenAt: "2026-08-01T12:00:00.000Z", current: false }],
+      });
+      return Response.json({ revoked: true });
+    }) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request);
+
+    await expect(client.getActiveDevices()).resolves.toMatchObject([{ id: "phone/1", label: "Phone" }]);
+    await client.revokeDevice("phone/1");
+
+    expect(calls).toEqual([
+      { url: "/api/auth/devices", method: "GET" },
+      { url: "/api/auth/devices/phone%2F1", method: "DELETE" },
+    ]);
+  });
 
   it("uploads a new local plan and its daily record with revision metadata", async () => {
     const server = fakeServer();

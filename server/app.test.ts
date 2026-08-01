@@ -123,6 +123,14 @@ describe("AI Learning OS API", () => {
           calls.push(`revoke-all:${token}`);
           return true;
         },
+        listActiveDevices: async (token) => {
+          calls.push(`devices:${token}`);
+          return [{ id: "device-1", label: "Laptop", createdAt: "2026-08-01T10:00:00.000Z", lastSeenAt: "2026-08-01T12:00:00.000Z", current: true }];
+        },
+        revokeDevice: async (token, deviceId) => {
+          calls.push(`revoke-device:${token}:${deviceId}`);
+          return true;
+        },
       },
       accountDataLifecycle: {
         deleteAccount: async (token) => {
@@ -150,26 +158,36 @@ describe("AI Learning OS API", () => {
     expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
     expect(calls).toEqual(["rotate:old-token", "revoke:new-token"]);
 
+    const devices = await fetch(`${baseUrl}/api/auth/devices`, { headers: { Cookie: "session=old-token" } });
+    expect(devices.status).toBe(200);
+    await expect(devices.json()).resolves.toMatchObject({ devices: [{ id: "device-1", current: true }] });
+
+    const revokeDevice = await fetch(`${baseUrl}/api/auth/devices/device-2`, {
+      method: "DELETE", headers: { Cookie: "session=old-token", Origin: "https://learn.example" },
+    });
+    expect(revokeDevice.status).toBe(200);
+    await expect(revokeDevice.json()).resolves.toEqual({ revoked: true, revokedCurrent: false });
+
     const logoutAll = await fetch(`${baseUrl}/api/auth/logout-all`, {
       method: "POST", headers: { Cookie: "session=old-token", Origin: "https://learn.example" },
     });
     expect(logoutAll.status).toBe(200);
     expect(logoutAll.headers.get("set-cookie")).toContain("Max-Age=0");
-    expect(calls).toEqual(["rotate:old-token", "revoke:new-token", "revoke-all:old-token"]);
+    expect(calls).toEqual(["rotate:old-token", "revoke:new-token", "devices:old-token", "revoke-device:old-token:device-2", "revoke-all:old-token"]);
 
     const deletion = await fetch(`${baseUrl}/api/auth/account`, {
       method: "DELETE", headers: { Cookie: "session=old-token", Origin: "https://learn.example" },
     });
     expect(deletion.status).toBe(200);
     expect(deletion.headers.get("set-cookie")).toContain("Max-Age=0");
-    expect(calls).toEqual(["rotate:old-token", "revoke:new-token", "revoke-all:old-token", "delete:old-token"]);
+    expect(calls).toEqual(["rotate:old-token", "revoke:new-token", "devices:old-token", "revoke-device:old-token:device-2", "revoke-all:old-token", "delete:old-token"]);
   });
 
   it("rejects cross-origin session changes", async () => {
     const baseUrl = await startApi(new DeterministicModelProvider(), {
       allowedSyncOrigins: ["https://learn.example"],
       resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
-      sessionLifecycle: { establishFromOidc: async () => { throw new Error("not used"); }, rotate: async () => null, revoke: async () => true, revokeAll: async () => true },
+      sessionLifecycle: { establishFromOidc: async () => { throw new Error("not used"); }, rotate: async () => null, revoke: async () => true, revokeAll: async () => true, listActiveDevices: async () => [], revokeDevice: async () => true },
     });
     const response = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: { Origin: "https://evil.example" } });
     expect(response.status).toBe(403);
@@ -196,6 +214,8 @@ describe("AI Learning OS API", () => {
         rotate: async () => null,
         revoke: async () => true,
         revokeAll: async () => true,
+        listActiveDevices: async () => [],
+        revokeDevice: async () => true,
       },
     });
 
@@ -222,6 +242,8 @@ describe("AI Learning OS API", () => {
         rotate: async () => null,
         revoke: async () => false,
         revokeAll: async () => false,
+        listActiveDevices: async () => null,
+        revokeDevice: async () => false,
       },
       oidcAuthenticator: {
         transactionCookieName: "oidc_txn",

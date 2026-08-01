@@ -26,16 +26,16 @@
 - 已实现的会话生命周期只在上述验证全部通过后接收 OIDC issuer + subject，并于事务中创建 `users`、`oidc_identities` 和 `sync_devices` 记录；访问令牌和 ID Token 不写入应用会话或学习记录。
 - 会话以高熵不透明令牌签发，数据库只保存 SHA-256 哈希；解析器同时检查会话有效期、会话撤销、账号删除和设备撤销。
 - `PostgresSyncStore` 只接受已存在、未删除的用户和未撤销设备。
-- `POST /api/auth/session/refresh` 原子撤销旧令牌并签发新令牌；`POST /api/auth/logout` 只撤销当前会话；`POST /api/auth/logout-all` 在事务中验证当前会话并撤销该账号的全部会话与设备。`DELETE /api/auth/account` 验证当前会话后事务化删除用户行，依靠外键级联清除身份映射、设备、全部会话和同步数据。所有会话变更都校验精确 Origin。
+- `POST /api/auth/session/refresh` 原子撤销旧令牌并签发新令牌；`POST /api/auth/logout` 只撤销当前会话；活跃设备清单只返回仍有有效会话的设备，单设备撤销会同时撤销该设备的全部会话；`POST /api/auth/logout-all` 在事务中验证当前会话并撤销该账号的全部会话与设备。`DELETE /api/auth/account` 验证当前会话后事务化删除用户行，依靠外键级联清除身份映射、设备、全部会话和同步数据。所有会话变更都校验精确 Origin。
 - 所有状态变更路由都校验精确 Origin；请求正文限制为 1 MB，认证与同步路由还在进入 OIDC、会话或存储逻辑前按客户端地址限流。
-- 单进程默认窗口为 60 秒：登录、回调各 20 次，会话变更 60 次，会话读取和同步读取 120 次，同步写入 60 次。响应返回 `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`，被拒绝时另返回 `Retry-After`。
+- 单进程默认窗口为 60 秒：登录、回调各 20 次，常规会话变更 60 次，单设备撤销 20 次，退出所有设备和账号删除各 5 次，会话与设备读取和同步读取 120 次，同步写入 60 次。响应返回 `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`，被拒绝时另返回 `Retry-After`。
 - 启用数据库运行时会输出一行一个 JSON 的安全审计事件，记录动作、路径、状态、结果以及认证后的用户/设备 ID；不记录 Cookie、会话令牌、OIDC code/state、查询字符串、请求正文或客户端地址。
 
 ## 上线前阻断项
 
 1. **已实现 OIDC 登录与账号界面：**覆盖 discovery、state、nonce、S256 PKCE、授权码交换、基于 JWKS 的 ID Token 验证，以及登录、自动同步、离线待办和最近同步状态。
 2. **已接入会话生命周期：**`PostgresSessionPrincipalResolver` 从 HttpOnly Cookie 的不透明令牌哈希解析 `SyncPrincipal`；`PostgresSessionLifecycle` 负责验证后身份映射、设备登记、令牌哈希存储、轮换和撤销，并已由服务启动配置注入。
-3. **已建立路由防护：**同步 HTTP API 已覆盖认证缺失、跨用户、条件写入、幂等冲突、来源校验、共享速率限制和结构化安全审计；退出所有设备已覆盖 HTTP、PostgreSQL 和界面测试，会话过期仍由解析器契约测试覆盖。
+3. **已建立路由防护：**同步 HTTP API 已覆盖认证缺失、跨用户、条件写入、幂等冲突、来源校验、共享速率限制和结构化安全审计；登录设备清单、单设备撤销和退出所有设备已覆盖 HTTP、PostgreSQL 和界面测试，会话过期仍由解析器契约测试覆盖。
 4. 生产部署者仍需明确数据库备份、基础设施日志和模型提供商数据的保留期限；应用主数据库中的账号数据会立即删除。
 
 ## 会话 HTTP 契约
@@ -45,6 +45,8 @@
 - `GET /api/auth/session`：返回当前用户和设备的认证状态，不延长会话。
 - `POST /api/auth/session/refresh`：要求允许的 `Origin` 和有效会话 Cookie，返回相同用户/设备的新会话并撤销旧令牌。
 - `POST /api/auth/logout`：要求允许的 `Origin`，撤销当前令牌并返回立即过期的 Cookie。
+- `GET /api/auth/devices`：要求有效会话，返回当前账号仍有有效会话的设备、标签、最近活动时间和当前设备标记。
+- `DELETE /api/auth/devices/:deviceId`：要求允许的 `Origin` 和有效会话，只能撤销当前账号所属的指定设备及其全部会话；不删除学习数据。
 - `POST /api/auth/logout-all`：要求允许的 `Origin` 和有效会话，事务化撤销该账号的全部设备与会话并返回立即过期的 Cookie；学习数据不会被删除。
 - `DELETE /api/auth/account`：要求允许的 `Origin` 和有效会话，事务化删除账号及全部所属数据，并返回立即过期的 Cookie。
 

@@ -16,7 +16,7 @@ import {
 } from "./learning-state";
 import { BrowserLearningStateRepository } from "./learning-storage";
 import { completionRate, validateGoal } from "./planner";
-import { BrowserSyncClient, SyncConflictError, type AuthState, type SyncConflictPreview } from "./sync-client";
+import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import type { LearningStateExport } from "./learning-state";
 import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, TaskDifficulty, TeachingSession } from "./types";
@@ -59,6 +59,9 @@ export function App() {
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [accountDeleteConfirmationOpen, setAccountDeleteConfirmationOpen] = useState(false);
   const [logoutAllConfirmationOpen, setLogoutAllConfirmationOpen] = useState(false);
+  const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
+  const [activeDevices, setActiveDevices] = useState<ActiveDevice[]>([]);
+  const [busyDeviceId, setBusyDeviceId] = useState("");
   const [pendingImport, setPendingImport] = useState<LearningStateExport | null>(null);
   const [storageNotice, setStorageNotice] = useState(initialLoad.status === "recovered" ? "本地进度无法读取，已安全重置。" : "");
   const [storageNoticeIsError, setStorageNoticeIsError] = useState(initialLoad.status === "recovered");
@@ -365,6 +368,35 @@ export function App() {
     }
   }
 
+  async function openDeviceManager() {
+    setDeviceDialogOpen(true);
+    setBusyDeviceId("loading");
+    try {
+      setActiveDevices(await syncClient.getActiveDevices());
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法读取登录设备");
+      setStorageNoticeIsError(true);
+      setDeviceDialogOpen(false);
+    } finally {
+      setBusyDeviceId("");
+    }
+  }
+
+  async function revokeDevice(device: ActiveDevice) {
+    setBusyDeviceId(device.id);
+    try {
+      await syncClient.revokeDevice(device.id);
+      setActiveDevices((devices) => devices.filter((item) => item.id !== device.id));
+      setStorageNotice(`已退出设备“${device.label}”。`);
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "设备退出失败，请稍后重试");
+      setStorageNoticeIsError(true);
+    } finally {
+      setBusyDeviceId("");
+    }
+  }
+
   async function deleteAccountData() {
     setIsSyncing(true);
     try {
@@ -400,6 +432,7 @@ export function App() {
       <span className="sync-status">已登录</span>
       <span className={`sync-detail sync-${autoSyncStatus.phase}`}>{formatSyncStatus(autoSyncStatus)}</span>
       <button className="text-button sync-button" disabled={isSyncing} onClick={syncLearningData}>{isSyncing ? "正在同步…" : "立即同步"}</button>
+      <button className="text-button" disabled={isSyncing} onClick={openDeviceManager}>管理设备</button>
       <button className="text-button" onClick={logout}>退出</button>
       <button className="text-button danger-text" disabled={isSyncing} onClick={() => setLogoutAllConfirmationOpen(true)}>退出所有设备</button>
       <button className="text-button danger-text" disabled={isSyncing} onClick={() => setAccountDeleteConfirmationOpen(true)}>删除账号</button>
@@ -487,6 +520,36 @@ export function App() {
     </div>
   );
 
+  const deviceDialog = deviceDialogOpen && (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !busyDeviceId) setDeviceDialogOpen(false);
+    }}>
+      <section className="confirmation-dialog device-dialog" role="dialog" aria-modal="true" aria-labelledby="device-dialog-title" aria-describedby="device-dialog-description">
+        <p className="eyebrow">账号安全 · 登录设备</p>
+        <h2 id="device-dialog-title">管理登录设备</h2>
+        <p id="device-dialog-description">退出不再使用的设备会立即撤销它的登录会话，不会删除任何学习记录。</p>
+        <div className="device-list">
+          {busyDeviceId === "loading" ? <p role="status">正在读取设备…</p> : activeDevices.map((device) => (
+            <article key={device.id}>
+              <div>
+                <strong>{device.label}</strong>
+                <small>{device.current ? "当前设备" : `最近活动 ${new Date(device.lastSeenAt).toLocaleString("zh-CN")}`}</small>
+              </div>
+              {device.current ? <span>当前设备</span> : (
+                <button className="danger-text device-revoke" disabled={Boolean(busyDeviceId)} onClick={() => revokeDevice(device)}>
+                  {busyDeviceId === device.id ? "正在退出…" : "退出此设备"}
+                </button>
+              )}
+            </article>
+          ))}
+        </div>
+        <div className="dialog-actions">
+          <button className="secondary-action" autoFocus disabled={Boolean(busyDeviceId)} onClick={() => setDeviceDialogOpen(false)}>完成</button>
+        </div>
+      </section>
+    </div>
+  );
+
   if (!plan || !learningState || !currentRecord) {
     return (
       <main className="shell onboarding">
@@ -495,6 +558,7 @@ export function App() {
         {importDialog}
         {conflictDialog}
         {logoutAllDialog}
+        {deviceDialog}
         {accountDeleteDialog}
         <section className="hero">
           <div>
@@ -536,6 +600,7 @@ export function App() {
       {importDialog}
       {conflictDialog}
       {logoutAllDialog}
+      {deviceDialog}
       {accountDeleteDialog}
       {deleteConfirmationOpen && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {

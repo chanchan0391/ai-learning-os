@@ -56,6 +56,14 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .confirmation-dialog h2 { margin: 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 24px; font-weight: 500; }
 .confirmation-dialog > p:last-of-type { margin: 14px 0 22px; color: #64706a; font-size: 13px; line-height: 1.65; }
 .conflict-dialog { width: min(620px, 100%); }
+.device-dialog { width: min(540px, 100%); }
+.device-list { display: flex; flex-direction: column; gap: 9px; margin: 0 0 20px; }
+.device-list article { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 14px; background: white; border: 1px solid #d8ddd7; border-radius: 11px; }
+.device-list article > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.device-list strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.device-list small, .device-list article > span { color: #758079; font-size: 10px; }
+.device-list article > span { flex: 0 0 auto; padding: 5px 7px; background: #eef5f0; border-radius: 6px; }
+.device-revoke { flex: 0 0 auto; padding: 6px 8px; background: transparent; border: 1px solid #d9b9ae; border-radius: 7px; font-size: 11px; }
 .conflict-versions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .conflict-versions article { display: flex; flex-direction: column; gap: 7px; padding: 16px; background: white; border: 1px solid #d8ddd7; border-radius: 12px; }
 .conflict-versions article > span { color: #c9633f; font-size: 10px; font-weight: 700; letter-spacing: .1em; }

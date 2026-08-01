@@ -28,6 +28,14 @@ export type AuthState =
   | { status: "signed-out" }
   | { status: "signed-in"; userId: string; deviceId: string };
 
+export interface ActiveDevice {
+  id: string;
+  label: string;
+  createdAt: string;
+  lastSeenAt: string;
+  current: boolean;
+}
+
 export interface SyncResult {
   state: LearningState | null;
   uploaded: number;
@@ -115,6 +123,28 @@ export class BrowserSyncClient {
   async logoutAll(): Promise<void> {
     const response = await this.request("/api/auth/logout-all", { method: "POST", credentials: "same-origin" });
     if (!response.ok) throw new Error("退出所有设备失败，请稍后重试");
+  }
+
+  async getActiveDevices(): Promise<ActiveDevice[]> {
+    const response = await this.request("/api/auth/devices", { credentials: "same-origin" });
+    const body = await response.json() as { devices?: ActiveDevice[]; error?: string };
+    if (!response.ok || !Array.isArray(body.devices)) throw new Error(responseError(body, "无法读取登录设备"));
+    return body.devices.filter((device) => (
+      typeof device.id === "string"
+      && typeof device.label === "string"
+      && typeof device.createdAt === "string"
+      && typeof device.lastSeenAt === "string"
+      && typeof device.current === "boolean"
+    ));
+  }
+
+  async revokeDevice(deviceId: string): Promise<void> {
+    const response = await this.request(`/api/auth/devices/${encodeURIComponent(deviceId)}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    if (!response.ok) throw new Error(responseError(body, "设备退出失败，请稍后重试"));
   }
 
   async deleteAccount(): Promise<void> {

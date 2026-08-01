@@ -62,6 +62,8 @@ function protectedRoute(method: string | undefined, pathname: string): Protected
   if (pathname === "/api/auth/session/refresh") return { action: "auth.session.refresh", rateLimitScope: "auth-session", policy: { limit: 60, windowMs: 60_000 } };
   if (pathname === "/api/auth/logout") return { action: "auth.logout", rateLimitScope: "auth-session", policy: { limit: 60, windowMs: 60_000 } };
   if (pathname === "/api/auth/logout-all") return { action: "auth.logout-all", rateLimitScope: "auth-account", policy: { limit: 5, windowMs: 60_000 } };
+  if (pathname === "/api/auth/devices") return { action: "auth.devices.read", rateLimitScope: "auth-session", policy: { limit: 120, windowMs: 60_000 } };
+  if (pathname.startsWith("/api/auth/devices/")) return { action: "auth.device.revoke", rateLimitScope: "auth-account", policy: { limit: 20, windowMs: 60_000 } };
   if (pathname === "/api/auth/account") return { action: "auth.account.delete", rateLimitScope: "auth-account", policy: { limit: 5, windowMs: 60_000 } };
   if (pathname === "/api/auth/session") return { action: "auth.session.read", rateLimitScope: "auth-session", policy: { limit: 120, windowMs: 60_000 } };
   if (pathname.startsWith("/api/sync/")) {
@@ -308,6 +310,41 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           return sendJson(response, 200, { authenticated: false, revokedAll: true }, {
             "Set-Cookie": sessionCookie(cookieName, undefined, 0),
           });
+        }
+        if (request.method === "GET" && url.pathname === "/api/auth/devices") {
+          const principal = await options.resolvePrincipal(request);
+          const token = readSessionToken(request.headers.cookie, cookieName);
+          if (!principal || !token) {
+            auditReason = "authentication-required";
+            return sendJson(response, 401, { error: "Authentication required" });
+          }
+          auditPrincipal = principal;
+          const devices = await options.sessionLifecycle.listActiveDevices(token);
+          if (!devices) {
+            auditReason = "authentication-required";
+            return sendJson(response, 401, { error: "Authentication required" });
+          }
+          return sendJson(response, 200, { devices });
+        }
+        const targetDeviceId = entityIdFromPath(url.pathname, "/api/auth/devices/");
+        if (request.method === "DELETE" && targetDeviceId) {
+          requireAllowedOrigin(request, options.allowedSyncOrigins);
+          const principal = await options.resolvePrincipal(request);
+          const token = readSessionToken(request.headers.cookie, cookieName);
+          if (!principal || !token) {
+            auditReason = "authentication-required";
+            return sendJson(response, 401, { error: "Authentication required" });
+          }
+          auditPrincipal = principal;
+          const revoked = await options.sessionLifecycle.revokeDevice(token, targetDeviceId);
+          if (!revoked) {
+            auditReason = "device-not-found";
+            return sendJson(response, 404, { error: "Active device not found" });
+          }
+          const revokedCurrent = targetDeviceId === principal.deviceId;
+          return sendJson(response, 200, { revoked: true, revokedCurrent }, revokedCurrent ? {
+            "Set-Cookie": sessionCookie(cookieName, undefined, 0),
+          } : {});
         }
         if (request.method === "DELETE" && url.pathname === "/api/auth/account") {
           requireAllowedOrigin(request, options.allowedSyncOrigins);

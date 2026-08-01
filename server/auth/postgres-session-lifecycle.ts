@@ -17,11 +17,21 @@ export interface IssuedSession {
   expiresAt: string;
 }
 
+export interface ActiveDevice {
+  id: string;
+  label: string;
+  createdAt: string;
+  lastSeenAt: string;
+  current: boolean;
+}
+
 export interface SessionLifecycle {
   establishFromOidc(identity: VerifiedOidcIdentity): Promise<IssuedSession>;
   rotate(token: string): Promise<IssuedSession | null>;
   revoke(token: string): Promise<boolean>;
   revokeAll(token: string): Promise<boolean>;
+  listActiveDevices(token: string): Promise<ActiveDevice[] | null>;
+  revokeDevice(token: string, deviceId: string): Promise<boolean>;
 }
 
 export interface AccountDataLifecycle {
@@ -31,6 +41,17 @@ export interface AccountDataLifecycle {
 interface SessionRow extends QueryResultRow {
   user_id: string;
   device_id: string;
+}
+
+interface DeviceRow extends QueryResultRow {
+  id: string;
+  label: string;
+  created_at: Date | string;
+  last_seen_at: Date | string;
+}
+
+function iso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
 function assertIdentity(identity: VerifiedOidcIdentity): void {
@@ -152,6 +173,78 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
       await client.query(
         "UPDATE sync_devices SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL",
         [userId, revokedAt],
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listActiveDevices(token: string): Promise<ActiveDevice[] | null> {
+    const current = await this.pool.query<SessionRow>(
+      `SELECT s.user_id, s.device_id
+         FROM auth_sessions s
+         JOIN users u ON u.id = s.user_id
+         JOIN sync_devices d ON d.user_id = s.user_id AND d.id = s.device_id
+        WHERE s.token_hash = $1 AND s.expires_at > $2 AND s.revoked_at IS NULL
+          AND u.deleted_at IS NULL AND d.revoked_at IS NULL`,
+      [hashSessionToken(token), this.now().toISOString()],
+    );
+    if (current.rowCount !== 1) return null;
+    const devices = await this.pool.query<DeviceRow>(
+      `SELECT DISTINCT d.id, d.label, d.created_at, d.last_seen_at
+         FROM sync_devices d
+         JOIN auth_sessions active
+           ON active.user_id = d.user_id AND active.device_id = d.id
+          AND active.expires_at > $2 AND active.revoked_at IS NULL
+        WHERE d.user_id = $1 AND d.revoked_at IS NULL
+        ORDER BY d.last_seen_at DESC, d.created_at DESC`,
+      [current.rows[0].user_id, this.now().toISOString()],
+    );
+    return devices.rows.map((device) => ({
+      id: device.id,
+      label: device.label,
+      createdAt: iso(device.created_at),
+      lastSeenAt: iso(device.last_seen_at),
+      current: device.id === current.rows[0].device_id,
+    }));
+  }
+
+  async revokeDevice(token: string, deviceId: string): Promise<boolean> {
+    if (!deviceId.trim() || deviceId.length > 200) return false;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const current = await client.query<{ user_id: string }>(
+        `SELECT s.user_id
+           FROM auth_sessions s
+           JOIN users u ON u.id = s.user_id
+           JOIN sync_devices d ON d.user_id = s.user_id AND d.id = s.device_id
+          WHERE s.token_hash = $1 AND s.expires_at > $2 AND s.revoked_at IS NULL
+            AND u.deleted_at IS NULL AND d.revoked_at IS NULL
+          FOR UPDATE`,
+        [hashSessionToken(token), this.now().toISOString()],
+      );
+      if (current.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      const revokedAt = this.now().toISOString();
+      const device = await client.query(
+        "UPDATE sync_devices SET revoked_at = $3 WHERE user_id = $1 AND id = $2 AND revoked_at IS NULL",
+        [current.rows[0].user_id, deviceId, revokedAt],
+      );
+      if (device.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      await client.query(
+        "UPDATE auth_sessions SET revoked_at = $3 WHERE user_id = $1 AND device_id = $2 AND revoked_at IS NULL",
+        [current.rows[0].user_id, deviceId, revokedAt],
       );
       await client.query("COMMIT");
       return true;

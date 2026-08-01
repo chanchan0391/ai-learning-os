@@ -54,8 +54,8 @@ describe("PostgreSQL session principal resolver", () => {
   it("rejects missing, expired, revoked, and device-revoked sessions", async () => {
     const { pool, resolve } = await setup();
     const insert = (token: string, expiresAt: string, revokedAt: string | null = null) => pool.query(
-      `INSERT INTO auth_sessions (token_hash, user_id, device_id, expires_at, revoked_at)
-       VALUES ($1, 'user-alice', 'device-laptop', $2, $3)`,
+      `INSERT INTO auth_sessions (token_hash, user_id, device_id, created_at, expires_at, revoked_at)
+       VALUES ($1, 'user-alice', 'device-laptop', '2026-07-31T12:00:00.000Z', $2, $3)`,
       [hashSessionToken(token), expiresAt, revokedAt],
     );
     await insert("expired", "2026-08-01T11:59:59.000Z");
