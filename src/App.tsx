@@ -16,7 +16,7 @@ import {
 } from "./learning-state";
 import { BrowserLearningStateRepository } from "./learning-storage";
 import { completionRate, validateGoal } from "./planner";
-import { BrowserSyncClient, type AuthState } from "./sync-client";
+import { BrowserSyncClient, SyncConflictError, type AuthState, type SyncConflictPreview } from "./sync-client";
 import type { LearningStateExport } from "./learning-state";
 import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, TaskDifficulty, TeachingSession } from "./types";
 
@@ -49,6 +49,7 @@ export function App() {
   const [storageNoticeIsError, setStorageNoticeIsError] = useState(initialLoad.status === "recovered");
   const [authState, setAuthState] = useState<AuthState>({ status: "checking" });
   const [isSyncing, setIsSyncing] = useState(false);
+  const [pendingSyncConflict, setPendingSyncConflict] = useState<SyncConflictPreview | null>(null);
   const importInput = useRef<HTMLInputElement>(null);
   const plan = learningState?.plan ?? null;
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
@@ -252,7 +253,30 @@ export function App() {
       setStorageNotice(changes ? `同步完成：${changes}。` : "本地与云端进度已一致。");
       setStorageNoticeIsError(false);
     } catch (error) {
+      if (error instanceof SyncConflictError && error.preview) setPendingSyncConflict(error.preview);
       setStorageNotice(error instanceof Error ? error.message : "同步失败，请稍后重试。");
+      setStorageNoticeIsError(true);
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
+  async function resolveSyncConflict(choice: "local" | "remote") {
+    if (!pendingSyncConflict) return;
+    setIsSyncing(true);
+    setStorageNotice("");
+    try {
+      const result = await syncClient.resolveConflict(pendingSyncConflict, choice);
+      if (result.state) {
+        saveState(result.state);
+        setGoal(result.state.plan.goal);
+      }
+      setPendingSyncConflict(null);
+      setStorageNotice(`已保留${choice === "local" ? "本地" : "云端"}冲突版本，并完成同步。`);
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      if (error instanceof SyncConflictError && error.preview) setPendingSyncConflict(error.preview);
+      setStorageNotice(error instanceof Error ? error.message : "冲突处理失败，请重新同步。");
       setStorageNoticeIsError(true);
     } finally {
       setIsSyncing(false);
@@ -307,12 +331,42 @@ export function App() {
     </div>
   );
 
+  const conflictDialog = pendingSyncConflict && (
+    <div className="dialog-backdrop" role="presentation">
+      <section className="confirmation-dialog conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="conflict-dialog-title" aria-describedby="conflict-dialog-description">
+        <p className="eyebrow">同步冲突 · 需要选择</p>
+        <h2 id="conflict-dialog-title">比较本地与云端进度</h2>
+        <p id="conflict-dialog-description">
+          {pendingSyncConflict.kind === "different-plan" ? "两端是不同的学习计划。" : `两端都修改了${pendingSyncConflict.entityType === "learning-plan" ? "学习计划" : "同一天的学习记录"}。`}
+          选择后将覆盖这一冲突版本；建议先导出本地记录留作备份。
+        </p>
+        <div className="conflict-versions">
+          {(["local", "remote"] as const).map((source) => {
+            const state = source === "local" ? pendingSyncConflict.localState : pendingSyncConflict.remoteState;
+            return (
+              <article key={source}>
+                <span>{source === "local" ? "当前浏览器" : "云端版本"}</span>
+                <strong>{state.plan.goal.subject}</strong>
+                <small>第 {state.currentDay} 天 · 已完成 {completedDayCount(state)} 天</small>
+                {source === "remote" && pendingSyncConflict.remoteUpdatedAt && <small>云端更新：{new Date(pendingSyncConflict.remoteUpdatedAt).toLocaleString("zh-CN")}</small>}
+                <button className={source === "local" ? "secondary-action" : "primary-dialog-action"} disabled={isSyncing} onClick={() => resolveSyncConflict(source)}>
+                  {source === "local" ? "保留本地版本" : "使用云端版本"}
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+
   if (!plan || !learningState || !currentRecord) {
     return (
       <main className="shell onboarding">
         <header className="topbar"><div className="brand"><span className="brand-mark">A</span> AI Learning OS <span className="beta">PROTOTYPE</span></div><div className="data-actions">{accountControls}{importControl}</div></header>
         {storageNotice && <div className="storage-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
         {importDialog}
+        {conflictDialog}
         <section className="hero">
           <div>
             <p className="eyebrow">你的目标，不再停在愿望里</p>
@@ -351,6 +405,7 @@ export function App() {
       </header>
       {storageNotice && <div className="storage-notice dashboard-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
       {importDialog}
+      {conflictDialog}
       {deleteConfirmationOpen && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setDeleteConfirmationOpen(false);

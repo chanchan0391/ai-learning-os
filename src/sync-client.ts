@@ -34,8 +34,23 @@ export interface SyncResult {
   downloaded: number;
 }
 
+export interface SyncConflictPreview {
+  kind: "different-plan" | "diverged-entity";
+  entityType?: SyncEntity["entityType"];
+  entityId?: string;
+  remoteRevision?: number;
+  remoteUpdatedAt?: string;
+  localState: LearningState;
+  remoteState: LearningState;
+  localValue?: unknown;
+  remoteValue?: unknown;
+}
+
 export class SyncConflictError extends Error {
-  constructor(message = "本地与云端进度都已更改，请先导出备份后再选择要保留的版本。") {
+  constructor(
+    message = "本地与云端进度都已更改，请比较后选择要保留的冲突版本。",
+    readonly preview?: SyncConflictPreview,
+  ) {
     super(message);
     this.name = "SyncConflictError";
   }
@@ -107,15 +122,27 @@ export class BrowserSyncClient {
     if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端进度"));
 
     const remoteEntities = body.changes;
-    if (!localState) return this.restoreFromRemote(remoteEntities);
+    if (!localState) {
+      if (!remoteEntities.some((entity) => entity.entityType === "learning-plan")) {
+        return { state: null, uploaded: 0, downloaded: 0 };
+      }
+      return this.restoreFromRemote(remoteEntities);
+    }
 
     const otherRemotePlan = remoteEntities.find((entity) => entity.entityType === "learning-plan" && entity.entityId !== localState.plan.id);
     const matchingRemotePlan = remoteEntities.find((entity) => entity.entityType === "learning-plan" && entity.entityId === localState.plan.id);
     if (!matchingRemotePlan && otherRemotePlan) {
-      throw new SyncConflictError("云端已有另一份学习计划。请先导出本地备份，再决定要保留哪一份计划。");
+      const remoteState = this.stateFromRemote(remoteEntities, otherRemotePlan.entityId);
+      throw new SyncConflictError("云端已有另一份学习计划。请比较后选择继续使用哪一份计划。", {
+        kind: "different-plan",
+        localState,
+        remoteState,
+        remoteUpdatedAt: otherRemotePlan.updatedAt,
+      });
     }
 
     const previous = this.loadMetadata(localState.plan.id);
+    this.assertNoDivergedEntities(localState, remoteEntities, previous);
     const nextMetadata: SyncMetadata = { version: 1, planId: localState.plan.id, entities: { ...previous.entities } };
     let nextState = structuredClone(localState);
     let uploaded = 0;
@@ -168,6 +195,106 @@ export class BrowserSyncClient {
     return { state: nextState, uploaded, downloaded };
   }
 
+  async resolveConflict(preview: SyncConflictPreview, choice: "local" | "remote"): Promise<SyncResult> {
+    if (choice === "remote") {
+      if (preview.kind === "different-plan") {
+        const response = await this.request("/api/sync/changes", { credentials: "same-origin" });
+        const body = await response.json() as { changes?: SyncEntity[]; error?: string };
+        if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端进度"));
+        return this.restoreFromRemote(body.changes, preview.remoteState.plan.id);
+      }
+      const nextState = this.applyRemoteEntity(preview.localState, preview);
+      this.rememberResolvedEntity(nextState.plan.id, preview, "remote");
+      return this.sync(nextState);
+    }
+
+    if (preview.kind === "different-plan") return this.uploadLocalPlan(preview.localState);
+    if (!preview.entityType || !preview.entityId || preview.remoteRevision === undefined) {
+      throw new Error("冲突信息不完整，请重新同步。");
+    }
+    const entity = await this.write({
+      entityType: preview.entityType,
+      entityId: preview.entityId,
+      value: preview.localValue,
+    }, preview.remoteRevision);
+    this.rememberResolvedEntity(preview.localState.plan.id, { ...preview, remoteRevision: entity.revision }, "local");
+    const result = await this.sync(preview.localState);
+    return { ...result, uploaded: result.uploaded + 1 };
+  }
+
+  private assertNoDivergedEntities(localState: LearningState, remoteEntities: SyncEntity[], previous: SyncMetadata): void {
+    const locals = this.localEntities(localState);
+    for (const local of locals) {
+      const remote = remoteEntities.find((entity) => entity.entityType === local.entityType && entity.entityId === local.entityId);
+      if (!remote || fingerprint(local.value) === fingerprint(remote.value)) continue;
+      const base = previous.entities[metadataKey(local)];
+      const localChanged = base?.fingerprint !== fingerprint(local.value);
+      const remoteChanged = base?.revision !== remote.revision;
+      if (base && (!localChanged || !remoteChanged)) continue;
+      throw new SyncConflictError(undefined, {
+        kind: "diverged-entity",
+        entityType: local.entityType,
+        entityId: local.entityId,
+        remoteRevision: remote.revision,
+        remoteUpdatedAt: remote.updatedAt,
+        localState,
+        remoteState: this.stateFromRemote(remoteEntities, localState.plan.id),
+        localValue: local.value,
+        remoteValue: remote.value,
+      });
+    }
+  }
+
+  private localEntities(state: LearningState): Array<{ entityType: SyncEntity["entityType"]; entityId: string; value: unknown }> {
+    return [
+      { entityType: "learning-plan", entityId: state.plan.id, value: state.plan },
+      ...state.days.map((record) => ({
+        entityType: "daily-record" as const,
+        entityId: recordId(state.plan.id, record),
+        value: { planId: state.plan.id, record },
+      })),
+    ];
+  }
+
+  private applyRemoteEntity(localState: LearningState, preview: SyncConflictPreview): LearningState {
+    const next = structuredClone(localState);
+    if (preview.entityType === "learning-plan") next.plan = preview.remoteValue as LearningPlan;
+    if (preview.entityType === "daily-record") {
+      const record = (preview.remoteValue as { record: DailyLearningRecord }).record;
+      const index = next.days.findIndex((day) => day.day === record.day);
+      if (index >= 0) next.days[index] = record;
+      else next.days.push(record);
+    }
+    return this.validateState(next);
+  }
+
+  private rememberResolvedEntity(planId: string, preview: SyncConflictPreview, source: "local" | "remote"): void {
+    if (!preview.entityType || !preview.entityId || preview.remoteRevision === undefined) return;
+    const metadata = this.loadMetadata(planId);
+    const value = source === "local" ? preview.localValue : preview.remoteValue;
+    metadata.entities[metadataKey({ entityType: preview.entityType, entityId: preview.entityId })] = {
+      revision: preview.remoteRevision,
+      fingerprint: fingerprint(value),
+    };
+    this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify(metadata));
+  }
+
+  private async uploadLocalPlan(state: LearningState): Promise<SyncResult> {
+    const response = await this.request("/api/sync/changes", { credentials: "same-origin" });
+    const body = await response.json() as { changes?: SyncEntity[]; error?: string };
+    if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端进度"));
+    const metadata: SyncMetadata = { version: 1, planId: state.plan.id, entities: {} };
+    let uploaded = 0;
+    for (const local of this.localEntities(state)) {
+      const remote = body.changes.find((entity) => entity.entityType === local.entityType && entity.entityId === local.entityId);
+      const entity = await this.write(local, remote?.revision ?? null);
+      metadata.entities[metadataKey(entity)] = { revision: entity.revision, fingerprint: fingerprint(entity.value) };
+      uploaded += 1;
+    }
+    this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify(metadata));
+    return { state, uploaded, downloaded: 0 };
+  }
+
   private async reconcile(
     local: { entityType: SyncEntity["entityType"]; entityId: string; value: unknown },
     remote: SyncEntity | undefined,
@@ -210,29 +337,38 @@ export class BrowserSyncClient {
     return body as SyncEntity;
   }
 
-  private restoreFromRemote(entities: SyncEntity[]): SyncResult {
+  private restoreFromRemote(entities: SyncEntity[], preferredPlanId?: string): SyncResult {
+    const state = this.stateFromRemote(entities, preferredPlanId);
+    const planEntity = entities.find((entity) => entity.entityType === "learning-plan" && entity.entityId === state.plan.id)!;
+    const recordEntities = entities
+      .filter((entity) => entity.entityType === "daily-record")
+      .filter((entity) => (entity.value as { planId?: string }).planId === state.plan.id);
+    const metadata: SyncMetadata = { version: 1, planId: state.plan.id, entities: {} };
+    for (const entity of [planEntity, ...recordEntities]) {
+      metadata.entities[metadataKey(entity)] = { revision: entity.revision, fingerprint: fingerprint(entity.value) };
+    }
+    this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify(metadata));
+    return { state, uploaded: 0, downloaded: 1 + recordEntities.length };
+  }
+
+  private stateFromRemote(entities: SyncEntity[], preferredPlanId?: string): LearningState {
     const planEntity = entities
       .filter((entity) => entity.entityType === "learning-plan")
+      .filter((entity) => !preferredPlanId || entity.entityId === preferredPlanId)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
-    if (!planEntity) return { state: null, uploaded: 0, downloaded: 0 };
+    if (!planEntity) throw new Error("云端没有可恢复的学习计划");
     const plan = planEntity.value as LearningPlan;
     const recordEntities = entities
       .filter((entity) => entity.entityType === "daily-record")
       .filter((entity) => (entity.value as { planId?: string }).planId === plan.id);
     const days = recordEntities.map((entity) => (entity.value as { record: DailyLearningRecord }).record).sort((left, right) => left.day - right.day);
     if (days.length === 0) throw new Error("云端计划缺少每日学习记录");
-    const state = this.validateState({
+    return this.validateState({
       version: 3,
       plan,
       currentDay: days.find((day) => day.status === "active")?.day ?? days.at(-1)!.day,
       days,
     });
-    const metadata: SyncMetadata = { version: 1, planId: plan.id, entities: {} };
-    for (const entity of [planEntity, ...recordEntities]) {
-      metadata.entities[metadataKey(entity)] = { revision: entity.revision, fingerprint: fingerprint(entity.value) };
-    }
-    this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify(metadata));
-    return { state, uploaded: 0, downloaded: 1 + recordEntities.length };
   }
 
   private loadMetadata(planId: string): SyncMetadata {

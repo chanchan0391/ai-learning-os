@@ -145,4 +145,47 @@ describe("learning data controls", () => {
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("上传 2 项"));
     expect(screen.getByRole("button", { name: "退出" })).toBeTruthy();
   });
+
+  it("previews diverged local and cloud progress and applies the selected cloud version", async () => {
+    const user = userEvent.setup();
+    const entities = new Map<string, { entityType: "learning-plan" | "daily-record"; entityId: string; revision: number; updatedAt: string; value: unknown }>();
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") return Response.json({ authenticated: true, principal: { userId: "user-1", deviceId: "device-1" } });
+      if (url.pathname === "/api/sync/changes") return Response.json({ changes: [...entities.values()], cursor: "cursor-1" });
+      if (init?.method === "PUT") {
+        const daily = url.pathname.includes("/daily-records/");
+        const entityId = decodeURIComponent(url.pathname.split("/").at(-1)!);
+        const entityType = daily ? "daily-record" as const : "learning-plan" as const;
+        const key = `${entityType}:${entityId}`;
+        const current = entities.get(key);
+        const entity = { entityType, entityId, revision: (current?.revision ?? 0) + 1, updatedAt: "2026-08-01T10:00:00.000Z", value: JSON.parse(String(init.body)) };
+        entities.set(key, entity);
+        return Response.json(entity);
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+    await screen.findByText("已登录");
+    await user.click(screen.getByRole("button", { name: "立即同步" }));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("上传 2 项"));
+
+    const recordKey = [...entities.keys()].find((key) => key.startsWith("daily-record:"))!;
+    const remote = entities.get(recordKey)!;
+    const remoteValue = structuredClone(remote.value) as { record: { tasks: Array<{ description: string }> } };
+    remoteValue.record.tasks[1].description = "云端设备补充的学习说明";
+    entities.set(recordKey, { ...remote, revision: 2, updatedAt: "2026-08-01T11:00:00.000Z", value: remoteValue });
+    await user.click(screen.getByRole("button", { name: /快速基线评估/ }));
+    await user.click(screen.getByRole("button", { name: "立即同步" }));
+
+    expect(await screen.findByRole("alertdialog", { name: "比较本地与云端进度" })).toBeTruthy();
+    expect(screen.getByText("当前浏览器")).toBeTruthy();
+    expect(screen.getByText("云端版本")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "使用云端版本" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog", { name: "比较本地与云端进度" })).toBeNull());
+    expect(screen.getByText("云端设备补充的学习说明")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("已保留云端冲突版本");
+  });
 });

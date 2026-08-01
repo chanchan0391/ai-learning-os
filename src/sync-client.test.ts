@@ -123,7 +123,60 @@ describe("browser sync client", () => {
     value.record.tasks[1].description = "另一台设备更新的学习说明";
     server.entities.set(key, { ...remote, revision: 2, value });
 
-    await expect(client.sync(local)).rejects.toBeInstanceOf(SyncConflictError);
+    const conflict = await client.sync(local).catch((error: unknown) => error);
+
+    expect(conflict).toBeInstanceOf(SyncConflictError);
+    expect((conflict as SyncConflictError).preview).toMatchObject({
+      kind: "diverged-entity",
+      entityType: "daily-record",
+      localState: local,
+    });
+    expect(server.entities.get(key)?.revision).toBe(2);
+  });
+
+  it("resolves a diverged record by keeping the selected local version", async () => {
+    const server = fakeServer();
+    const client = new BrowserSyncClient(localStorage, server.request);
+    const state = learningState();
+    await client.sync(state);
+    const local = toggleCurrentTask(state, state.days[0].tasks[0].id);
+    const key = `daily-record:${state.plan.id}:day-1`;
+    const remote = server.entities.get(key)!;
+    const value = structuredClone(remote.value) as { planId: string; record: typeof state.days[0] };
+    value.record.tasks[1].description = "另一台设备更新的学习说明";
+    server.entities.set(key, { ...remote, revision: 2, value });
+    const conflict = await client.sync(local).then(
+      () => { throw new Error("expected sync conflict"); },
+      (error: unknown) => error as SyncConflictError,
+    );
+
+    const result = await client.resolveConflict(conflict.preview!, "local");
+
+    expect(result.uploaded).toBe(1);
+    expect((server.entities.get(key)?.value as { record: typeof state.days[0] }).record.tasks[0].completed).toBe(true);
+    expect(server.entities.get(key)?.revision).toBe(3);
+  });
+
+  it("resolves a diverged record by adopting the selected cloud version", async () => {
+    const server = fakeServer();
+    const client = new BrowserSyncClient(localStorage, server.request);
+    const state = learningState();
+    await client.sync(state);
+    const local = toggleCurrentTask(state, state.days[0].tasks[0].id);
+    const key = `daily-record:${state.plan.id}:day-1`;
+    const remote = server.entities.get(key)!;
+    const value = structuredClone(remote.value) as { planId: string; record: typeof state.days[0] };
+    value.record.tasks[1].description = "采用云端学习说明";
+    server.entities.set(key, { ...remote, revision: 2, value });
+    const conflict = await client.sync(local).then(
+      () => { throw new Error("expected sync conflict"); },
+      (error: unknown) => error as SyncConflictError,
+    );
+
+    const result = await client.resolveConflict(conflict.preview!, "remote");
+
+    expect(result.state?.days[0].tasks[0].completed).toBe(false);
+    expect(result.state?.days[0].tasks[1].description).toBe("采用云端学习说明");
     expect(server.entities.get(key)?.revision).toBe(2);
   });
 
