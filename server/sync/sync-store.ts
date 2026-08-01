@@ -34,6 +34,12 @@ export interface SyncChanges {
   cursor: string;
 }
 
+export interface SyncStore {
+  putPlan(principal: SyncPrincipal, request: SyncWriteRequest<LearningPlan>): SyncEntity<LearningPlan> | Promise<SyncEntity<LearningPlan>>;
+  putDailyRecord(principal: SyncPrincipal, request: SyncWriteRequest<DailyRecordSyncValue>): SyncEntity<DailyRecordSyncValue> | Promise<SyncEntity<DailyRecordSyncValue>>;
+  getChanges(principal: SyncPrincipal, cursor?: string): SyncChanges | Promise<SyncChanges>;
+}
+
 export class SyncConflictError extends Error {
   readonly code = "revision-conflict";
 

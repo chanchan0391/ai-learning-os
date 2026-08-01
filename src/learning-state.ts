@@ -51,7 +51,7 @@ function isDailyTask(value: unknown): value is DailyTask {
     && typeof value.completed === "boolean";
 }
 
-function isLearningPlan(value: unknown): value is LearningPlan {
+export function isLearningPlan(value: unknown): value is LearningPlan {
   if (!isRecord(value) || !isRecord(value.goal)) return false;
   const goal = value.goal;
   if (!isNonEmptyString(value.id)
@@ -140,7 +140,7 @@ function isLearningTaskArtifact(value: unknown): value is LearningTaskArtifact {
     && (value.evaluation === undefined || isEvaluationResult(value.evaluation));
 }
 
-function isDailyRecord(value: unknown): value is DailyLearningRecord {
+export function isDailyRecord(value: unknown): value is DailyLearningRecord {
   if (!isRecord(value)) return false;
   const hasValidFeedback = value.feedback === undefined || (
     isRecord(value.feedback)
