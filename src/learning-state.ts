@@ -333,6 +333,39 @@ function allocateMinutes(total: number): [number, number, number, number] {
   return [diagnose, learn, total - diagnose - learn - reflect, reflect];
 }
 
+const REVIEW_INTERVAL_DAYS = new Set([1, 3, 7]);
+
+export interface DueReviewItem {
+  sourceDay: number;
+  nextAction: string;
+  misconceptions: string[];
+}
+
+export function dueReviewItems(state: LearningState, targetDay = state.currentDay + 1): DueReviewItem[] {
+  return state.days.flatMap((record) => {
+    if (!REVIEW_INTERVAL_DAYS.has(targetDay - record.day)) return [];
+    const evaluation = Object.values(record.artifacts)
+      .flatMap((artifact) => artifact.evaluation ? [artifact.evaluation] : [])
+      .filter((result) => result.masteryLevel !== "ready" || result.misconceptions.length > 0)
+      .sort((a, b) => a.totalScore - b.totalScore)[0];
+    if (!evaluation) return [];
+    return [{
+      sourceDay: record.day,
+      nextAction: evaluation.nextAction,
+      misconceptions: evaluation.misconceptions,
+    }];
+  }).sort((a, b) => b.sourceDay - a.sourceDay);
+}
+
+function reviewPrompt(items: DueReviewItem[]): string {
+  return items.map((item) => {
+    const misconception = item.misconceptions.length > 0
+      ? `先解释并纠正“${item.misconceptions.join("、")}”`
+      : "先复述当时最薄弱的部分";
+    return `第 ${item.sourceDay} 天：${misconception}，再说明如何完成“${item.nextAction}”`;
+  }).join("；");
+}
+
 export function buildNextDayTasks(state: LearningState, feedback: DailyFeedback): DailyTask[] {
   const day = state.currentDay + 1;
   const { goal, stages } = state.plan;
@@ -348,11 +381,15 @@ export function buildNextDayTasks(state: LearningState, feedback: DailyFeedback)
   const evaluationFocus = evaluation
     ? `评估反馈：${evaluation.nextAction}${evaluation.misconceptions.length > 0 ? `；重点纠正：${evaluation.misconceptions.join("、")}` : ""}`
     : "根据昨天的自评继续推进";
+  const reviews = dueReviewItems(state, day);
+  const retrievalPrompt = reviews.length > 0
+    ? `${reviewPrompt(reviews)}。最后不查资料复述昨天最重要的结论，并回答：${feedback.reflection.trim() || "还有什么没有真正掌握？"}`
+    : `不查资料，复述昨天最重要的结论，并回答：${feedback.reflection.trim() || "还有什么没有真正掌握？"}`;
 
   return [
     {
-      id: `day-${day}-diagnose`, type: "diagnose", title: "检索昨天的关键知识",
-      description: `不查资料，复述昨天最重要的结论，并回答：${feedback.reflection.trim() || "还有什么没有真正掌握？"}`,
+      id: `day-${day}-diagnose`, type: "diagnose", title: reviews.length > 0 ? "间隔复习与主动检索" : "检索昨天的关键知识",
+      description: retrievalPrompt,
       minutes: diagnose, completed: false,
     },
     {

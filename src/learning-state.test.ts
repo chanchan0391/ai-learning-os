@@ -4,6 +4,7 @@ import {
   completeCurrentDay,
   completedDayCount,
   createLearningStateExport,
+  dueReviewItems,
   getCurrentRecord,
   initializeLearningState,
   learningStateExportFilename,
@@ -162,6 +163,59 @@ describe("multi-day learning state", () => {
 
     expect(state.days[1].tasks[1].description).toContain("补充失败恢复测试");
     expect(state.days[1].tasks[1].description).toContain("忽略超时");
+  });
+
+  it("schedules weak evaluator feedback for reviews after 1, 3, and 7 days", () => {
+    let state = completedState();
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "practice")!;
+    state = saveEvaluation(state, task.id, "可复查的学习成果", {
+      rubric: [
+        { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 1, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 7,
+      masteryLevel: "needs-support",
+      misconceptions: ["忽略超时"],
+      nextAction: "补充失败恢复测试",
+    });
+
+    expect(dueReviewItems(state, 2)).toEqual([{
+      sourceDay: 1,
+      misconceptions: ["忽略超时"],
+      nextAction: "补充失败恢复测试",
+    }]);
+    expect(dueReviewItems(state, 3)).toEqual([]);
+    expect(dueReviewItems(state, 4)).toHaveLength(1);
+    expect(dueReviewItems(state, 8)).toHaveLength(1);
+    expect(dueReviewItems(state, 9)).toEqual([]);
+
+    state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "继续检查恢复路径" });
+    const reviewTask = getCurrentRecord(state).tasks.find((item) => item.type === "diagnose")!;
+    expect(reviewTask.title).toBe("间隔复习与主动检索");
+    expect(reviewTask.description).toContain("第 1 天");
+    expect(reviewTask.description).toContain("忽略超时");
+    expect(reviewTask.description).toContain("补充失败恢复测试");
+  });
+
+  it("does not schedule review for strong evaluations without misconceptions", () => {
+    let state = completedState();
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "practice")!;
+    state = saveEvaluation(state, task.id, "完整成果", {
+      rubric: [
+        { dimension: "understanding", score: 4, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 4, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 4, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 4, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 16,
+      masteryLevel: "ready",
+      misconceptions: [],
+      nextAction: "进入下一项挑战",
+    });
+
+    expect(dueReviewItems(state, 2)).toEqual([]);
   });
 
   it("preserves prior history while advancing consecutive days", () => {

@@ -26,9 +26,10 @@ async function setup() {
   }
   const tokens = ["first-opaque-token", "rotated-opaque-token", "second-device-token"];
   const ids = ["user-1", "device-1", "device-2"];
+  const now = new Date();
   const lifecycle = new PostgresSessionLifecycle(
     pool,
-    () => new Date("2026-08-01T12:00:00.000Z"),
+    () => now,
     () => tokens.shift()!,
     () => ids.shift()!,
     60 * 60 * 1000,
