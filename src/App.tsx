@@ -1,8 +1,10 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  appendStageNoteEvidence,
   completeTeachingTask,
   completeCurrentDay,
   completedDayCount,
+  createStageNote,
   detectLearningInterruption,
   dueReviewItems,
   generateStageNote,
@@ -79,6 +81,7 @@ export function App() {
   const [pendingSyncConflict, setPendingSyncConflict] = useState<SyncConflictPreview | null>(null);
   const [noteQuery, setNoteQuery] = useState("");
   const [editingNoteId, setEditingNoteId] = useState("");
+  const [creatingStageNote, setCreatingStageNote] = useState(false);
   const [noteDraft, setNoteDraft] = useState({ title: "", content: "" });
   const importInput = useRef<HTMLInputElement>(null);
   const learningStateRef = useRef<LearningState | null>(initialLoad.state);
@@ -280,8 +283,40 @@ export function App() {
   }
 
   function beginEditingNote(note: StageLearningNote) {
+    setCreatingStageNote(false);
     setEditingNoteId(note.id);
     setNoteDraft({ title: note.title, content: note.content });
+  }
+
+  function beginCreatingStageNote() {
+    if (!currentStage) return;
+    setEditingNoteId("");
+    setCreatingStageNote(true);
+    setNoteDraft({ title: `${currentStage.title}学习笔记`, content: "" });
+  }
+
+  function saveNewStageNote() {
+    if (!currentStage) return;
+    try {
+      updateState((current) => createStageNote(current, currentStage.id, noteDraft));
+      setCreatingStageNote(false);
+      setStorageNotice("阶段笔记已新建；后续可按需追加学习证据。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法新建阶段笔记");
+      setStorageNoticeIsError(true);
+    }
+  }
+
+  function appendNewEvidence(note: StageLearningNote) {
+    try {
+      updateState((current) => appendStageNoteEvidence(current, note.id));
+      setStorageNotice("已追加新学习证据，原有笔记内容保持不变。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法追加学习证据");
+      setStorageNoticeIsError(true);
+    }
   }
 
   function saveNoteDraft() {
@@ -708,9 +743,19 @@ export function App() {
         <div className="notes-heading">
           <div><span className="agent-label">阶段知识库</span><h2 id="notes-title">可检索学习笔记</h2></div>
           {currentStage && !(plan.notes ?? []).some((note) => note.stageId === currentStage.id) && (
-            <button className="secondary-action" onClick={createCurrentStageNote}>生成当前阶段笔记</button>
+            <div className="note-actions">
+              <button className="text-button sync-button" onClick={beginCreatingStageNote}>手动新建笔记</button>
+              <button className="secondary-action" onClick={createCurrentStageNote}>从证据生成笔记</button>
+            </div>
           )}
         </div>
+        {creatingStageNote && (
+          <div className="note-create-form">
+            <label>新笔记标题<input value={noteDraft.title} onChange={(event) => setNoteDraft({ ...noteDraft, title: event.target.value })} /></label>
+            <label>新笔记内容<textarea rows={6} value={noteDraft.content} onChange={(event) => setNoteDraft({ ...noteDraft, content: event.target.value })} placeholder="先写下自己的关键结论，之后可追加新的学习证据。" /></label>
+            <div className="note-actions"><button className="secondary-action" onClick={() => setCreatingStageNote(false)}>取消新建</button><button className="primary-dialog-action" onClick={saveNewStageNote}>新建笔记</button></div>
+          </div>
+        )}
         {(plan.notes ?? []).length > 0 ? (
           <>
             <label className="note-search">搜索笔记<input type="search" value={noteQuery} onChange={(event) => setNoteQuery(event.target.value)} placeholder="搜索概念、误解或实践证据" /></label>
@@ -728,7 +773,7 @@ export function App() {
                       </>
                     ) : (
                       <>
-                        <div className="note-title"><div><small>{stage?.title ?? "学习阶段"} · 来源第 {note.sourceDays.length > 0 ? note.sourceDays.join("、") : "—"} 天</small><h3>{note.title}</h3></div><button className="text-button sync-button" onClick={() => beginEditingNote(note)}>编辑</button></div>
+                        <div className="note-title"><div><small>{stage?.title ?? "学习阶段"} · 来源第 {note.sourceDays.length > 0 ? note.sourceDays.join("、") : "—"} 天</small><h3>{note.title}</h3></div><div className="note-actions"><button className="text-button sync-button" onClick={() => appendNewEvidence(note)}>追加新证据</button><button className="text-button sync-button" onClick={() => beginEditingNote(note)}>编辑</button></div></div>
                         <p>{note.content}</p>
                       </>
                     )}

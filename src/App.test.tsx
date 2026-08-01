@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import axe from "axe-core";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -10,6 +10,7 @@ import {
   getCurrentRecord,
   initializeLearningState,
   saveEvaluation,
+  saveTeachingSession,
   serializeLearningStateExport,
   toggleCurrentTask,
 } from "./learning-state";
@@ -110,17 +111,32 @@ describe("learning data controls", () => {
     expect(saved.days[1].artifacts[reviewTask.id].reviewPerformance).toEqual({ sourceDays: [1], recall: "easy" });
   });
 
-  it("generates, edits, and searches stage learning notes", async () => {
+  it("creates, enriches, edits, and searches a manual stage learning note", async () => {
     const user = userEvent.setup();
+    let state = initializeLearningState(generateLearningPlan(goal));
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "learn")!;
+    state = saveTeachingSession(state, task.id, {
+      concept: "工具调用", explanation: "模型选择工具，宿主执行并验证参数。", workedExample: "先校验再调用。", practicePrompt: "练习",
+      understandingChecks: [
+        { id: "recall", prompt: "解释机制", expectedSignals: ["机制"] },
+        { id: "apply", prompt: "迁移应用", expectedSignals: ["步骤"] },
+      ],
+      completionSignals: ["可解释"],
+    });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "生成当前阶段笔记" }));
-    expect(screen.getByRole("heading", { name: "建立基础学习笔记" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "手动新建笔记" }));
+    await user.clear(screen.getByLabelText("新笔记标题"));
+    await user.type(screen.getByLabelText("新笔记标题"), "工具调用速查");
+    await user.type(screen.getByLabelText("新笔记内容"), "人工结论：先定义执行边界。");
+    await user.click(screen.getByRole("button", { name: "新建笔记" }));
+    await user.click(screen.getByRole("button", { name: "追加新证据" }));
+
+    const noteCard = screen.getByRole("heading", { name: "工具调用速查" }).closest("article")!;
+    expect(within(noteCard).getByText(/人工结论：先定义执行边界/)).toBeTruthy();
+    expect(within(noteCard).getByText(/模型选择工具，宿主执行并验证参数/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "编辑" }));
-    await user.clear(screen.getByLabelText("笔记标题"));
-    await user.type(screen.getByLabelText("笔记标题"), "工具调用速查");
-    await user.clear(screen.getByLabelText("笔记内容"));
-    await user.type(screen.getByLabelText("笔记内容"), "宿主负责执行工具并验证参数。");
     await user.click(screen.getByRole("button", { name: "保存笔记" }));
 
     expect(screen.getByRole("heading", { name: "工具调用速查" })).toBeTruthy();
@@ -129,7 +145,10 @@ describe("learning data controls", () => {
     await user.clear(screen.getByLabelText("搜索笔记"));
     await user.type(screen.getByLabelText("搜索笔记"), "验证参数");
     expect(screen.getByRole("heading", { name: "工具调用速查" })).toBeTruthy();
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.notes[0].content).toBe("宿主负责执行工具并验证参数。");
+    const savedNote = JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.notes[0];
+    expect(savedNote.content).toContain("人工结论：先定义执行边界。");
+    expect(savedNote.content).toContain("宿主执行并验证参数");
+    expect(savedNote.sourceDays).toEqual([1]);
   });
 
   it("keeps data on cancellation and removes every local version after confirmation", async () => {

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  appendStageNoteEvidence,
   completeTeachingTask,
   completeCurrentDay,
   completedDayCount,
+  createStageNote,
   createLearningStateExport,
   detectLearningInterruption,
   dueReviewItems,
@@ -202,6 +204,27 @@ describe("multi-day learning state", () => {
 
     state = updateStageNote(state, "note-stage-1", { title: "工具调用速查", content: "参数校验是执行边界。" }, new Date("2026-08-01T13:00:00.000Z"));
     expect(state.plan.notes?.[0]).toMatchObject({ title: "工具调用速查", content: "参数校验是执行边界。", updatedAt: "2026-08-01T13:00:00.000Z" });
+    expect(parseLearningState(JSON.stringify(state))).toMatchObject({ status: "valid" });
+  });
+
+  it("creates a manual stage note and appends only new evidence without replacing its prose", () => {
+    let state = initializeLearningState(generateLearningPlan(goal));
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "learn")!;
+    state = saveTeachingSession(state, task.id, {
+      concept: "工具边界", explanation: "宿主校验并执行工具。", workedExample: "拒绝缺少参数的调用。", practicePrompt: "练习",
+      understandingChecks: [
+        { id: "recall", prompt: "解释机制", expectedSignals: ["机制"] },
+        { id: "apply", prompt: "迁移应用", expectedSignals: ["步骤"] },
+      ],
+      completionSignals: ["可解释"],
+    });
+    state = createStageNote(state, "stage-1", { title: "我的工具笔记", content: "人工结论：先定义执行边界。" }, new Date("2026-08-01T12:00:00.000Z"));
+    state = appendStageNoteEvidence(state, "note-stage-1", new Date("2026-08-01T13:00:00.000Z"));
+
+    expect(state.plan.notes?.[0]).toMatchObject({ title: "我的工具笔记", sourceDays: [1], updatedAt: "2026-08-01T13:00:00.000Z" });
+    expect(state.plan.notes?.[0].content).toContain("人工结论：先定义执行边界。");
+    expect(state.plan.notes?.[0].content).toContain("宿主校验并执行工具。");
+    expect(() => appendStageNoteEvidence(state, "note-stage-1")).toThrow("没有可追加的新学习证据");
     expect(parseLearningState(JSON.stringify(state))).toMatchObject({ status: "valid" });
   });
 

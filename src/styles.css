@@ -85,6 +85,7 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .notes-heading, .note-title, .note-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .notes-heading h2 { margin: 5px 0 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 23px; font-weight: 500; }
 .note-search { max-width: 430px; margin: 18px 0 12px; }
+.note-create-form { display: grid; gap: 12px; margin-top: 18px; padding: 18px; background: #fafaf7; border: 1px solid #dde2dc; border-radius: 13px; }
 .note-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 12px; }
 .note-list article { padding: 18px; background: #fafaf7; border: 1px solid #dde2dc; border-radius: 13px; }
 .note-title { align-items: flex-start; }

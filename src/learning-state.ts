@@ -390,30 +390,85 @@ function noteTextForRecord(record: DailyLearningRecord): string[] {
   return lines;
 }
 
+function stageRecords(state: LearningState, stage: LearningStage): DailyLearningRecord[] {
+  return state.days.filter((record) => {
+    const week = Math.ceil(record.day / 7);
+    return week >= stage.startWeek && week <= stage.endWeek;
+  });
+}
+
+function noteEvidenceForRecords(records: DailyLearningRecord[]): { content: string; sourceDays: number[] } {
+  const sections = records.flatMap((record) => {
+    const lines = noteTextForRecord(record);
+    return lines.length > 0 ? [{ day: record.day, content: `第 ${record.day} 天\n${lines.join("\n")}` }] : [];
+  });
+  return {
+    content: sections.map((section) => section.content).join("\n\n"),
+    sourceDays: sections.map((section) => section.day),
+  };
+}
+
 export function generateStageNote(state: LearningState, stageId: string, now = new Date()): LearningState {
   const stage = state.plan.stages.find((item) => item.id === stageId);
   if (!stage) throw new Error("学习阶段不存在");
   if ((state.plan.notes ?? []).some((note) => note.stageId === stageId)) throw new Error("这个阶段已经有学习笔记");
-  const records = state.days.filter((record) => {
-    const week = Math.ceil(record.day / 7);
-    return week >= stage.startWeek && week <= stage.endWeek;
-  });
-  const evidence = records.flatMap((record) => {
-    const lines = noteTextForRecord(record);
-    return lines.length > 0 ? [`第 ${record.day} 天\n${lines.join("\n")}`] : [];
-  });
+  const evidence = noteEvidenceForRecords(stageRecords(state, stage));
   const note: StageLearningNote = {
     id: `note-${stage.id}`,
     stageId: stage.id,
     title: `${stage.title}学习笔记`,
     content: [
       `阶段目标：${stage.outcome}`,
-      evidence.length > 0 ? evidence.join("\n\n") : "尚无学习成果。完成教学、实践或复盘后，可在这里补充关键结论。",
+      evidence.content || "尚无学习成果。完成教学、实践或复盘后，可在这里补充关键结论。",
     ].join("\n\n"),
-    sourceDays: records.filter((record) => noteTextForRecord(record).length > 0).map((record) => record.day),
+    sourceDays: evidence.sourceDays,
     updatedAt: now.toISOString(),
   };
   return { ...state, plan: { ...state.plan, notes: [...(state.plan.notes ?? []), note] } };
+}
+
+export function createStageNote(
+  state: LearningState,
+  stageId: string,
+  draft: Pick<StageLearningNote, "title" | "content">,
+  now = new Date(),
+): LearningState {
+  const stage = state.plan.stages.find((item) => item.id === stageId);
+  if (!stage) throw new Error("学习阶段不存在");
+  if ((state.plan.notes ?? []).some((note) => note.stageId === stageId)) throw new Error("这个阶段已经有学习笔记");
+  const title = draft.title.trim();
+  const content = draft.content.trim();
+  if (!title || !content) throw new Error("笔记标题和内容不能为空");
+  const note: StageLearningNote = {
+    id: `note-${stage.id}`,
+    stageId: stage.id,
+    title,
+    content,
+    sourceDays: [],
+    updatedAt: now.toISOString(),
+  };
+  return { ...state, plan: { ...state.plan, notes: [...(state.plan.notes ?? []), note] } };
+}
+
+export function appendStageNoteEvidence(state: LearningState, noteId: string, now = new Date()): LearningState {
+  const note = (state.plan.notes ?? []).find((item) => item.id === noteId);
+  if (!note) throw new Error("学习笔记不存在");
+  const stage = state.plan.stages.find((item) => item.id === note.stageId);
+  if (!stage) throw new Error("学习阶段不存在");
+  const evidence = noteEvidenceForRecords(stageRecords(state, stage).filter((record) => !note.sourceDays.includes(record.day)));
+  if (!evidence.content) throw new Error("当前没有可追加的新学习证据");
+  return {
+    ...state,
+    plan: {
+      ...state.plan,
+      notes: (state.plan.notes ?? []).map((item) => item.id === noteId ? {
+        ...item,
+        content: `${item.content.trim()}\n\n新增学习证据\n${evidence.content}`,
+        sourceDays: [...item.sourceDays, ...evidence.sourceDays].sort((a, b) => a - b),
+        updatedAt: now.toISOString(),
+      } : item),
+    },
+  };
 }
 
 export function updateStageNote(
