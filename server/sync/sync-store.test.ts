@@ -78,6 +78,7 @@ describe("in-memory sync store", () => {
       operationId: "op-create", entityId: plan.id, baseRevision: null, value: plan,
     });
     const reorderedPlan = {
+      notes: plan.notes,
       today: plan.today,
       stages: plan.stages,
       goal: {

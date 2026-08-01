@@ -110,6 +110,28 @@ describe("learning data controls", () => {
     expect(saved.days[1].artifacts[reviewTask.id].reviewPerformance).toEqual({ sourceDays: [1], recall: "easy" });
   });
 
+  it("generates, edits, and searches stage learning notes", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "生成当前阶段笔记" }));
+    expect(screen.getByRole("heading", { name: "建立基础学习笔记" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "编辑" }));
+    await user.clear(screen.getByLabelText("笔记标题"));
+    await user.type(screen.getByLabelText("笔记标题"), "工具调用速查");
+    await user.clear(screen.getByLabelText("笔记内容"));
+    await user.type(screen.getByLabelText("笔记内容"), "宿主负责执行工具并验证参数。");
+    await user.click(screen.getByRole("button", { name: "保存笔记" }));
+
+    expect(screen.getByRole("heading", { name: "工具调用速查" })).toBeTruthy();
+    await user.type(screen.getByLabelText("搜索笔记"), "不存在的关键词");
+    expect(screen.getByText("没有匹配的笔记。")).toBeTruthy();
+    await user.clear(screen.getByLabelText("搜索笔记"));
+    await user.type(screen.getByLabelText("搜索笔记"), "验证参数");
+    expect(screen.getByRole("heading", { name: "工具调用速查" })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.notes[0].content).toBe("宿主负责执行工具并验证参数。");
+  });
+
   it("keeps data on cancellation and removes every local version after confirmation", async () => {
     const user = userEvent.setup();
     localStorage.setItem("ai-learning-os-state-v2", "legacy-state");

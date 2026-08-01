@@ -5,6 +5,7 @@ import {
   completedDayCount,
   detectLearningInterruption,
   dueReviewItems,
+  generateStageNote,
   getCurrentRecord,
   initializeLearningState,
   learningStateExportFilename,
@@ -16,13 +17,14 @@ import {
   saveUnderstandingResponse,
   serializeLearningStateExport,
   toggleCurrentTask,
+  updateStageNote,
 } from "./learning-state";
 import { BrowserLearningStateRepository } from "./learning-storage";
 import { completionRate, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import type { LearningStateExport } from "./learning-state";
-import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, RecoveryPlan, ReviewRecall, TaskDifficulty, TeachingSession } from "./types";
+import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, RecoveryPlan, ReviewRecall, StageLearningNote, TaskDifficulty, TeachingSession } from "./types";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
@@ -75,6 +77,9 @@ export function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [autoSyncStatus, setAutoSyncStatus] = useState<AutoSyncStatus>({ phase: "idle" });
   const [pendingSyncConflict, setPendingSyncConflict] = useState<SyncConflictPreview | null>(null);
+  const [noteQuery, setNoteQuery] = useState("");
+  const [editingNoteId, setEditingNoteId] = useState("");
+  const [noteDraft, setNoteDraft] = useState({ title: "", content: "" });
   const importInput = useRef<HTMLInputElement>(null);
   const learningStateRef = useRef<LearningState | null>(initialLoad.state);
   const authStateRef = useRef<AuthState>({ status: "checking" });
@@ -92,6 +97,16 @@ export function App() {
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
   const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
+  const currentStage = plan?.stages.find((stage) => {
+    const week = Math.ceil((learningState?.currentDay ?? 1) / 7);
+    return week >= stage.startWeek && week <= stage.endWeek;
+  }) ?? plan?.stages.at(-1);
+  const visibleNotes = useMemo(() => {
+    const query = noteQuery.trim().toLocaleLowerCase("zh-CN");
+    const notes = plan?.notes ?? [];
+    if (!query) return notes;
+    return notes.filter((note) => `${note.title}\n${note.content}`.toLocaleLowerCase("zh-CN").includes(query));
+  }, [noteQuery, plan]);
 
   useEffect(() => {
     let active = true;
@@ -249,6 +264,35 @@ export function App() {
       setErrors([]);
     } catch (error) {
       setErrors([error instanceof Error ? error.message : "无法完成今日学习"]);
+    }
+  }
+
+  function createCurrentStageNote() {
+    if (!currentStage) return;
+    try {
+      updateState((current) => generateStageNote(current, currentStage.id));
+      setStorageNotice(`已生成“${currentStage.title}”阶段笔记，可继续编辑。`);
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法生成阶段笔记");
+      setStorageNoticeIsError(true);
+    }
+  }
+
+  function beginEditingNote(note: StageLearningNote) {
+    setEditingNoteId(note.id);
+    setNoteDraft({ title: note.title, content: note.content });
+  }
+
+  function saveNoteDraft() {
+    try {
+      updateState((current) => updateStageNote(current, editingNoteId, noteDraft));
+      setEditingNoteId("");
+      setStorageNotice("阶段笔记已保存。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法保存阶段笔记");
+      setStorageNoticeIsError(true);
     }
   }
 
@@ -658,6 +702,43 @@ export function App() {
         <div><strong>{learningStreak(learningState)}</strong><span>连续学习日</span></div>
         <div><strong>{completedDayCount(learningState)}</strong><span>已完成天数</span></div>
         <div><strong>{plan.goal.durationWeeks * 7}</strong><span>计划学习日</span></div>
+      </section>
+
+      <section className="panel notes-panel" aria-labelledby="notes-title">
+        <div className="notes-heading">
+          <div><span className="agent-label">阶段知识库</span><h2 id="notes-title">可检索学习笔记</h2></div>
+          {currentStage && !(plan.notes ?? []).some((note) => note.stageId === currentStage.id) && (
+            <button className="secondary-action" onClick={createCurrentStageNote}>生成当前阶段笔记</button>
+          )}
+        </div>
+        {(plan.notes ?? []).length > 0 ? (
+          <>
+            <label className="note-search">搜索笔记<input type="search" value={noteQuery} onChange={(event) => setNoteQuery(event.target.value)} placeholder="搜索概念、误解或实践证据" /></label>
+            <div className="note-list">
+              {visibleNotes.map((note) => {
+                const stage = plan.stages.find((item) => item.id === note.stageId);
+                const editing = editingNoteId === note.id;
+                return (
+                  <article key={note.id}>
+                    {editing ? (
+                      <>
+                        <label>笔记标题<input value={noteDraft.title} onChange={(event) => setNoteDraft({ ...noteDraft, title: event.target.value })} /></label>
+                        <label>笔记内容<textarea rows={9} value={noteDraft.content} onChange={(event) => setNoteDraft({ ...noteDraft, content: event.target.value })} /></label>
+                        <div className="note-actions"><button className="secondary-action" onClick={() => setEditingNoteId("")}>取消</button><button className="primary-dialog-action" onClick={saveNoteDraft}>保存笔记</button></div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="note-title"><div><small>{stage?.title ?? "学习阶段"} · 来源第 {note.sourceDays.length > 0 ? note.sourceDays.join("、") : "—"} 天</small><h3>{note.title}</h3></div><button className="text-button sync-button" onClick={() => beginEditingNote(note)}>编辑</button></div>
+                        <p>{note.content}</p>
+                      </>
+                    )}
+                  </article>
+                );
+              })}
+              {visibleNotes.length === 0 && <p className="empty-notes" role="status">没有匹配的笔记。</p>}
+            </div>
+          </>
+        ) : <p className="empty-notes">从当前阶段的教学讲解、理解回答、实践成果与评估反馈生成一份可编辑笔记。</p>}
       </section>
 
       <div className="dashboard-grid">

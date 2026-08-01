@@ -106,6 +106,7 @@ export function generateLearningPlan(goal: LearningGoal, now = new Date()): Lear
     goal: { ...goal, subject: goal.subject.trim(), currentLevel: goal.currentLevel.trim(), targetOutcome: goal.targetOutcome.trim() },
     stages: buildStages(goal),
     today: buildToday(goal),
+    notes: [],
   };
 }
 
@@ -113,4 +114,3 @@ export function completionRate(tasks: DailyTask[]): number {
   if (tasks.length === 0) return 0;
   return Math.round((tasks.filter((task) => task.completed).length / tasks.length) * 100);
 }
-

@@ -6,6 +6,7 @@ import {
   createLearningStateExport,
   detectLearningInterruption,
   dueReviewItems,
+  generateStageNote,
   getCurrentRecord,
   initializeLearningState,
   learningStateExportFilename,
@@ -18,6 +19,7 @@ import {
   saveUnderstandingResponse,
   serializeLearningStateExport,
   toggleCurrentTask,
+  updateStageNote,
 } from "./learning-state";
 import { generateLearningPlan } from "./planner";
 
@@ -177,6 +179,30 @@ describe("multi-day learning state", () => {
 
     expect(getCurrentRecord(state).tasks.find((item) => item.id === task.id)?.completed).toBe(true);
     expect(getCurrentRecord(state).artifacts[task.id].understandingResponses).toEqual({ recall: "我的解释", apply: "我的应用步骤" });
+  });
+
+  it("generates an editable stage note from learning evidence", () => {
+    let state = initializeLearningState(generateLearningPlan(goal));
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "learn")!;
+    state = saveTeachingSession(state, task.id, {
+      concept: "工具调用", explanation: "模型选择工具，宿主执行工具。", workedExample: "先校验参数再调用。", practicePrompt: "练习",
+      understandingChecks: [
+        { id: "recall", prompt: "解释机制", expectedSignals: ["机制"] },
+        { id: "apply", prompt: "迁移应用", expectedSignals: ["步骤"] },
+      ],
+      completionSignals: ["可解释"],
+    });
+    state = saveUnderstandingResponse(state, task.id, "recall", "工具由宿主执行");
+    state = generateStageNote(state, "stage-1", new Date("2026-08-01T12:00:00.000Z"));
+
+    expect(state.plan.notes).toHaveLength(1);
+    expect(state.plan.notes?.[0]).toMatchObject({ stageId: "stage-1", sourceDays: [1] });
+    expect(state.plan.notes?.[0].content).toContain("模型选择工具");
+    expect(() => generateStageNote(state, "stage-1")).toThrow("已经有学习笔记");
+
+    state = updateStageNote(state, "note-stage-1", { title: "工具调用速查", content: "参数校验是执行边界。" }, new Date("2026-08-01T13:00:00.000Z"));
+    expect(state.plan.notes?.[0]).toMatchObject({ title: "工具调用速查", content: "参数校验是执行边界。", updatedAt: "2026-08-01T13:00:00.000Z" });
+    expect(parseLearningState(JSON.stringify(state))).toMatchObject({ status: "valid" });
   });
 
   it("uses persisted evaluation feedback to focus the next day", () => {

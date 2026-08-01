@@ -9,6 +9,7 @@ import type {
   LearningStage,
   LearningTaskArtifact,
   ReviewRecall,
+  StageLearningNote,
   TeachingSession,
 } from "./types";
 
@@ -79,10 +80,24 @@ export function isLearningPlan(value: unknown): value is LearningPlan {
     && Number(stage.endWeek) <= Number(goal.durationWeeks));
   const stageIds = stages.map((stage) => isRecord(stage) ? stage.id : undefined);
   const taskIds = today.map((task) => task.id);
+  const notesValid = value.notes === undefined || (Array.isArray(value.notes)
+    && value.notes.every((note) => isRecord(note)
+      && isNonEmptyString(note.id)
+      && isNonEmptyString(note.stageId)
+      && stageIds.includes(note.stageId)
+      && isNonEmptyString(note.title)
+      && isNonEmptyString(note.content)
+      && Array.isArray(note.sourceDays)
+      && note.sourceDays.every((day) => Number.isInteger(day) && Number(day) > 0 && Number(day) <= Number(goal.durationWeeks) * 7)
+      && new Set(note.sourceDays).size === note.sourceDays.length
+      && isValidDate(note.updatedAt))
+    && new Set(value.notes.map((note) => isRecord(note) ? note.id : undefined)).size === value.notes.length
+    && new Set(value.notes.map((note) => isRecord(note) ? note.stageId : undefined)).size === value.notes.length);
   return stagesValid
     && Number((stages.at(-1) as Record<string, unknown>).endWeek) === Number(goal.durationWeeks)
     && new Set(stageIds).size === stageIds.length
     && new Set(taskIds).size === taskIds.length
+    && notesValid
     && today.reduce((sum, task) => sum + task.minutes, 0) === Number(goal.dailyMinutes);
 }
 
@@ -352,6 +367,72 @@ export function saveEvaluation(state: LearningState, taskId: string, submission:
       [taskId]: { ...record.artifacts[taskId], submission: submission.trim(), evaluation },
     },
   }));
+}
+
+function noteTextForRecord(record: DailyLearningRecord): string[] {
+  const lines: string[] = [];
+  for (const artifact of Object.values(record.artifacts)) {
+    if (artifact.teachingSession) {
+      lines.push(`概念：${artifact.teachingSession.concept}`);
+      lines.push(`要点：${artifact.teachingSession.explanation}`);
+      lines.push(`示例：${artifact.teachingSession.workedExample}`);
+    }
+    const responses = Object.values(artifact.understandingResponses ?? {}).map((response) => response.trim()).filter(Boolean);
+    if (responses.length > 0) lines.push(`我的理解：${responses.join("；")}`);
+    if (artifact.submission?.trim()) lines.push(`实践证据：${artifact.submission.trim()}`);
+    if (artifact.evaluation) {
+      lines.push(`评估：${artifact.evaluation.masteryLevel}（${artifact.evaluation.totalScore}/16）`);
+      if (artifact.evaluation.misconceptions.length > 0) lines.push(`待纠正：${artifact.evaluation.misconceptions.join("、")}`);
+      lines.push(`下一步：${artifact.evaluation.nextAction}`);
+    }
+  }
+  if (record.feedback?.reflection.trim()) lines.push(`复盘：${record.feedback.reflection.trim()}`);
+  return lines;
+}
+
+export function generateStageNote(state: LearningState, stageId: string, now = new Date()): LearningState {
+  const stage = state.plan.stages.find((item) => item.id === stageId);
+  if (!stage) throw new Error("学习阶段不存在");
+  if ((state.plan.notes ?? []).some((note) => note.stageId === stageId)) throw new Error("这个阶段已经有学习笔记");
+  const records = state.days.filter((record) => {
+    const week = Math.ceil(record.day / 7);
+    return week >= stage.startWeek && week <= stage.endWeek;
+  });
+  const evidence = records.flatMap((record) => {
+    const lines = noteTextForRecord(record);
+    return lines.length > 0 ? [`第 ${record.day} 天\n${lines.join("\n")}`] : [];
+  });
+  const note: StageLearningNote = {
+    id: `note-${stage.id}`,
+    stageId: stage.id,
+    title: `${stage.title}学习笔记`,
+    content: [
+      `阶段目标：${stage.outcome}`,
+      evidence.length > 0 ? evidence.join("\n\n") : "尚无学习成果。完成教学、实践或复盘后，可在这里补充关键结论。",
+    ].join("\n\n"),
+    sourceDays: records.filter((record) => noteTextForRecord(record).length > 0).map((record) => record.day),
+    updatedAt: now.toISOString(),
+  };
+  return { ...state, plan: { ...state.plan, notes: [...(state.plan.notes ?? []), note] } };
+}
+
+export function updateStageNote(
+  state: LearningState,
+  noteId: string,
+  changes: Pick<StageLearningNote, "title" | "content">,
+  now = new Date(),
+): LearningState {
+  const title = changes.title.trim();
+  const content = changes.content.trim();
+  if (!title || !content) throw new Error("笔记标题和内容不能为空");
+  if (!(state.plan.notes ?? []).some((note) => note.id === noteId)) throw new Error("学习笔记不存在");
+  return {
+    ...state,
+    plan: {
+      ...state.plan,
+      notes: (state.plan.notes ?? []).map((note) => note.id === noteId ? { ...note, title, content, updatedAt: now.toISOString() } : note),
+    },
+  };
 }
 
 function stageForDay(stages: LearningStage[], day: number): LearningStage {

@@ -14,6 +14,15 @@ export interface LearningStage {
   endWeek: number;
 }
 
+export interface StageLearningNote {
+  id: string;
+  stageId: string;
+  title: string;
+  content: string;
+  sourceDays: number[];
+  updatedAt: string;
+}
+
 export interface DailyTask {
   id: string;
   type: "diagnose" | "learn" | "practice" | "reflect";
@@ -29,6 +38,7 @@ export interface LearningPlan {
   goal: LearningGoal;
   stages: LearningStage[];
   today: DailyTask[];
+  notes?: StageLearningNote[];
 }
 
 export type TaskDifficulty = "too-easy" | "just-right" | "too-hard";
