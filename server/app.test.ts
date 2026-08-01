@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { DeterministicModelProvider } from "./ai/deterministic-provider";
 import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
+import type { SecurityAuditEvent } from "./security/request-security";
 
 const servers: ReturnType<typeof createApp>[] = [];
 afterEach(() => servers.splice(0).forEach((server) => server.close()));
@@ -182,5 +183,51 @@ describe("AI Learning OS API", () => {
     expect(callback.headers.get("location")).toBe("/progress");
     expect(callback.headers.get("set-cookie")).toContain("ai_learning_os_session=application-token");
     expect(established).toHaveLength(1);
+  });
+
+  it("rate limits protected routes before auth work and emits privacy-safe audit metadata", async () => {
+    let beginCalls = 0;
+    let resolveAudit!: (event: SecurityAuditEvent) => void;
+    const audited = new Promise<SecurityAuditEvent>((resolve) => { resolveAudit = resolve; });
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      resolvePrincipal: async () => null,
+      sessionLifecycle: {
+        establishFromOidc: async () => { throw new Error("not used"); },
+        rotate: async () => null,
+        revoke: async () => false,
+      },
+      oidcAuthenticator: {
+        transactionCookieName: "oidc_txn",
+        begin: async () => {
+          beginCalls += 1;
+          return { authorizationUrl: "https://identity.example/authorize", transactionCookie: "secret-transaction" };
+        },
+        complete: async () => { throw new Error("not used"); },
+      },
+      rateLimiter: {
+        consume: () => ({ allowed: false, limit: 20, remaining: 0, resetAt: Date.now() + 30_000 }),
+      },
+      auditSink: { record: resolveAudit },
+    });
+
+    const response = await fetch(`${baseUrl}/api/auth/login?returnTo=%2Fprivate`, {
+      headers: { Cookie: "ai_learning_os_session=secret-token" },
+      redirect: "manual",
+    });
+    const event = await audited;
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("30");
+    expect(response.headers.get("ratelimit-remaining")).toBe("0");
+    expect(beginCalls).toBe(0);
+    expect(event).toMatchObject({
+      action: "auth.login",
+      method: "GET",
+      path: "/api/auth/login",
+      status: 429,
+      outcome: "rejected",
+      reason: "rate-limit-exceeded",
+    });
+    expect(JSON.stringify(event)).not.toMatch(/secret|private|returnTo|cookie/i);
   });
 });

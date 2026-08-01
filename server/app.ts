@@ -11,6 +11,16 @@ import type { OidcAuthenticator } from "./auth/oidc-client";
 import type { SessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { DEFAULT_SESSION_COOKIE_NAME, readSessionToken } from "./auth/postgres-session-resolver";
 import {
+  InMemoryFixedWindowRateLimiter,
+  auditOutcome,
+  clientRateLimitKey,
+  principalFields,
+  type RateLimitPolicy,
+  type RequestRateLimiter,
+  type SecurityAuditEvent,
+  type SecurityAuditSink,
+} from "./security/request-security";
+import {
   SyncConflictError,
   SyncRequestError,
   type DailyRecordSyncValue,
@@ -32,6 +42,31 @@ export interface AppOptions {
   sessionLifecycle?: SessionLifecycle;
   sessionCookieName?: string;
   oidcAuthenticator?: OidcAuthenticator;
+  rateLimiter?: RequestRateLimiter;
+  auditSink?: SecurityAuditSink;
+}
+
+interface ProtectedRoute {
+  action: string;
+  rateLimitScope: string;
+  policy: RateLimitPolicy;
+}
+
+function protectedRoute(method: string | undefined, pathname: string): ProtectedRoute | null {
+  if (pathname === "/api/auth/login") return { action: "auth.login", rateLimitScope: "auth-login", policy: { limit: 20, windowMs: 60_000 } };
+  if (pathname === "/api/auth/callback") return { action: "auth.callback", rateLimitScope: "auth-callback", policy: { limit: 20, windowMs: 60_000 } };
+  if (pathname === "/api/auth/session/refresh") return { action: "auth.session.refresh", rateLimitScope: "auth-session", policy: { limit: 60, windowMs: 60_000 } };
+  if (pathname === "/api/auth/logout") return { action: "auth.logout", rateLimitScope: "auth-session", policy: { limit: 60, windowMs: 60_000 } };
+  if (pathname === "/api/auth/session") return { action: "auth.session.read", rateLimitScope: "auth-session", policy: { limit: 120, windowMs: 60_000 } };
+  if (pathname.startsWith("/api/sync/")) {
+    const write = method !== "GET";
+    return {
+      action: write ? "sync.write" : "sync.read",
+      rateLimitScope: write ? "sync-write" : "sync-read",
+      policy: { limit: write ? 60 : 120, windowMs: 60_000 },
+    };
+  }
+  return null;
 }
 
 function sessionCookie(name: string, token?: string, maxAgeSeconds?: number): string {
@@ -110,14 +145,49 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
   const planner = createPlannerAgent(provider);
   const teacher = createTeacherAgent(provider);
   const evaluator = createEvaluatorAgent(provider);
+  const rateLimiter = options.rateLimiter ?? new InMemoryFixedWindowRateLimiter();
   return createServer(async (request, response) => {
     const controller = new AbortController();
     request.once("aborted", () => controller.abort());
     response.once("close", () => {
       if (!response.writableEnded) controller.abort();
     });
+    const url = new URL(request.url ?? "/", "http://localhost");
+    const route = protectedRoute(request.method, url.pathname);
+    let auditPrincipal: { userId: string; deviceId: string } | null = null;
+    let auditReason: string | undefined;
+    if (route && options.auditSink) {
+      response.once("finish", () => {
+        const event: SecurityAuditEvent = {
+          occurredAt: new Date().toISOString(),
+          action: route.action,
+          method: request.method ?? "UNKNOWN",
+          path: url.pathname,
+          status: response.statusCode,
+          outcome: auditOutcome(response.statusCode),
+          ...(auditReason ? { reason: auditReason } : {}),
+          ...principalFields(auditPrincipal),
+        };
+        try {
+          const recorded = options.auditSink!.record(event);
+          if (recorded && "catch" in recorded) void recorded.catch((error) => console.error("Security audit sink failed", error));
+        } catch (error) {
+          console.error("Security audit sink failed", error);
+        }
+      });
+    }
     try {
-      const url = new URL(request.url ?? "/", "http://localhost");
+      if (route) {
+        const decision = rateLimiter.consume(route.rateLimitScope, clientRateLimitKey(request), route.policy);
+        response.setHeader("RateLimit-Limit", String(decision.limit));
+        response.setHeader("RateLimit-Remaining", String(decision.remaining));
+        response.setHeader("RateLimit-Reset", String(Math.ceil(decision.resetAt / 1000)));
+        if (!decision.allowed) {
+          auditReason = "rate-limit-exceeded";
+          const retryAfter = Math.max(1, Math.ceil((decision.resetAt - Date.now()) / 1000));
+          return sendJson(response, 429, { error: "Too many requests" }, { "Retry-After": String(retryAfter) });
+        }
+      }
       if (request.method === "GET" && request.url === "/api/health") {
         return sendJson(response, 200, {
           status: "ok",
@@ -161,6 +231,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
             typeof request.headers["user-agent"] === "string" ? request.headers["user-agent"] : "Browser",
           );
           const issued = await options.sessionLifecycle.establishFromOidc(callback.identity);
+          auditPrincipal = { userId: issued.userId, deviceId: issued.deviceId };
           const maxAge = Math.max(0, Math.floor((Date.parse(issued.expiresAt) - Date.now()) / 1000));
           response.writeHead(302, {
             Location: callback.returnTo,
@@ -174,6 +245,8 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         }
         if (request.method === "GET" && url.pathname === "/api/auth/session") {
           const principal = await options.resolvePrincipal(request);
+          auditPrincipal = principal;
+          if (!principal) auditReason = "authentication-required";
           return principal ? sendJson(response, 200, { authenticated: true, principal })
             : sendJson(response, 401, { authenticated: false });
         }
@@ -181,9 +254,13 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           requireAllowedOrigin(request, options.allowedSyncOrigins);
           const token = readSessionToken(request.headers.cookie, cookieName);
           const rotated = token ? await options.sessionLifecycle.rotate(token) : null;
-          if (!rotated) return sendJson(response, 401, { error: "Authentication required" }, {
+          if (!rotated) {
+            auditReason = "authentication-required";
+            return sendJson(response, 401, { error: "Authentication required" }, {
             "Set-Cookie": sessionCookie(cookieName, undefined, 0),
-          });
+            });
+          }
+          auditPrincipal = { userId: rotated.userId, deviceId: rotated.deviceId };
           const maxAge = Math.max(0, Math.floor((Date.parse(rotated.expiresAt) - Date.now()) / 1000));
           return sendJson(response, 200, { authenticated: true, principal: { userId: rotated.userId, deviceId: rotated.deviceId } }, {
             "Set-Cookie": sessionCookie(cookieName, rotated.token, maxAge),
@@ -191,6 +268,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         }
         if (request.method === "POST" && url.pathname === "/api/auth/logout") {
           requireAllowedOrigin(request, options.allowedSyncOrigins);
+          auditPrincipal = await options.resolvePrincipal(request);
           const token = readSessionToken(request.headers.cookie, cookieName);
           if (token) await options.sessionLifecycle.revoke(token);
           return sendJson(response, 200, { authenticated: false }, {
@@ -203,7 +281,11 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           return sendJson(response, 503, { error: "Sync is not configured" });
         }
         const principal = await options.resolvePrincipal(request);
-        if (!principal) return sendJson(response, 401, { error: "Authentication required" });
+        if (!principal) {
+          auditReason = "authentication-required";
+          return sendJson(response, 401, { error: "Authentication required" });
+        }
+        auditPrincipal = principal;
 
         if (request.method === "GET" && url.pathname === "/api/sync/changes") {
           const cursor = url.searchParams.get("cursor") ?? undefined;
@@ -245,7 +327,11 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       }
       return sendJson(response, 404, { error: "Not found" });
     } catch (error) {
-      if (error instanceof SyncConflictError) return sendJson(response, 409, { error: error.code, current: error.current });
+      if (error instanceof Error) auditReason = error.name;
+      if (error instanceof SyncConflictError) {
+        auditReason = error.code;
+        return sendJson(response, 409, { error: error.code, current: error.current });
+      }
       if (error instanceof SyncRequestError) {
         const status = error.code === "idempotency-mismatch" ? 409
           : error.code === "missing-plan" ? 422

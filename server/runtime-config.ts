@@ -3,6 +3,7 @@ import type { AppOptions } from "./app";
 import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolver";
 import { PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { StandardOidcClient, type OidcConfig } from "./auth/oidc-client";
+import { InMemoryFixedWindowRateLimiter, JsonLineSecurityAuditSink } from "./security/request-security";
 import { PostgresSyncStore } from "./sync/postgres-sync-store";
 
 export interface SyncRuntime {
@@ -89,6 +90,8 @@ export function createSyncRuntime(
       sessionLifecycle,
       sessionCookieName: config.sessionCookieName,
       oidcAuthenticator: config.oidc ? new StandardOidcClient(config.oidc) : undefined,
+      rateLimiter: new InMemoryFixedWindowRateLimiter(),
+      auditSink: new JsonLineSecurityAuditSink(),
     },
     close: () => pool.end(),
   };
