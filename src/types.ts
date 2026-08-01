@@ -61,6 +61,27 @@ export type ReviewRecall = "forgot" | "effortful" | "easy";
 export interface ReviewPerformance {
   sourceDays: number[];
   recall: ReviewRecall;
+  assessment?: ReviewAssessment;
+}
+
+export interface ReviewPromptItem {
+  sourceDay: number;
+  nextAction: string;
+  misconceptions: string[];
+}
+
+export interface ReviewAssessmentRequest {
+  goal: LearningGoal;
+  items: ReviewPromptItem[];
+  answer: string;
+}
+
+export interface ReviewAssessment {
+  answer: string;
+  score: number;
+  recall: ReviewRecall;
+  evidence: string;
+  feedback: string;
 }
 
 export interface DailyLearningRecord {

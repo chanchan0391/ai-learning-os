@@ -89,6 +89,29 @@ describe("AI Learning OS API", () => {
     expect(response.status).toBe(400);
   });
 
+  it("automatically scores an active-recall answer", async () => {
+    const baseUrl = await startApi();
+    const answer = "重试是再次执行失败步骤，恢复是从检查点继续。我会画出状态路径并标出失败分支。";
+    const response = await fetch(`${baseUrl}/api/review-assessments`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ goal, answer, items: [{ sourceDay: 1, nextAction: "画出恢复路径", misconceptions: ["混淆重试与恢复"] }] }),
+    });
+    const assessment = await response.json() as { answer: string; score: number; recall: string };
+    expect(response.status).toBe(201);
+    expect(assessment.answer).toBe(answer);
+    expect(assessment.score).toBeGreaterThanOrEqual(2);
+    expect(assessment.recall).toBe("effortful");
+  });
+
+  it("rejects an empty active-recall answer", async () => {
+    const baseUrl = await startApi();
+    const response = await fetch(`${baseUrl}/api/review-assessments`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ goal, answer: " ", items: [{ sourceDay: 1, nextAction: "画出恢复路径", misconceptions: [] }] }),
+    });
+    expect(response.status).toBe(400);
+  });
+
   it("cancels an Agent call when its client disconnects", async () => {
     let markStarted!: () => void;
     let markAborted!: () => void;

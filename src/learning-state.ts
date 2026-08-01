@@ -9,6 +9,7 @@ import type {
   LearningStage,
   LearningTaskArtifact,
   ReviewRecall,
+  ReviewAssessment,
   StageLearningNote,
   TeachingSession,
 } from "./types";
@@ -186,7 +187,15 @@ function isLearningTaskArtifact(value: unknown): value is LearningTaskArtifact {
       && Array.isArray(value.reviewPerformance.sourceDays)
       && value.reviewPerformance.sourceDays.length > 0
       && value.reviewPerformance.sourceDays.every((day) => Number.isInteger(day) && Number(day) > 0)
-      && new Set(value.reviewPerformance.sourceDays).size === value.reviewPerformance.sourceDays.length));
+      && new Set(value.reviewPerformance.sourceDays).size === value.reviewPerformance.sourceDays.length
+      && (value.reviewPerformance.assessment === undefined || (isRecord(value.reviewPerformance.assessment)
+        && isNonEmptyString(value.reviewPerformance.assessment.answer)
+        && Number.isInteger(value.reviewPerformance.assessment.score)
+        && Number(value.reviewPerformance.assessment.score) >= 0
+        && Number(value.reviewPerformance.assessment.score) <= 4
+        && value.reviewPerformance.assessment.recall === value.reviewPerformance.recall
+        && isNonEmptyString(value.reviewPerformance.assessment.evidence)
+        && isNonEmptyString(value.reviewPerformance.assessment.feedback)))));
 }
 
 export function isDailyRecord(value: unknown): value is DailyLearningRecord {
@@ -382,6 +391,58 @@ export function weeklyLearningReview(state: LearningState): WeeklyLearningReview
       ?? latestReflection
       ?? (completed.length > 0 ? "完成一次可验证的实践成果并获取评估。" : "完成今天的学习闭环。"),
   };
+}
+
+export function learningProgressMarkdownFilename(now = new Date()): string {
+  return `ai-learning-os-progress-${dateKey(now)}.md`;
+}
+
+export function serializeLearningProgressMarkdown(state: LearningState, now = new Date()): string {
+  const review = weeklyLearningReview(state);
+  const stages = state.plan.stages.map((stage) => {
+    const records = state.days.filter((record) => {
+      const week = Math.ceil(record.day / 7);
+      return week >= stage.startWeek && week <= stage.endWeek;
+    });
+    const completed = records.filter((record) => record.status === "completed");
+    const evaluations = records.flatMap((record) => Object.values(record.artifacts)
+      .flatMap((artifact) => artifact.evaluation ? [artifact.evaluation] : []));
+    const average = evaluations.length > 0
+      ? Math.round((evaluations.reduce((sum, result) => sum + result.totalScore, 0) / evaluations.length) * 10) / 10
+      : null;
+    const plannedDays = (stage.endWeek - stage.startWeek + 1) * 7;
+    const note = (state.plan.notes ?? []).find((item) => item.stageId === stage.id);
+    return [
+      `### ${stage.title}`,
+      "",
+      `- 阶段目标：${stage.outcome}`,
+      `- 已完成：${completed.length}/${plannedDays} 个学习日`,
+      `- 成果评估：${evaluations.length} 次${average === null ? "" : `，平均 ${average}/16`}`,
+      `- 阶段笔记：${note ? `${note.title}（${note.sourceDays.length} 个来源日）` : "尚未建立"}`,
+    ].join("\n");
+  });
+  return [
+    `# ${state.plan.goal.subject} 学习进展`,
+    "",
+    `> 学习目标：${state.plan.goal.targetOutcome}`,
+    `> 导出时间：${now.toISOString()}`,
+    "",
+    "## 最近 7 个完成日",
+    "",
+    review.headline,
+    "",
+    `- 完成日：${review.completedDays}`,
+    `- 投入时间：${review.totalMinutes} 分钟`,
+    `- 成果评估：${review.evaluationCount} 次${review.averageEvaluationScore === null ? "" : `，平均 ${review.averageEvaluationScore}/16`}`,
+    `- 偏难日：${review.difficultDays}`,
+    `- 轻松回忆：${review.successfulReviews}`,
+    `- 最小下一步：${review.nextAction}`,
+    "",
+    "## 阶段进展",
+    "",
+    stages.join("\n\n"),
+    "",
+  ].join("\n");
 }
 
 export function learningCalendarMonth(state: LearningState, month: string): LearningCalendarMonth {
@@ -713,6 +774,24 @@ export function saveReviewPerformance(state: LearningState, taskId: string, reca
     artifacts: {
       ...current.artifacts,
       [taskId]: { ...current.artifacts[taskId], reviewPerformance: { sourceDays, recall } },
+    },
+  }));
+}
+
+export function saveReviewAssessment(state: LearningState, taskId: string, assessment: ReviewAssessment): LearningState {
+  if (!assessment.answer.trim() || !Number.isInteger(assessment.score) || assessment.score < 0 || assessment.score > 4
+    || !assessment.evidence.trim() || !assessment.feedback.trim()) throw new Error("复习判分结果无效");
+  const expectedRecall: ReviewRecall = assessment.score <= 1 ? "forgot" : assessment.score <= 3 ? "effortful" : "easy";
+  if (assessment.recall !== expectedRecall) throw new Error("复习分数与回忆表现不一致");
+  const next = saveReviewPerformance(state, taskId, assessment.recall);
+  return updateCurrentRecord(next, (record) => ({
+    ...record,
+    artifacts: {
+      ...record.artifacts,
+      [taskId]: {
+        ...record.artifacts[taskId],
+        reviewPerformance: { ...record.artifacts[taskId].reviewPerformance!, assessment: { ...assessment, answer: assessment.answer.trim() } },
+      },
     },
   }));
 }

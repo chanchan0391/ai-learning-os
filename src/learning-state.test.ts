@@ -13,16 +13,19 @@ import {
   getCurrentRecord,
   initializeLearningState,
   learningStateExportFilename,
+  learningProgressMarkdownFilename,
   learningStreak,
   learningCalendarMonth,
   parseLearningState,
   parseLearningStateExport,
   saveEvaluation,
   saveReviewPerformance,
+  saveReviewAssessment,
   saveTeachingSession,
   saveUnderstandingResponse,
   scheduledReviewItems,
   serializeLearningStateExport,
+  serializeLearningProgressMarkdown,
   serializeStageNoteMarkdown,
   stageNoteMarkdownFilename,
   toggleCurrentTask,
@@ -122,6 +125,23 @@ describe("multi-day learning state", () => {
     });
     expect(JSON.parse(serializeLearningStateExport(state, exportedAt))).toEqual(payload);
     expect(learningStateExportFilename(exportedAt)).toBe("ai-learning-os-learning-data-2026-07-31.json");
+  });
+
+  it("exports the weekly review and every stage progress summary as Markdown", () => {
+    let state = completedState();
+    state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "缩小范围" }, new Date("2026-08-01T10:00:00.000Z"));
+    state.plan.notes = [{ id: "note-stage-1", stageId: "stage-1", title: "基础笔记", content: "证据", sourceDays: [1], updatedAt: "2026-08-01T12:00:00.000Z" }];
+    const now = new Date("2026-08-01T14:00:00.000Z");
+    const markdown = serializeLearningProgressMarkdown(state, now);
+
+    expect(learningProgressMarkdownFilename(now)).toBe("ai-learning-os-progress-2026-08-01.md");
+    expect(markdown).toContain("# AI Agent 工程 学习进展");
+    expect(markdown).toContain("## 最近 7 个完成日");
+    expect(markdown).toContain("- 最小下一步：缩小范围");
+    expect(markdown).toContain("## 阶段进展");
+    expect(markdown).toContain("- 已完成：1/21 个学习日");
+    expect(markdown).toContain("基础笔记（1 个来源日）");
+    expect(markdown.match(/^### /gm)).toHaveLength(state.plan.stages.length);
   });
 
   it("validates a portable export before allowing it to be restored", () => {
@@ -407,6 +427,34 @@ describe("multi-day learning state", () => {
     expect(dueReviewItems(state, 3)).toEqual([]);
     expect(dueReviewItems(state, 4)).toEqual([]);
     expect(dueReviewItems(state, 5)).toHaveLength(1);
+  });
+
+  it("persists an automatic active-recall assessment and uses it for scheduling", () => {
+    let state = completedState();
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "practice")!;
+    state = saveEvaluation(state, task.id, "成果", {
+      rubric: [
+        { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 8, masteryLevel: "developing", misconceptions: ["混淆重试与恢复"], nextAction: "画出恢复路径",
+    });
+    state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    const reviewTask = getCurrentRecord(state).tasks.find((item) => item.type === "diagnose")!;
+    state = saveReviewAssessment(state, reviewTask.id, {
+      answer: "  重试再次执行，恢复从检查点继续。  ", score: 3, recall: "effortful",
+      evidence: "区分了重试与恢复", feedback: "补充恢复失败分支。",
+    });
+
+    expect(getCurrentRecord(state).artifacts[reviewTask.id].reviewPerformance).toEqual({
+      sourceDays: [1], recall: "effortful",
+      assessment: { answer: "重试再次执行，恢复从检查点继续。", score: 3, recall: "effortful", evidence: "区分了重试与恢复", feedback: "补充恢复失败分支。" },
+    });
+    expect(parseLearningState(JSON.stringify(state)).status).toBe("valid");
+    expect(dueReviewItems(state, 5)).toHaveLength(1);
+    expect(() => saveReviewAssessment(state, reviewTask.id, { answer: "回答", score: 4, recall: "forgot", evidence: "证据", feedback: "反馈" })).toThrow("分数与回忆表现不一致");
   });
 
   it("retries forgotten reviews tomorrow and expands repeated easy recall up to 14 days", () => {

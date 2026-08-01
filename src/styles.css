@@ -84,6 +84,7 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .weekly-review { display: grid; grid-template-columns: minmax(220px, .75fr) 1.25fr; gap: 22px; margin-bottom: 22px; padding: 24px 28px; }
 .weekly-review-heading h2 { margin: 5px 0 8px; font-family: Georgia, "Noto Serif SC", serif; font-size: 24px; font-weight: 500; }
 .weekly-review-heading > p { margin: 0; color: #59675f; font-size: 12px; line-height: 1.55; }
+.weekly-review-heading > button { margin-top: 10px; }
 .weekly-review-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .weekly-review-metrics div { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 72px; padding: 11px; background: #f7f8f4; border: 1px solid #e0e3dd; border-radius: 11px; }
 .weekly-review-metrics strong { color: #237a5b; font-size: 18px; }
@@ -125,6 +126,10 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .review-schedule li > span.due-now { color: #fff; background: #237a5b; }
 .review-schedule li strong { font-size: 13px; }
 .review-schedule li p { margin: 4px 0 0; color: #657169; font-size: 12px; line-height: 1.55; }
+.review-assessment { margin: 0 18px 18px 52px; padding: 13px 15px; color: #315144; background: #eef5f0; border-radius: 10px; }
+.review-assessment strong { font-size: 12px; }
+.review-assessment p { margin: 5px 0; font-size: 11px; line-height: 1.5; }
+.review-assessment small { color: #617269; }
 .notes-panel { margin-bottom: 22px; padding: 24px 28px; }
 .notes-heading, .note-title, .note-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .notes-heading h2 { margin: 5px 0 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 23px; font-weight: 500; }

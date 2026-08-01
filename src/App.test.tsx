@@ -78,6 +78,19 @@ describe("learning data controls", () => {
     expect(within(review).getByText("独立解释关键机制")).toBeTruthy();
   });
 
+  it("downloads the weekly review and stage progress as Markdown", async () => {
+    const user = userEvent.setup();
+    const downloads: string[] = [];
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:progress") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) { downloads.push(this.download); });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "导出进展 Markdown" }));
+    expect(downloads).toEqual([expect.stringMatching(/^ai-learning-os-progress-\d{4}-\d{2}-\d{2}\.md$/)]);
+    expect(screen.getByText("已导出学习周回顾与阶段进展摘要。")).toBeTruthy();
+  });
+
   it("navigates the learning calendar and opens evidence for a recorded date", async () => {
     const user = userEvent.setup();
     let state = initializeLearningState(generateLearningPlan(goal), new Date("2026-07-31T10:00:00.000Z"));
@@ -125,7 +138,7 @@ describe("learning data controls", () => {
     expect(screen.getByRole("status").textContent).toContain("现在继续是否更容易");
   });
 
-  it("records review recall from the dashboard before completing an adaptive review", async () => {
+  it("automatically scores active recall and schedules the next adaptive review", async () => {
     const user = userEvent.setup();
     let state = initializeLearningState(generateLearningPlan(goal));
     for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
@@ -144,20 +157,36 @@ describe("learning data controls", () => {
     });
     state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") return Response.json({ error: "Authentication is not configured" }, { status: 503 });
+      if (url.pathname === "/api/review-assessments") return Response.json({
+        answer: "重试再次执行失败步骤，恢复从检查点继续。", score: 4, recall: "easy",
+        evidence: "区分了重试与恢复", feedback: "补充一个恢复失败分支。",
+      }, { status: 201 });
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
     render(<App />);
 
-    expect(screen.getByRole("group", { name: "复习回忆表现" })).toBeTruthy();
+    expect(screen.getByText("Review Agent · 主动回忆自动判分")).toBeTruthy();
     const schedule = screen.getByRole("region", { name: "即将复习的薄弱点" });
     expect(within(schedule).getByText("今天")).toBeTruthy();
     expect(within(schedule).getByText(/独立解释关键机制/)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "轻松想起 · 延长间隔" }));
+    await user.type(screen.getByLabelText("闭卷主动回忆答案"), "重试再次执行失败步骤，恢复从检查点继续。");
+    await user.click(screen.getByRole("button", { name: /提交答案并自动安排复习/ }));
 
-    expect(within(schedule).getByText("第 9 天")).toBeTruthy();
+    expect(await within(schedule).findByText("第 9 天")).toBeTruthy();
+    expect(screen.getByText("主动回忆 4/4 · 轻松想起")).toBeTruthy();
+    expect(screen.getByText("区分了重试与恢复")).toBeTruthy();
 
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
     const reviewTask = saved.days[1].tasks.find((task: { type: string }) => task.type === "diagnose");
     expect(reviewTask.completed).toBe(true);
-    expect(saved.days[1].artifacts[reviewTask.id].reviewPerformance).toEqual({ sourceDays: [1], recall: "easy" });
+    expect(saved.days[1].artifacts[reviewTask.id].reviewPerformance).toEqual({
+      sourceDays: [1], recall: "easy",
+      assessment: { answer: "重试再次执行失败步骤，恢复从检查点继续。", score: 4, recall: "easy", evidence: "区分了重试与恢复", feedback: "补充一个恢复失败分支。" },
+    });
   });
 
   it("creates, enriches, edits, and searches a manual stage learning note", async () => {

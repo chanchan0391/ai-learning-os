@@ -1,5 +1,5 @@
 import { generateLearningPlan } from "../../src/planner";
-import type { EvaluationRequest, EvaluationResult, LearningGoal, RecoveryPlan, RecoveryPlanRequest, TeachingSession, TeachingSessionRequest } from "../../src/types";
+import type { EvaluationRequest, EvaluationResult, LearningGoal, RecoveryPlan, RecoveryPlanRequest, ReviewAssessment, ReviewAssessmentRequest, TeachingSession, TeachingSessionRequest } from "../../src/types";
 import type { ModelProvider, StructuredGenerationRequest, StructuredGenerationResult } from "./model-provider";
 
 export class DeterministicModelProvider implements ModelProvider {
@@ -43,6 +43,17 @@ export class DeterministicModelProvider implements ModelProvider {
         ],
         nextCheckIn: "完成后问自己：现在继续五分钟，是否比开始前更容易？",
       } satisfies RecoveryPlan;
+    } else if (request.schema.name === "review_assessment") {
+      const { answer } = input as ReviewAssessmentRequest;
+      const normalized = answer.trim();
+      const score = normalized.length >= 80 ? 4 : normalized.length >= 30 ? 3 : normalized.length >= 12 ? 2 : normalized.length >= 5 ? 1 : 0;
+      value = {
+        answer: normalized,
+        score,
+        recall: score <= 1 ? "forgot" : score <= 3 ? "effortful" : "easy",
+        evidence: score === 0 ? "回答中尚无足够证据。" : `回答提供了 ${normalized.length} 个字符的主动回忆证据。`,
+        feedback: score === 4 ? "补充一个反例，确认理解可以迁移。" : "明确纠正薄弱点，并写出下一步的具体做法。",
+      } satisfies ReviewAssessment;
     } else if (request.schema.name === "learning_evaluation") {
       const { submission } = input as EvaluationRequest;
       const detailed = submission.trim().length >= 120;

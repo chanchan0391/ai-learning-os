@@ -12,15 +12,17 @@ import {
   getCurrentRecord,
   initializeLearningState,
   learningStateExportFilename,
+  learningProgressMarkdownFilename,
   learningCalendarMonth,
   learningStreak,
   parseLearningStateExport,
   saveEvaluation,
-  saveReviewPerformance,
+  saveReviewAssessment,
   saveTeachingSession,
   saveUnderstandingResponse,
   scheduledReviewItems,
   serializeLearningStateExport,
+  serializeLearningProgressMarkdown,
   serializeStageNoteMarkdown,
   stageNoteMarkdownFilename,
   toggleCurrentTask,
@@ -32,7 +34,7 @@ import { completionRate, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import type { LearningStateExport } from "./learning-state";
-import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, RecoveryPlan, ReviewRecall, StageLearningNote, TaskDifficulty, TeachingSession } from "./types";
+import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, RecoveryPlan, ReviewAssessment, StageLearningNote, TaskDifficulty, TeachingSession } from "./types";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
@@ -83,6 +85,7 @@ export function App() {
   const [isGeneratingRecovery, setIsGeneratingRecovery] = useState(false);
   const [coachDismissed, setCoachDismissed] = useState(false);
   const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
+  const [reviewDrafts, setReviewDrafts] = useState<Record<string, string>>({});
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [accountDeleteConfirmationOpen, setAccountDeleteConfirmationOpen] = useState(false);
   const [logoutAllConfirmationOpen, setLogoutAllConfirmationOpen] = useState(false);
@@ -245,8 +248,27 @@ export function App() {
     }
   }
 
-  function finishReview(taskId: string, recall: ReviewRecall) {
-    if (learningState) saveState(saveReviewPerformance(learningState, taskId, recall));
+  async function assessReview(task: DailyTask) {
+    if (!learningState || !plan) return;
+    const answer = reviewDrafts[task.id] ?? "";
+    if (!answer.trim()) return setAgentError("请先写下闭卷主动回忆答案");
+    const items = dueReviewItems(learningState, learningState.currentDay);
+    setBusyTaskId(task.id);
+    setAgentError("");
+    try {
+      const response = await fetch("/api/review-assessments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: plan.goal, items, answer }),
+      });
+      const body = await response.json() as ReviewAssessment | { error: string };
+      if (!response.ok) throw new Error("error" in body ? body.error : "主动回忆判分失败");
+      saveState(saveReviewAssessment(learningState, task.id, body as ReviewAssessment));
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : "主动回忆判分失败");
+    } finally {
+      setBusyTaskId("");
+    }
   }
 
   async function evaluatePractice(task: DailyTask) {
@@ -403,6 +425,22 @@ export function App() {
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function exportLearningProgress() {
+    if (!learningState) return;
+    const now = new Date();
+    const blob = new Blob([serializeLearningProgressMarkdown(learningState, now)], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = learningProgressMarkdownFilename(now);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setStorageNotice("已导出学习周回顾与阶段进展摘要。");
+    setStorageNoticeIsError(false);
   }
 
   async function selectImportFile(event: ChangeEvent<HTMLInputElement>) {
@@ -821,6 +859,7 @@ export function App() {
           <div className="weekly-review-heading">
             <div><span className="agent-label">最近 7 个完成日</span><h2 id="weekly-review-title">学习周回顾</h2></div>
             <p>{weeklyReview.headline}</p>
+            <button className="text-button" onClick={exportLearningProgress}>导出进展 Markdown</button>
           </div>
           <div className="weekly-review-metrics">
             <div><strong>{weeklyReview.completedDays}</strong><span>完成日</span></div>
@@ -993,13 +1032,22 @@ export function App() {
 
                   {isAdaptiveReview && !task.completed && (
                     <div className="agent-workspace review-workspace">
-                      <span className="agent-label">Review Agent · 调整下次间隔</span>
-                      <p>完成闭卷回忆后，选择最符合实际的表现。系统会据此安排下一次复习。</p>
-                      <div className="difficulty-options" role="group" aria-label="复习回忆表现">
-                        <button onClick={() => finishReview(task.id, "forgot")}>忘记了 · 明天再练</button>
-                        <button onClick={() => finishReview(task.id, "effortful")}>费力想起 · 3 天后</button>
-                        <button onClick={() => finishReview(task.id, "easy")}>轻松想起 · 延长间隔</button>
-                      </div>
+                      <span className="agent-label">Review Agent · 主动回忆自动判分</span>
+                      <p>不查资料回答上面的复习问题。系统只根据答案中可见的证据判分，并自动安排下一次复习。</p>
+                      <label>闭卷主动回忆答案
+                        <textarea rows={4} value={reviewDrafts[task.id] ?? ""} onChange={(event) => setReviewDrafts((drafts) => ({ ...drafts, [task.id]: event.target.value }))} />
+                      </label>
+                      <button className="primary-action" disabled={busyTaskId === task.id} onClick={() => assessReview(task)}>
+                        {busyTaskId === task.id ? "Review Agent 正在判分…" : "提交答案并自动安排复习"} <span>→</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {artifact?.reviewPerformance?.assessment && (
+                    <div className="review-assessment" role="status">
+                      <strong>主动回忆 {artifact.reviewPerformance.assessment.score}/4 · {artifact.reviewPerformance.recall === "easy" ? "轻松想起" : artifact.reviewPerformance.recall === "effortful" ? "费力想起" : "尚未想起"}</strong>
+                      <p>{artifact.reviewPerformance.assessment.evidence}</p>
+                      <small>下一步：{artifact.reviewPerformance.assessment.feedback}</small>
                     </div>
                   )}
 

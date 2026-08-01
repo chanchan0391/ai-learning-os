@@ -1,11 +1,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { EvaluationRequest, LearningGoal, RecoveryPlanRequest, TeachingSessionRequest } from "../src/types";
+import type { EvaluationRequest, LearningGoal, RecoveryPlanRequest, ReviewAssessmentRequest, TeachingSessionRequest } from "../src/types";
 import { isDailyRecord, isLearningPlan } from "../src/learning-state";
 import { AgentOutputError } from "./agents/agent-errors";
 import { createEvaluatorAgent } from "./agents/evaluator-agent";
 import { createCoachAgent } from "./agents/coach-agent";
 import { createPlannerAgent } from "./agents/planner-agent";
 import { createTeacherAgent } from "./agents/teacher-agent";
+import { createReviewAgent } from "./agents/review-agent";
 import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
 import type { AuthenticatedPrincipalResolver } from "./auth/authenticated-principal";
 import type { OidcAuthenticator } from "./auth/oidc-client";
@@ -155,6 +156,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
   const teacher = createTeacherAgent(provider);
   const evaluator = createEvaluatorAgent(provider);
   const coach = createCoachAgent(provider);
+  const reviewer = createReviewAgent(provider);
   const rateLimiter = options.rateLimiter ?? new InMemoryFixedWindowRateLimiter();
   const capacityMonitor = options.capacityMonitor ?? new RollingRequestCapacityMonitor();
   return createServer(async (request, response) => {
@@ -223,6 +225,10 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (request.method === "POST" && request.url === "/api/evaluations") {
         const evaluationRequest = await readJson(request) as EvaluationRequest;
         return sendJson(response, 201, await evaluator.evaluate(evaluationRequest, controller.signal));
+      }
+      if (request.method === "POST" && request.url === "/api/review-assessments") {
+        const assessmentRequest = await readJson(request) as ReviewAssessmentRequest;
+        return sendJson(response, 201, await reviewer.assess(assessmentRequest, controller.signal));
       }
       if (request.method === "POST" && request.url === "/api/recovery-plans") {
         const recoveryRequest = await readJson(request) as RecoveryPlanRequest;
