@@ -14,6 +14,7 @@ import {
   initializeLearningState,
   learningStateExportFilename,
   learningStreak,
+  learningCalendarMonth,
   parseLearningState,
   parseLearningStateExport,
   saveEvaluation,
@@ -204,6 +205,23 @@ describe("multi-day learning state", () => {
       headline: "完成第一天后，这里会形成你的周回顾。",
       nextAction: "完成今天的学习闭环。",
     });
+  });
+
+  it("groups complete learning evidence into a Monday-first calendar month", () => {
+    let state = initializeLearningState(generateLearningPlan(goal), new Date("2026-07-31T10:00:00.000Z"));
+    for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+    state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "保留失败证据" }, new Date("2026-08-01T10:00:00.000Z"));
+
+    const july = learningCalendarMonth(state, "2026-07");
+    const july31 = july.weeks.flat().find((day) => day.date === "2026-07-31")!;
+    expect(july.weeks.every((week) => week.length === 7)).toBe(true);
+    expect(july.weeks[0][0].date).toBe("");
+    expect(july31).toMatchObject({ status: "completed", completedDays: 1, totalMinutes: 60, averageEvaluationScore: null });
+    expect(july31.records[0].feedback?.reflection).toBe("保留失败证据");
+
+    const august1 = learningCalendarMonth(state, "2026-08").weeks.flat().find((day) => day.date === "2026-08-01")!;
+    expect(august1).toMatchObject({ status: "active", completedDays: 0, totalMinutes: 0 });
+    expect(() => learningCalendarMonth(state, "2026-13")).toThrow("日历月份格式无效");
   });
 
   it("persists teaching checks before completing a learn task", () => {

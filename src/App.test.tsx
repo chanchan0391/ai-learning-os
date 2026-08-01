@@ -78,6 +78,23 @@ describe("learning data controls", () => {
     expect(within(review).getByText("独立解释关键机制")).toBeTruthy();
   });
 
+  it("navigates the learning calendar and opens evidence for a recorded date", async () => {
+    const user = userEvent.setup();
+    let state = initializeLearningState(generateLearningPlan(goal), new Date("2026-07-31T10:00:00.000Z"));
+    for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+    state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "需要复查工具边界" }, new Date("2026-08-01T10:00:00.000Z"));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+    render(<App />);
+
+    const calendar = screen.getByRole("region", { name: "学习日历" });
+    expect(within(calendar).getByText("2026年8月")).toBeTruthy();
+    await user.click(within(calendar).getByRole("button", { name: "查看上个月" }));
+    await user.click(within(calendar).getByRole("button", { name: "2026-07-31，1 个完成日" }));
+    expect(within(calendar).getByText("需要复查工具边界")).toBeTruthy();
+    expect(within(calendar).getByText("投入 60 分钟")).toBeTruthy();
+  });
+
   it("offers and renders a low-pressure Coach plan after missed learning days", async () => {
     const user = userEvent.setup();
     const stale = initializeLearningState(generateLearningPlan(goal), new Date("2026-07-28T10:00:00.000Z"));

@@ -12,6 +12,7 @@ import {
   getCurrentRecord,
   initializeLearningState,
   learningStateExportFilename,
+  learningCalendarMonth,
   learningStreak,
   parseLearningStateExport,
   saveEvaluation,
@@ -36,6 +37,17 @@ import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningS
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
 const syncClient = new BrowserSyncClient(localStorage);
+
+function shiftCalendarMonth(month: string, offset: number): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, monthNumber - 1 + offset, 1));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatCalendarDate(date: string): string {
+  return new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long", timeZone: "UTC" })
+    .format(new Date(`${date}T00:00:00.000Z`));
+}
 
 function formatSyncStatus(status: AutoSyncStatus): string {
   if (status.phase === "offline") return "离线 · 更改已排队";
@@ -89,6 +101,9 @@ export function App() {
   const [creatingStageNote, setCreatingStageNote] = useState(false);
   const [pendingDeleteNote, setPendingDeleteNote] = useState<StageLearningNote | null>(null);
   const [noteDraft, setNoteDraft] = useState({ title: "", content: "" });
+  const initialCalendarDate = initialLoad.state?.days.at(-1)?.date ?? new Date().toISOString().slice(0, 10);
+  const [calendarMonth, setCalendarMonth] = useState(initialCalendarDate.slice(0, 7));
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(initialCalendarDate);
   const importInput = useRef<HTMLInputElement>(null);
   const learningStateRef = useRef<LearningState | null>(initialLoad.state);
   const authStateRef = useRef<AuthState>({ status: "checking" });
@@ -108,6 +123,10 @@ export function App() {
   const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
   const reviewSchedule = useMemo(() => learningState ? scheduledReviewItems(learningState) : [], [learningState]);
   const weeklyReview = useMemo(() => learningState ? weeklyLearningReview(learningState) : null, [learningState]);
+  const calendar = useMemo(() => learningState ? learningCalendarMonth(learningState, calendarMonth) : null, [calendarMonth, learningState]);
+  const selectedCalendarDay = calendar?.weeks.flat().find((day) => day.date === selectedCalendarDate);
+  const firstCalendarMonth = learningState?.days[0]?.date.slice(0, 7) ?? calendarMonth;
+  const lastCalendarMonth = learningState?.days.at(-1)?.date.slice(0, 7) ?? calendarMonth;
   const currentStage = plan?.stages.find((stage) => {
     const week = Math.ceil((learningState?.currentDay ?? 1) / 7);
     return week >= stage.startWeek && week <= stage.endWeek;
@@ -135,6 +154,13 @@ export function App() {
       autoSyncQueue.stop();
     };
   }, [autoSyncQueue]);
+
+  useEffect(() => {
+    const latestDate = learningState?.days.at(-1)?.date;
+    if (!latestDate) return;
+    setCalendarMonth(latestDate.slice(0, 7));
+    setSelectedCalendarDate(latestDate);
+  }, [learningState?.plan.id, learningState?.currentDay]);
 
   function saveState(next: LearningState | null, enqueueSync = true) {
     learningStateRef.current = next;
@@ -804,6 +830,52 @@ export function App() {
             <div><strong>{weeklyReview.successfulReviews}</strong><span>轻松回忆</span></div>
           </div>
           <p className="weekly-next-action"><strong>本周最小下一步</strong>{weeklyReview.nextAction}</p>
+        </section>
+      )}
+
+      {calendar && (
+        <section className="panel learning-calendar" aria-labelledby="learning-calendar-title">
+          <div className="calendar-heading">
+            <div><span className="agent-label">完整学习历史</span><h2 id="learning-calendar-title">学习日历</h2></div>
+            <div className="calendar-navigation">
+              <button aria-label="查看上个月" disabled={calendarMonth <= firstCalendarMonth} onClick={() => setCalendarMonth(shiftCalendarMonth(calendarMonth, -1))}>←</button>
+              <strong>{new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${calendarMonth}-01T00:00:00.000Z`))}</strong>
+              <button aria-label="查看下个月" disabled={calendarMonth >= lastCalendarMonth} onClick={() => setCalendarMonth(shiftCalendarMonth(calendarMonth, 1))}>→</button>
+            </div>
+          </div>
+          <div className="calendar-grid" role="group" aria-label={`${calendarMonth} 学习记录`}>
+            {['一', '二', '三', '四', '五', '六', '日'].map((weekday) => <span className="calendar-weekday" aria-hidden="true" key={weekday}>{weekday}</span>)}
+            {calendar.weeks.flat().map((day, index) => day.date ? (
+              <button
+                className={`calendar-day ${day.status} ${day.date === selectedCalendarDate ? "selected" : ""}`}
+                disabled={day.records.length === 0}
+                aria-label={`${day.date}${day.records.length > 0 ? `，${day.completedDays} 个完成日${day.status === "active" ? "，当前学习日" : ""}` : "，无学习记录"}`}
+                aria-pressed={day.date === selectedCalendarDate}
+                onClick={() => setSelectedCalendarDate(day.date)}
+                key={day.date}
+              >
+                <span>{day.dayOfMonth}</span>
+                {day.records.length > 0 && <i aria-hidden="true">{day.status === "active" ? "进行中" : `${day.completedDays} 日`}</i>}
+              </button>
+            ) : <span className="calendar-day outside" aria-hidden="true" key={`outside-${index}`} />)}
+          </div>
+          {selectedCalendarDay && selectedCalendarDay.records.length > 0 && (
+            <div className="calendar-detail" aria-live="polite">
+              <div>
+                <strong>{formatCalendarDate(selectedCalendarDay.date)}</strong>
+                <span>{selectedCalendarDay.completedDays > 0 ? `投入 ${selectedCalendarDay.totalMinutes} 分钟` : "当前学习尚未完成"}{selectedCalendarDay.averageEvaluationScore === null ? "" : ` · 平均成果 ${selectedCalendarDay.averageEvaluationScore}/16`}</span>
+              </div>
+              <ol>
+                {selectedCalendarDay.records.map((record) => (
+                  <li key={record.day}>
+                    <strong>DAY {record.day}</strong>
+                    <span>{record.status === "active" ? "进行中" : record.feedback?.difficulty === "too-hard" ? "偏困难" : record.feedback?.difficulty === "too-easy" ? "偏简单" : "刚刚好"}</span>
+                    {record.feedback?.reflection && <p>{record.feedback.reflection}</p>}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
         </section>
       )}
 

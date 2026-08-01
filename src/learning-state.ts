@@ -38,6 +38,21 @@ export interface WeeklyLearningReview {
   nextAction: string;
 }
 
+export interface LearningCalendarDay {
+  date: string;
+  dayOfMonth: number;
+  status: "no-learning" | "active" | "completed";
+  records: DailyLearningRecord[];
+  completedDays: number;
+  totalMinutes: number;
+  averageEvaluationScore: number | null;
+}
+
+export interface LearningCalendarMonth {
+  month: string;
+  weeks: LearningCalendarDay[][];
+}
+
 function dateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -367,6 +382,47 @@ export function weeklyLearningReview(state: LearningState): WeeklyLearningReview
       ?? latestReflection
       ?? (completed.length > 0 ? "完成一次可验证的实践成果并获取评估。" : "完成今天的学习闭环。"),
   };
+}
+
+export function learningCalendarMonth(state: LearningState, month: string): LearningCalendarMonth {
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error("日历月份格式无效");
+  const [year, monthNumber] = month.split("-").map(Number);
+  const firstDay = new Date(Date.UTC(year, monthNumber - 1, 1));
+  if (firstDay.getUTCFullYear() !== year || firstDay.getUTCMonth() !== monthNumber - 1) {
+    throw new Error("日历月份格式无效");
+  }
+  const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const mondayOffset = (firstDay.getUTCDay() + 6) % 7;
+  const recordsByDate = new Map<string, DailyLearningRecord[]>();
+  for (const record of state.days) {
+    const existing = recordsByDate.get(record.date) ?? [];
+    existing.push(record);
+    recordsByDate.set(record.date, existing);
+  }
+
+  const cells: LearningCalendarDay[] = [];
+  const totalCells = Math.ceil((mondayOffset + daysInMonth) / 7) * 7;
+  for (let index = 0; index < totalCells; index += 1) {
+    const date = new Date(Date.UTC(year, monthNumber - 1, index - mondayOffset + 1));
+    const dateString = dateKey(date);
+    const inMonth = date.getUTCMonth() === monthNumber - 1;
+    const records = inMonth ? recordsByDate.get(dateString) ?? [] : [];
+    const completed = records.filter((record) => record.status === "completed");
+    const evaluations = records.flatMap((record) => Object.values(record.artifacts)
+      .flatMap((artifact) => artifact.evaluation ? [artifact.evaluation] : []));
+    const totalScore = evaluations.reduce((sum, evaluation) => sum + evaluation.totalScore, 0);
+    cells.push({
+      date: inMonth ? dateString : "",
+      dayOfMonth: inMonth ? date.getUTCDate() : 0,
+      status: records.some((record) => record.status === "active") ? "active" : completed.length > 0 ? "completed" : "no-learning",
+      records,
+      completedDays: completed.length,
+      totalMinutes: completed.reduce((sum, record) => sum + record.tasks.reduce((minutes, task) => minutes + task.minutes, 0), 0),
+      averageEvaluationScore: evaluations.length > 0 ? Math.round((totalScore / evaluations.length) * 10) / 10 : null,
+    });
+  }
+
+  return { month, weeks: Array.from({ length: totalCells / 7 }, (_, index) => cells.slice(index * 7, index * 7 + 7)) };
 }
 
 export function detectLearningInterruption(state: LearningState, now = new Date()): LearningInterruption | null {

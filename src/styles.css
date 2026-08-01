@@ -90,6 +90,31 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .weekly-review-metrics span { color: #758079; font-size: 9px; }
 .weekly-next-action { grid-column: 1 / -1; display: flex; gap: 10px; margin: 0; padding: 12px 14px; color: #4e5e55; background: #eef5f0; border-radius: 10px; font-size: 12px; line-height: 1.55; }
 .weekly-next-action strong { flex: 0 0 auto; color: #1c674c; }
+.learning-calendar { margin-bottom: 22px; padding: 24px 28px; }
+.calendar-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
+.calendar-heading h2 { margin: 5px 0 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 24px; font-weight: 500; }
+.calendar-navigation { display: flex; align-items: center; gap: 11px; }
+.calendar-navigation strong { min-width: 92px; text-align: center; font-size: 12px; }
+.calendar-navigation button { display: grid; place-items: center; width: 30px; height: 30px; color: #1c674c; background: #f7f8f4; border: 1px solid #daddd7; border-radius: 8px; }
+.calendar-navigation button:disabled { cursor: default; color: #adb4b0; opacity: .6; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 7px; margin-top: 18px; }
+.calendar-weekday { padding: 2px 0 5px; color: #89918c; font-size: 10px; text-align: center; }
+.calendar-day { display: flex; min-height: 58px; flex-direction: column; align-items: flex-start; justify-content: space-between; padding: 8px; color: #66716b; background: rgba(255,255,255,.5); border: 1px solid #e0e3dd; border-radius: 9px; }
+.calendar-day:disabled { cursor: default; opacity: .62; }
+.calendar-day.completed { color: #174b3a; background: #eef5f0; border-color: #c8dcd2; }
+.calendar-day.active { color: #8a452d; background: #fff1eb; border-color: #e9c2b3; }
+.calendar-day.selected { box-shadow: 0 0 0 2px #237a5b; }
+.calendar-day i { color: inherit; font-size: 8px; font-style: normal; font-weight: 700; }
+.calendar-day.outside { border-color: transparent; background: transparent; }
+.calendar-detail { display: grid; grid-template-columns: minmax(180px, .55fr) 1.45fr; gap: 20px; margin-top: 16px; padding: 16px; background: #f7f8f4; border-radius: 12px; }
+.calendar-detail > div { display: flex; flex-direction: column; gap: 5px; }
+.calendar-detail > div strong { font-size: 14px; }
+.calendar-detail > div span { color: #758079; font-size: 10px; }
+.calendar-detail ol { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.calendar-detail li { display: grid; grid-template-columns: 65px 70px 1fr; align-items: baseline; gap: 8px; padding: 7px 0; border-bottom: 1px solid #e1e4df; }
+.calendar-detail li strong { color: #237a5b; font-size: 11px; }
+.calendar-detail li span { color: #64706a; font-size: 10px; }
+.calendar-detail li p { margin: 0; color: #48574f; font-size: 11px; }
 .review-schedule { margin-bottom: 22px; padding: 22px 28px; }
 .review-schedule-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
 .review-schedule-heading h2 { margin: 5px 0 0; font-family: Georgia, serif; font-size: 24px; }
@@ -190,5 +215,5 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .history > div { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
 .history span { font-size: 11px; font-weight: 700; }
 .history small { color: #9fbbb0; font-size: 10px; }
-@media (max-width: 800px) { .hero, .dashboard-grid, .weekly-review { grid-template-columns: 1fr; } .hero { padding-top: 20px; } .welcome { align-items: flex-end; } }
-@media (max-width: 520px) { .shell { width: min(100% - 24px, 1180px); } .goal-card, .today-panel, .roadmap-panel, .notes-panel, .review-schedule, .weekly-review { padding: 20px; } .hero h1 { font-size: 39px; } .field-row, .conflict-versions { grid-template-columns: 1fr; gap: 8px; } .loop { gap: 7px; } .topbar { align-items: flex-start; } .data-actions, .coach-actions { flex-direction: column; align-items: flex-end; padding: 15px 0; gap: 6px; } .welcome { padding-top: 35px; } .progress-ring { width: 84px; height: 84px; } .learning-stats { grid-template-columns: 1fr; } .weekly-review-metrics { grid-template-columns: repeat(2, 1fr); } .weekly-next-action { flex-direction: column; gap: 4px; } .review-schedule li { grid-template-columns: 68px 1fr; } .task { grid-template-columns: 34px 1fr; } .minutes { display: none; } .difficulty-options, .rubric-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 800px) { .hero, .dashboard-grid, .weekly-review, .calendar-detail { grid-template-columns: 1fr; } .hero { padding-top: 20px; } .welcome { align-items: flex-end; } }
+@media (max-width: 520px) { .shell { width: min(100% - 24px, 1180px); } .goal-card, .today-panel, .roadmap-panel, .notes-panel, .review-schedule, .weekly-review, .learning-calendar { padding: 20px; } .hero h1 { font-size: 39px; } .field-row, .conflict-versions { grid-template-columns: 1fr; gap: 8px; } .loop { gap: 7px; } .topbar, .calendar-heading { align-items: flex-start; } .calendar-heading { flex-direction: column; } .data-actions, .coach-actions { flex-direction: column; align-items: flex-end; padding: 15px 0; gap: 6px; } .welcome { padding-top: 35px; } .progress-ring { width: 84px; height: 84px; } .learning-stats { grid-template-columns: 1fr; } .weekly-review-metrics { grid-template-columns: repeat(2, 1fr); } .weekly-next-action { flex-direction: column; gap: 4px; } .calendar-grid { gap: 4px; } .calendar-day { min-height: 48px; padding: 6px; } .calendar-detail li { grid-template-columns: 56px 58px 1fr; } .review-schedule li { grid-template-columns: 68px 1fr; } .task { grid-template-columns: 34px 1fr; } .minutes { display: none; } .difficulty-options, .rubric-grid { grid-template-columns: 1fr 1fr; } }
