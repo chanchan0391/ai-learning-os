@@ -3,6 +3,7 @@ import {
   completeTeachingTask,
   completeCurrentDay,
   completedDayCount,
+  detectLearningInterruption,
   dueReviewItems,
   getCurrentRecord,
   initializeLearningState,
@@ -21,7 +22,7 @@ import { completionRate, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import type { LearningStateExport } from "./learning-state";
-import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, ReviewRecall, TaskDifficulty, TeachingSession } from "./types";
+import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, RecoveryPlan, ReviewRecall, TaskDifficulty, TeachingSession } from "./types";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
@@ -57,6 +58,9 @@ export function App() {
   const [reflection, setReflection] = useState("");
   const [agentError, setAgentError] = useState("");
   const [busyTaskId, setBusyTaskId] = useState("");
+  const [recoveryPlan, setRecoveryPlan] = useState<RecoveryPlan | null>(null);
+  const [isGeneratingRecovery, setIsGeneratingRecovery] = useState(false);
+  const [coachDismissed, setCoachDismissed] = useState(false);
   const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [accountDeleteConfirmationOpen, setAccountDeleteConfirmationOpen] = useState(false);
@@ -87,6 +91,7 @@ export function App() {
   const plan = learningState?.plan ?? null;
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
+  const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
 
   useEffect(() => {
     let active = true;
@@ -211,6 +216,27 @@ export function App() {
       setAgentError(error instanceof Error ? error.message : "学习成果评估失败");
     } finally {
       setBusyTaskId("");
+    }
+  }
+
+  async function createRecoveryPlan() {
+    if (!learningState || !currentRecord || !interruption) return;
+    const currentTask = currentRecord.tasks.find((task) => !task.completed) ?? currentRecord.tasks[0];
+    setIsGeneratingRecovery(true);
+    setAgentError("");
+    try {
+      const response = await fetch("/api/recovery-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: learningState.plan.goal, currentTask, interruption }),
+      });
+      const body = await response.json() as RecoveryPlan | { error: string };
+      if (!response.ok) throw new Error("error" in body ? body.error : "恢复计划生成失败");
+      setRecoveryPlan(body as RecoveryPlan);
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : "恢复计划生成失败");
+    } finally {
+      setIsGeneratingRecovery(false);
     }
   }
 
@@ -636,6 +662,34 @@ export function App() {
 
       <div className="dashboard-grid">
         <section className="panel today-panel">
+          {interruption && !coachDismissed && (
+            <section className="coach-card" aria-labelledby="coach-title">
+              <div>
+                <span className="agent-label">Coach Agent · 低压力恢复</span>
+                <h2 id="coach-title">欢迎回来，今天不用追赶。</h2>
+                <p>{interruption.reason === "repeated-difficulty"
+                  ? "最近连续两天都觉得偏难。可以先缩小任务，找回可控感。"
+                  : `距离上次学习已经有 ${interruption.inactiveDays} 个空档日。可以从一个很小的动作重新开始。`}</p>
+              </div>
+              {!recoveryPlan ? (
+                <div className="coach-actions">
+                  <button className="secondary-action" disabled={isGeneratingRecovery} onClick={createRecoveryPlan}>
+                    {isGeneratingRecovery ? "Coach Agent 正在准备…" : "生成 10–20 分钟恢复计划"}
+                  </button>
+                  <button className="text-button" onClick={() => setCoachDismissed(true)}>按原计划继续</button>
+                </div>
+              ) : (
+                <div className="recovery-plan" role="status">
+                  <strong>{recoveryPlan.headline} · {recoveryPlan.totalMinutes} 分钟</strong>
+                  <p>{recoveryPlan.acknowledgement}</p>
+                  <ol>{recoveryPlan.steps.map((step) => (
+                    <li key={step.id}><span>{step.minutes} 分钟</span><strong>{step.title}</strong><p>{step.description}</p></li>
+                  ))}</ol>
+                  <p className="coach-check-in">完成后：{recoveryPlan.nextCheckIn}</p>
+                </div>
+              )}
+            </section>
+          )}
           <div className="section-title"><div><span>第 {learningState.currentDay} 天任务</span><h2>{plan.goal.dailyMinutes} 分钟学习闭环</h2></div><small>{currentRecord.tasks.filter((task) => task.completed).length}/{currentRecord.tasks.length} 完成</small></div>
           <div className="task-list">
             {currentRecord.tasks.map((task, index) => {

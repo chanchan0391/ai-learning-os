@@ -4,6 +4,7 @@ import {
   completeCurrentDay,
   completedDayCount,
   createLearningStateExport,
+  detectLearningInterruption,
   dueReviewItems,
   getCurrentRecord,
   initializeLearningState,
@@ -36,6 +37,33 @@ function completedState() {
 }
 
 describe("multi-day learning state", () => {
+  it("detects missed learning days without treating a one-day gap as an interruption", () => {
+    const plan = generateLearningPlan(goal);
+    const state = initializeLearningState(plan, new Date("2026-07-28T10:00:00.000Z"));
+
+    expect(detectLearningInterruption(state, new Date("2026-07-30T10:00:00.000Z"))).toBeNull();
+    expect(detectLearningInterruption(state, new Date("2026-08-01T10:00:00.000Z"))).toEqual({
+      reason: "inactivity",
+      inactiveDays: 3,
+      recentDifficultDays: 0,
+      lastActiveDate: "2026-07-28",
+    });
+  });
+
+  it("detects two consecutive difficult days even without an inactivity gap", () => {
+    let state = completedState();
+    state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "卡住" }, new Date("2026-07-30T18:00:00.000Z"));
+    for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+    state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "仍然卡住" }, new Date("2026-07-31T18:00:00.000Z"));
+
+    expect(detectLearningInterruption(state, new Date("2026-08-01T10:00:00.000Z"))).toEqual({
+      reason: "repeated-difficulty",
+      inactiveDays: 0,
+      recentDifficultDays: 2,
+      lastActiveDate: "2026-07-31",
+    });
+  });
+
   it("migrates a valid v1 plan into versioned state", () => {
     const plan = generateLearningPlan(goal, new Date("2026-07-30T10:00:00.000Z"));
     const result = parseLearningState(JSON.stringify(plan), new Date("2026-07-31T08:00:00.000Z"));

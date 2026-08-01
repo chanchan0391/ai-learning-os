@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { EvaluationRequest, LearningGoal, TeachingSessionRequest } from "../src/types";
+import type { EvaluationRequest, LearningGoal, RecoveryPlanRequest, TeachingSessionRequest } from "../src/types";
 import { isDailyRecord, isLearningPlan } from "../src/learning-state";
 import { AgentOutputError } from "./agents/agent-errors";
 import { createEvaluatorAgent } from "./agents/evaluator-agent";
+import { createCoachAgent } from "./agents/coach-agent";
 import { createPlannerAgent } from "./agents/planner-agent";
 import { createTeacherAgent } from "./agents/teacher-agent";
 import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
@@ -153,6 +154,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
   const planner = createPlannerAgent(provider);
   const teacher = createTeacherAgent(provider);
   const evaluator = createEvaluatorAgent(provider);
+  const coach = createCoachAgent(provider);
   const rateLimiter = options.rateLimiter ?? new InMemoryFixedWindowRateLimiter();
   const capacityMonitor = options.capacityMonitor ?? new RollingRequestCapacityMonitor();
   return createServer(async (request, response) => {
@@ -221,6 +223,10 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (request.method === "POST" && request.url === "/api/evaluations") {
         const evaluationRequest = await readJson(request) as EvaluationRequest;
         return sendJson(response, 201, await evaluator.evaluate(evaluationRequest, controller.signal));
+      }
+      if (request.method === "POST" && request.url === "/api/recovery-plans") {
+        const recoveryRequest = await readJson(request) as RecoveryPlanRequest;
+        return sendJson(response, 201, await coach.createRecoveryPlan(recoveryRequest, controller.signal));
       }
       if (url.pathname.startsWith("/api/auth/")) {
         if (!options.resolvePrincipal || !options.sessionLifecycle) {

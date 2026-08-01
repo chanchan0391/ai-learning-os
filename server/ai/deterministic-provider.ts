@@ -1,5 +1,5 @@
 import { generateLearningPlan } from "../../src/planner";
-import type { EvaluationRequest, EvaluationResult, LearningGoal, TeachingSession, TeachingSessionRequest } from "../../src/types";
+import type { EvaluationRequest, EvaluationResult, LearningGoal, RecoveryPlan, RecoveryPlanRequest, TeachingSession, TeachingSessionRequest } from "../../src/types";
 import type { ModelProvider, StructuredGenerationRequest, StructuredGenerationResult } from "./model-provider";
 
 export class DeterministicModelProvider implements ModelProvider {
@@ -28,6 +28,21 @@ export class DeterministicModelProvider implements ModelProvider {
         practicePrompt: `为“${goal.targetOutcome}”完成一个与“${task.title}”有关的最小成果，并附上运行或验证证据。`,
         completionSignals: ["能用自己的话解释", "能在新场景中应用", "能提供可复查证据"],
       } satisfies TeachingSession;
+    } else if (request.schema.name === "recovery_plan") {
+      const { currentTask, interruption } = input as RecoveryPlanRequest;
+      const acknowledgement = interruption.reason === "repeated-difficulty"
+        ? "连续觉得困难并不代表失败，先把今天缩小到一个容易启动的动作。"
+        : "离开几天很正常，不需要补完错过的内容，今天只重新接上线。";
+      value = {
+        headline: "用 12 分钟轻量重启",
+        acknowledgement,
+        totalMinutes: 12,
+        steps: [
+          { id: "recall", title: "找回上下文", description: `不查资料，写下你还记得的“${currentTask.title}”要点。`, minutes: 4 },
+          { id: "restart", title: "完成最小一步", description: `只执行当前任务的第一步：${currentTask.description}`, minutes: 8 },
+        ],
+        nextCheckIn: "完成后问自己：现在继续五分钟，是否比开始前更容易？",
+      } satisfies RecoveryPlan;
     } else if (request.schema.name === "learning_evaluation") {
       const { submission } = input as EvaluationRequest;
       const detailed = submission.trim().length >= 120;

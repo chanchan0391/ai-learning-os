@@ -4,6 +4,7 @@ import type {
   DailyTask,
   EvaluationResult,
   LearningPlan,
+  LearningInterruption,
   LearningState,
   LearningStage,
   LearningTaskArtifact,
@@ -272,6 +273,29 @@ export function getCurrentRecord(state: LearningState): DailyLearningRecord {
   const current = state.days.find((day) => day.day === state.currentDay);
   if (!current) throw new Error("当前学习日不存在");
   return current;
+}
+
+export function detectLearningInterruption(state: LearningState, now = new Date()): LearningInterruption | null {
+  const current = getCurrentRecord(state);
+  if (current.status === "completed") return null;
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const lastActive = Date.parse(`${current.date}T00:00:00.000Z`);
+  const daysSinceActivity = Math.max(0, Math.floor((today - lastActive) / 86_400_000));
+  const inactiveDays = Math.max(0, daysSinceActivity - 1);
+  const recentDifficultDays = [...state.days]
+    .filter((day) => day.status === "completed")
+    .reverse()
+    .slice(0, 2)
+    .filter((day) => day.feedback?.difficulty === "too-hard").length;
+  const inactivity = inactiveDays >= 2;
+  const repeatedDifficulty = recentDifficultDays >= 2;
+  if (!inactivity && !repeatedDifficulty) return null;
+  return {
+    reason: inactivity && repeatedDifficulty ? "both" : inactivity ? "inactivity" : "repeated-difficulty",
+    inactiveDays,
+    recentDifficultDays,
+    lastActiveDate: current.date,
+  };
 }
 
 export function toggleCurrentTask(state: LearningState, taskId: string): LearningState {

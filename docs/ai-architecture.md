@@ -16,12 +16,12 @@
 
 ```text
 React UI
-   │  POST /api/plans、/api/teaching-sessions、/api/evaluations
+   │  POST /api/plans、/api/teaching-sessions、/api/evaluations、/api/recovery-plans
    ▼
 Local API
    │
    ▼
-Planner / Teacher / Evaluator Agent
+Planner / Teacher / Coach / Evaluator Agent
    ├── Prompt 与学习规则
    ├── JSON Schema 输出契约
    └── 领域校验
@@ -41,7 +41,7 @@ ModelProvider
 3. Planner Agent 验证输入并构造系统指令、用户上下文和 JSON Schema。
 4. `ModelProvider` 选择已配置的模型；没有凭据时使用确定性开发实现。
 5. Planner Agent 验证模型输出，包括阶段范围、任务初始状态和每日分钟总数。
-6. 学习任务通过 Teacher Agent 返回短教学会话，实践任务通过 Evaluator Agent 返回固定量表结果。
+6. 学习任务通过 Teacher Agent 返回短教学会话，实践任务通过 Evaluator Agent 返回固定量表结果；检测到学习中断时，用户可明确请求 Coach Agent 生成低压力恢复计划。
 7. 浏览器把验证后的计划、理解检查回答、成果和评估保存在版本 3 学习记录中。
 8. 完成当天学习时，最低掌握度评估的最小下一步和误解会进入次日主动检索；后续间隔根据实际回忆表现动态调整。
 
@@ -135,7 +135,9 @@ AI_API_PORT=8787
 
 ### Coach Agent
 
-当前先由确定性规则完成最小闭环：保存每日完成状态、难度、反思和评估，并据此调整下一天任务的范围、挑战度与重点误解。后续 Coach Agent 会在相同数据契约上加入中断分析和更长期的节奏调整，而不是直接改变长期目标。
+当前服务端契约与 API 已实现。领域层从版本 3 学习记录确定性识别两类需要恢复支持的信号：当前学习日之后至少出现两个完整空档日，或最近两个已完成学习日都反馈为 `too-hard`。页面只展示邀请，不自动调用模型；学习者明确选择后，`POST /api/recovery-plans` 接收目标、当前未完成任务和中断上下文，返回 2–3 个恢复步骤。
+
+恢复计划总时长必须为 10–20 分钟且不超过每日预算，每步至少 3 分钟。Agent 使用不评判的语言，不要求补完错过的内容，也不改写长期计划，只帮助学习者重新启动当前任务。输出分钟数、步骤唯一性和必填内容都会经过领域校验；计划目前是即时辅导，不写入学习记录，因此不需要数据迁移。
 
 ### Review Agent
 
@@ -146,7 +148,7 @@ AI_API_PORT=8787
 - Provider 契约测试：请求结构、响应解析、错误映射、超时、取消、有限重试和密钥边界
 - Agent 领域测试：学习规则不能被格式正确但内容错误的模型输出绕过
 - API 测试：状态、输入校验和完整计划生成
-- Teacher/Evaluator 契约测试：必需教学元素、理解检查唯一性、固定量表、总分和掌握等级一致性
+- Teacher/Coach/Evaluator 契约测试：必需教学元素、理解检查唯一性、恢复时间预算、固定量表、总分和掌握等级一致性
 - Evals：使用固定学习者样本比较相关性、难度、可执行性和时间预算
 - 端到端测试：浏览器创建目标并获得来自本地 API 的计划
 - 组件交互与可访问性：在 `jsdom` 中验证关键数据控制流程，并使用 axe-core 扫描渲染后的语义结构；颜色对比仍需在真实浏览器中单独验证

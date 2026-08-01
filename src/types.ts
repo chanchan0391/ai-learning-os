@@ -118,3 +118,33 @@ export interface EvaluationResult {
   misconceptions: string[];
   nextAction: string;
 }
+
+export type LearningInterruptionReason = "inactivity" | "repeated-difficulty" | "both";
+
+export interface LearningInterruption {
+  reason: LearningInterruptionReason;
+  inactiveDays: number;
+  recentDifficultDays: number;
+  lastActiveDate: string;
+}
+
+export interface RecoveryPlanRequest {
+  goal: LearningGoal;
+  currentTask: DailyTask;
+  interruption: LearningInterruption;
+}
+
+export interface RecoveryStep {
+  id: string;
+  title: string;
+  description: string;
+  minutes: number;
+}
+
+export interface RecoveryPlan {
+  headline: string;
+  acknowledgement: string;
+  totalMinutes: number;
+  steps: RecoveryStep[];
+  nextCheckIn: string;
+}

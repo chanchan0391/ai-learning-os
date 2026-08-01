@@ -51,6 +51,22 @@ describe("AI Learning OS API", () => {
     expect(session.completionSignals.length).toBeGreaterThan(0);
   });
 
+  it("creates a low-pressure recovery plan after a learning interruption", async () => {
+    const baseUrl = await startApi();
+    const response = await fetch(`${baseUrl}/api/recovery-plans`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        goal,
+        currentTask: task,
+        interruption: { reason: "inactivity", inactiveDays: 3, recentDifficultDays: 0, lastActiveDate: "2026-07-28" },
+      }),
+    });
+    const plan = await response.json() as { totalMinutes: number; steps: unknown[] };
+    expect(response.status).toBe(201);
+    expect(plan.totalMinutes).toBe(12);
+    expect(plan.steps).toHaveLength(2);
+  });
+
   it("evaluates a submission against the fixed rubric", async () => {
     const baseUrl = await startApi();
     const response = await fetch(`${baseUrl}/api/evaluations`, {

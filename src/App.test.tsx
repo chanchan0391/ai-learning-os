@@ -50,6 +50,36 @@ describe("learning data controls", () => {
     expect(result.violations).toEqual([]);
   });
 
+  it("offers and renders a low-pressure Coach plan after missed learning days", async () => {
+    const user = userEvent.setup();
+    const stale = initializeLearningState(generateLearningPlan(goal), new Date("2026-07-28T10:00:00.000Z"));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stale));
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") return Response.json({ error: "Authentication is not configured" }, { status: 503 });
+      if (url.pathname === "/api/recovery-plans") return Response.json({
+        headline: "用 12 分钟轻量重启",
+        acknowledgement: "不需要补完错过的内容。",
+        totalMinutes: 12,
+        steps: [
+          { id: "recall", title: "找回上下文", description: "写下还记得的内容。", minutes: 4 },
+          { id: "restart", title: "完成最小一步", description: "只做当前任务第一步。", minutes: 8 },
+        ],
+        nextCheckIn: "现在继续是否更容易？",
+      }, { status: 201 });
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "欢迎回来，今天不用追赶。" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "生成 10–20 分钟恢复计划" }));
+
+    expect(await screen.findByText("用 12 分钟轻量重启 · 12 分钟")).toBeTruthy();
+    expect(screen.getByText("完成最小一步")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("现在继续是否更容易");
+  });
+
   it("records review recall from the dashboard before completing an adaptive review", async () => {
     const user = userEvent.setup();
     let state = initializeLearningState(generateLearningPlan(goal));

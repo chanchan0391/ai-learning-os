@@ -12,6 +12,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - 可替换模型层：OpenAI Responses API 与确定性开发实现
 - 稳健的 Agent 调用：30 秒单次超时、可取消请求和瞬时故障有限重试
 - Coach Agent 起始闭环：诊断、学习、实践、复盘四类每日任务，并根据难度反馈生成下一天
+- Coach Agent 恢复支持：识别至少两个空档日或连续两天偏难，在用户明确请求后生成不追赶旧进度的 10–20 分钟低压力重启计划
 - Teacher Agent 教学会话：短讲解、示例、书面主动理解检查和可观察完成信号
 - Evaluator Agent 成果反馈：四维证据量表、领域一致性校验和最小下一步
 - 自适应次日计划：同时结合任务难度、评估结果和已识别误解
@@ -89,7 +90,7 @@ src/
   types.ts          核心领域类型
   styles.css        视觉系统与响应式布局
 server/
-  agents/           Planner、Teacher、Evaluator 的编排、Prompt 和领域校验
+  agents/           Planner、Teacher、Coach、Evaluator 的编排、Prompt 和领域校验
   ai/               模型提供者契约与厂商适配器
   sync/             跨设备同步领域契约与用户隔离测试
   auth/             OIDC 登录、应用会话与可信用户/设备身份边界
