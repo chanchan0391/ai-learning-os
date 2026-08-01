@@ -58,6 +58,7 @@ export function App() {
   const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [accountDeleteConfirmationOpen, setAccountDeleteConfirmationOpen] = useState(false);
+  const [logoutAllConfirmationOpen, setLogoutAllConfirmationOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<LearningStateExport | null>(null);
   const [storageNotice, setStorageNotice] = useState(initialLoad.status === "recovered" ? "本地进度无法读取，已安全重置。" : "");
   const [storageNoticeIsError, setStorageNoticeIsError] = useState(initialLoad.status === "recovered");
@@ -345,6 +346,25 @@ export function App() {
     }
   }
 
+  async function logoutAll() {
+    setIsSyncing(true);
+    try {
+      await syncClient.logoutAll();
+      syncClient.clearMetadata();
+      autoSyncQueue.clear();
+      authStateRef.current = { status: "signed-out" };
+      setAuthState(authStateRef.current);
+      setLogoutAllConfirmationOpen(false);
+      setStorageNotice("已退出所有设备，本地学习记录仍保留在此浏览器中。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "退出所有设备失败，请稍后重试");
+      setStorageNoticeIsError(true);
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
   async function deleteAccountData() {
     setIsSyncing(true);
     try {
@@ -381,6 +401,7 @@ export function App() {
       <span className={`sync-detail sync-${autoSyncStatus.phase}`}>{formatSyncStatus(autoSyncStatus)}</span>
       <button className="text-button sync-button" disabled={isSyncing} onClick={syncLearningData}>{isSyncing ? "正在同步…" : "立即同步"}</button>
       <button className="text-button" onClick={logout}>退出</button>
+      <button className="text-button danger-text" disabled={isSyncing} onClick={() => setLogoutAllConfirmationOpen(true)}>退出所有设备</button>
       <button className="text-button danger-text" disabled={isSyncing} onClick={() => setAccountDeleteConfirmationOpen(true)}>删除账号</button>
     </div>
   ) : authState.status === "signed-out" ? (
@@ -450,6 +471,22 @@ export function App() {
     </div>
   );
 
+  const logoutAllDialog = logoutAllConfirmationOpen && (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !isSyncing) setLogoutAllConfirmationOpen(false);
+    }}>
+      <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="logout-all-dialog-title" aria-describedby="logout-all-dialog-description">
+        <p className="eyebrow">账号安全 · 所有设备</p>
+        <h2 id="logout-all-dialog-title">退出所有设备？</h2>
+        <p id="logout-all-dialog-description">所有浏览器和设备上的登录会话会立即失效。云端与当前浏览器中的学习记录不会被删除；需要同步时可以重新登录。</p>
+        <div className="dialog-actions">
+          <button className="secondary-action" autoFocus disabled={isSyncing} onClick={() => setLogoutAllConfirmationOpen(false)}>取消</button>
+          <button className="danger-action" disabled={isSyncing} onClick={logoutAll}>{isSyncing ? "正在退出…" : "确认退出所有设备"}</button>
+        </div>
+      </section>
+    </div>
+  );
+
   if (!plan || !learningState || !currentRecord) {
     return (
       <main className="shell onboarding">
@@ -457,6 +494,7 @@ export function App() {
         {storageNotice && <div className="storage-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
         {importDialog}
         {conflictDialog}
+        {logoutAllDialog}
         {accountDeleteDialog}
         <section className="hero">
           <div>
@@ -497,6 +535,7 @@ export function App() {
       {storageNotice && <div className="storage-notice dashboard-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
       {importDialog}
       {conflictDialog}
+      {logoutAllDialog}
       {accountDeleteDialog}
       {deleteConfirmationOpen && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {

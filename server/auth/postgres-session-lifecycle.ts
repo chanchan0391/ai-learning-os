@@ -21,6 +21,7 @@ export interface SessionLifecycle {
   establishFromOidc(identity: VerifiedOidcIdentity): Promise<IssuedSession>;
   rotate(token: string): Promise<IssuedSession | null>;
   revoke(token: string): Promise<boolean>;
+  revokeAll(token: string): Promise<boolean>;
 }
 
 export interface AccountDataLifecycle {
@@ -122,6 +123,44 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
       [hashSessionToken(token), this.now().toISOString()],
     );
     return result.rowCount === 1;
+  }
+
+  async revokeAll(token: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const current = await client.query<{ user_id: string }>(
+        `SELECT s.user_id
+           FROM auth_sessions s
+           JOIN users u ON u.id = s.user_id
+           JOIN sync_devices d ON d.user_id = s.user_id AND d.id = s.device_id
+          WHERE s.token_hash = $1 AND s.expires_at > $2 AND s.revoked_at IS NULL
+            AND u.deleted_at IS NULL AND d.revoked_at IS NULL
+          FOR UPDATE`,
+        [hashSessionToken(token), this.now().toISOString()],
+      );
+      if (current.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      const userId = current.rows[0].user_id;
+      const revokedAt = this.now().toISOString();
+      await client.query(
+        "UPDATE auth_sessions SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL",
+        [userId, revokedAt],
+      );
+      await client.query(
+        "UPDATE sync_devices SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL",
+        [userId, revokedAt],
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async deleteAccount(token: string): Promise<boolean> {

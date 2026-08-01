@@ -119,6 +119,10 @@ describe("AI Learning OS API", () => {
           calls.push(`revoke:${token}`);
           return true;
         },
+        revokeAll: async (token) => {
+          calls.push(`revoke-all:${token}`);
+          return true;
+        },
       },
       accountDataLifecycle: {
         deleteAccount: async (token) => {
@@ -146,19 +150,26 @@ describe("AI Learning OS API", () => {
     expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
     expect(calls).toEqual(["rotate:old-token", "revoke:new-token"]);
 
+    const logoutAll = await fetch(`${baseUrl}/api/auth/logout-all`, {
+      method: "POST", headers: { Cookie: "session=old-token", Origin: "https://learn.example" },
+    });
+    expect(logoutAll.status).toBe(200);
+    expect(logoutAll.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(calls).toEqual(["rotate:old-token", "revoke:new-token", "revoke-all:old-token"]);
+
     const deletion = await fetch(`${baseUrl}/api/auth/account`, {
       method: "DELETE", headers: { Cookie: "session=old-token", Origin: "https://learn.example" },
     });
     expect(deletion.status).toBe(200);
     expect(deletion.headers.get("set-cookie")).toContain("Max-Age=0");
-    expect(calls).toEqual(["rotate:old-token", "revoke:new-token", "delete:old-token"]);
+    expect(calls).toEqual(["rotate:old-token", "revoke:new-token", "revoke-all:old-token", "delete:old-token"]);
   });
 
   it("rejects cross-origin session changes", async () => {
     const baseUrl = await startApi(new DeterministicModelProvider(), {
       allowedSyncOrigins: ["https://learn.example"],
       resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
-      sessionLifecycle: { establishFromOidc: async () => { throw new Error("not used"); }, rotate: async () => null, revoke: async () => true },
+      sessionLifecycle: { establishFromOidc: async () => { throw new Error("not used"); }, rotate: async () => null, revoke: async () => true, revokeAll: async () => true },
     });
     const response = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: { Origin: "https://evil.example" } });
     expect(response.status).toBe(403);
@@ -184,6 +195,7 @@ describe("AI Learning OS API", () => {
         },
         rotate: async () => null,
         revoke: async () => true,
+        revokeAll: async () => true,
       },
     });
 
@@ -209,6 +221,7 @@ describe("AI Learning OS API", () => {
         establishFromOidc: async () => { throw new Error("not used"); },
         rotate: async () => null,
         revoke: async () => false,
+        revokeAll: async () => false,
       },
       oidcAuthenticator: {
         transactionCookieName: "oidc_txn",

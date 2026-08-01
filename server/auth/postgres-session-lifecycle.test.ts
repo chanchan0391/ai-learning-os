@@ -72,6 +72,25 @@ describe("PostgreSQL session lifecycle", () => {
     expect(active.rows[0].count).toBe(0);
   });
 
+  it("revokes every device and session after validating the current session", async () => {
+    const { pool, lifecycle } = await setup();
+    const first = await lifecycle.establishFromOidc({
+      issuer: "https://identity.example", subject: "subject-123", deviceLabel: "Laptop",
+    });
+    const second = await lifecycle.establishFromOidc({
+      issuer: "https://identity.example", subject: "subject-123", deviceLabel: "Phone",
+    });
+
+    await expect(lifecycle.revokeAll(first.token)).resolves.toBe(true);
+    await expect(lifecycle.rotate(first.token)).resolves.toBeNull();
+    await expect(lifecycle.rotate(second.token)).resolves.toBeNull();
+    await expect(lifecycle.revokeAll(first.token)).resolves.toBe(false);
+    const activeSessions = await pool.query("SELECT count(*)::int AS count FROM auth_sessions WHERE revoked_at IS NULL");
+    const activeDevices = await pool.query("SELECT count(*)::int AS count FROM sync_devices WHERE revoked_at IS NULL");
+    expect(activeSessions.rows[0].count).toBe(0);
+    expect(activeDevices.rows[0].count).toBe(0);
+  });
+
   it("deletes the authenticated account and all user-owned data atomically", async () => {
     const { pool, lifecycle } = await setup();
     const session = await lifecycle.establishFromOidc({
