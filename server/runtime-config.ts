@@ -88,6 +88,7 @@ export function createSyncRuntime(
       resolvePrincipal: sessions.resolve,
       allowedSyncOrigins: config.allowedOrigins,
       sessionLifecycle,
+      accountDataLifecycle: sessionLifecycle,
       sessionCookieName: config.sessionCookieName,
       oidcAuthenticator: config.oidc ? new StandardOidcClient(config.oidc) : undefined,
       rateLimiter: new InMemoryFixedWindowRateLimiter(),

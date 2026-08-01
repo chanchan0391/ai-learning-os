@@ -23,6 +23,10 @@ export interface SessionLifecycle {
   revoke(token: string): Promise<boolean>;
 }
 
+export interface AccountDataLifecycle {
+  deleteAccount(token: string): Promise<boolean>;
+}
+
 interface SessionRow extends QueryResultRow {
   user_id: string;
   device_id: string;
@@ -37,7 +41,7 @@ function assertIdentity(identity: VerifiedOidcIdentity): void {
   if (!identity.deviceLabel.trim() || identity.deviceLabel.length > 100) throw new TypeError("Device label is invalid");
 }
 
-export class PostgresSessionLifecycle implements SessionLifecycle {
+export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLifecycle {
   constructor(
     private readonly pool: Pool,
     private readonly now: () => Date = () => new Date(),
@@ -118,6 +122,34 @@ export class PostgresSessionLifecycle implements SessionLifecycle {
       [hashSessionToken(token), this.now().toISOString()],
     );
     return result.rowCount === 1;
+  }
+
+  async deleteAccount(token: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const current = await client.query<{ user_id: string }>(
+        `SELECT s.user_id
+           FROM auth_sessions s
+           JOIN users u ON u.id = s.user_id
+          WHERE s.token_hash = $1 AND s.expires_at > $2 AND s.revoked_at IS NULL
+            AND u.deleted_at IS NULL
+          FOR UPDATE`,
+        [hashSessionToken(token), this.now().toISOString()],
+      );
+      if (current.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      await client.query("DELETE FROM users WHERE id = $1", [current.rows[0].user_id]);
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   private async insertSession(client: PoolClient, userId: string, deviceId: string): Promise<IssuedSession> {

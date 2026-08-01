@@ -26,7 +26,7 @@
 - 已实现的会话生命周期只在上述验证全部通过后接收 OIDC issuer + subject，并于事务中创建 `users`、`oidc_identities` 和 `sync_devices` 记录；访问令牌和 ID Token 不写入应用会话或学习记录。
 - 会话以高熵不透明令牌签发，数据库只保存 SHA-256 哈希；解析器同时检查会话有效期、会话撤销、账号删除和设备撤销。
 - `PostgresSyncStore` 只接受已存在、未删除的用户和未撤销设备。
-- `POST /api/auth/session/refresh` 原子撤销旧令牌并签发新令牌；`POST /api/auth/logout` 撤销当前会话并清除 Cookie。二者都校验精确 Origin。“退出所有设备”仍待实现。
+- `POST /api/auth/session/refresh` 原子撤销旧令牌并签发新令牌；`POST /api/auth/logout` 撤销当前会话并清除 Cookie。`DELETE /api/auth/account` 验证当前会话后事务化删除用户行，依靠外键级联清除身份映射、设备、全部会话和同步数据。三者都校验精确 Origin。“退出所有设备”仍待实现。
 - 所有状态变更路由都校验精确 Origin；请求正文限制为 1 MB，认证与同步路由还在进入 OIDC、会话或存储逻辑前按客户端地址限流。
 - 单进程默认窗口为 60 秒：登录、回调各 20 次，会话变更 60 次，会话读取和同步读取 120 次，同步写入 60 次。响应返回 `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`，被拒绝时另返回 `Retry-After`。
 - 启用数据库运行时会输出一行一个 JSON 的安全审计事件，记录动作、路径、状态、结果以及认证后的用户/设备 ID；不记录 Cookie、会话令牌、OIDC code/state、查询字符串、请求正文或客户端地址。
@@ -36,7 +36,7 @@
 1. **已实现 OIDC 登录与账号界面：**覆盖 discovery、state、nonce、S256 PKCE、授权码交换、基于 JWKS 的 ID Token 验证，以及登录、自动同步、离线待办和最近同步状态。
 2. **已接入会话生命周期：**`PostgresSessionPrincipalResolver` 从 HttpOnly Cookie 的不透明令牌哈希解析 `SyncPrincipal`；`PostgresSessionLifecycle` 负责验证后身份映射、设备登记、令牌哈希存储、轮换和撤销，并已由服务启动配置注入。
 3. **已建立路由防护：**同步 HTTP API 已覆盖认证缺失、跨用户、条件写入、幂等冲突、来源校验、进程内速率限制和结构化安全审计；仍需覆盖撤销设备和会话过期的端到端测试。多实例部署必须把限流器替换为共享存储或在可信网关实施等价策略。
-4. 明确会话、同步游标和已删除账号的保留期限。
+4. 生产部署者仍需明确数据库备份、基础设施日志和模型提供商数据的保留期限；应用主数据库中的账号数据会立即删除。
 
 ## 会话 HTTP 契约
 
@@ -45,6 +45,7 @@
 - `GET /api/auth/session`：返回当前用户和设备的认证状态，不延长会话。
 - `POST /api/auth/session/refresh`：要求允许的 `Origin` 和有效会话 Cookie，返回相同用户/设备的新会话并撤销旧令牌。
 - `POST /api/auth/logout`：要求允许的 `Origin`，撤销当前令牌并返回立即过期的 Cookie。
+- `DELETE /api/auth/account`：要求允许的 `Origin` 和有效会话，事务化删除账号及全部所属数据，并返回立即过期的 Cookie。
 
 Cookie 固定使用 `Path=/; HttpOnly; Secure; SameSite=Lax`。数据库只保存 SHA-256 令牌哈希；默认会话有效期为 24 小时。OIDC 回调完成后必须只把已经完整验证的 issuer 和 subject 传给 `establishFromOidc`。
 

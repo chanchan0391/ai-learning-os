@@ -72,6 +72,24 @@ describe("PostgreSQL session lifecycle", () => {
     expect(active.rows[0].count).toBe(0);
   });
 
+  it("deletes the authenticated account and all user-owned data atomically", async () => {
+    const { pool, lifecycle } = await setup();
+    const session = await lifecycle.establishFromOidc({
+      issuer: "https://identity.example", subject: "subject-123", deviceLabel: "Laptop",
+    });
+    await pool.query(
+      "INSERT INTO learning_plans (user_id, id, revision, updated_at, value) VALUES ($1, 'plan-1', 1, $2, $3::jsonb)",
+      [session.userId, "2026-08-01T12:00:00.000Z", JSON.stringify({ id: "plan-1" })],
+    );
+
+    await expect(lifecycle.deleteAccount(session.token)).resolves.toBe(true);
+    await expect(lifecycle.deleteAccount(session.token)).resolves.toBe(false);
+    for (const table of ["users", "oidc_identities", "sync_devices", "auth_sessions", "learning_plans"]) {
+      const result = await pool.query(`SELECT count(*)::int AS count FROM ${table}`);
+      expect(result.rows[0].count, table).toBe(0);
+    }
+  });
+
   it("rejects malformed identity data before writing", async () => {
     const { lifecycle } = await setup();
     await expect(lifecycle.establishFromOidc({

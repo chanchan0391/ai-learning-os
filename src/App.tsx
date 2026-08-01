@@ -57,6 +57,7 @@ export function App() {
   const [busyTaskId, setBusyTaskId] = useState("");
   const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+  const [accountDeleteConfirmationOpen, setAccountDeleteConfirmationOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<LearningStateExport | null>(null);
   const [storageNotice, setStorageNotice] = useState(initialLoad.status === "recovered" ? "本地进度无法读取，已安全重置。" : "");
   const [storageNoticeIsError, setStorageNoticeIsError] = useState(initialLoad.status === "recovered");
@@ -344,6 +345,29 @@ export function App() {
     }
   }
 
+  async function deleteAccountData() {
+    setIsSyncing(true);
+    try {
+      await syncClient.deleteAccount();
+      autoSyncQueue.stop();
+      saveState(null, false);
+      syncClient.clearMetadata();
+      autoSyncQueue.clear();
+      authStateRef.current = { status: "signed-out" };
+      setAuthState(authStateRef.current);
+      setSubmissionDrafts({});
+      setPendingSyncConflict(null);
+      setAccountDeleteConfirmationOpen(false);
+      setStorageNotice("账号、云端学习记录和当前浏览器中的学习记录已删除。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "账号数据删除失败，请稍后重试");
+      setStorageNoticeIsError(true);
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
   const importControl = (
     <>
       <input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" aria-label="选择学习记录文件" onChange={selectImportFile} />
@@ -357,6 +381,7 @@ export function App() {
       <span className={`sync-detail sync-${autoSyncStatus.phase}`}>{formatSyncStatus(autoSyncStatus)}</span>
       <button className="text-button sync-button" disabled={isSyncing} onClick={syncLearningData}>{isSyncing ? "正在同步…" : "立即同步"}</button>
       <button className="text-button" onClick={logout}>退出</button>
+      <button className="text-button danger-text" disabled={isSyncing} onClick={() => setAccountDeleteConfirmationOpen(true)}>删除账号</button>
     </div>
   ) : authState.status === "signed-out" ? (
     <a className="text-button account-link" href={`/api/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`}>登录并同步</a>
@@ -409,6 +434,22 @@ export function App() {
     </div>
   );
 
+  const accountDeleteDialog = accountDeleteConfirmationOpen && (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !isSyncing) setAccountDeleteConfirmationOpen(false);
+    }}>
+      <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="account-delete-dialog-title" aria-describedby="account-delete-dialog-description">
+        <p className="eyebrow">账号与云端数据 · 不可撤销</p>
+        <h2 id="account-delete-dialog-title">永久删除账号和全部学习数据？</h2>
+        <p id="account-delete-dialog-description">这会删除所有设备上的云端计划、每日记录、教学回答、成果、评估、设备和登录身份，并清除当前浏览器数据。需要保留副本时，请先取消并导出学习记录。</p>
+        <div className="dialog-actions">
+          <button className="secondary-action" autoFocus disabled={isSyncing} onClick={() => setAccountDeleteConfirmationOpen(false)}>取消</button>
+          <button className="danger-action" disabled={isSyncing} onClick={deleteAccountData}>{isSyncing ? "正在删除…" : "永久删除账号"}</button>
+        </div>
+      </section>
+    </div>
+  );
+
   if (!plan || !learningState || !currentRecord) {
     return (
       <main className="shell onboarding">
@@ -416,6 +457,7 @@ export function App() {
         {storageNotice && <div className="storage-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
         {importDialog}
         {conflictDialog}
+        {accountDeleteDialog}
         <section className="hero">
           <div>
             <p className="eyebrow">你的目标，不再停在愿望里</p>
@@ -455,6 +497,7 @@ export function App() {
       {storageNotice && <div className="storage-notice dashboard-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
       {importDialog}
       {conflictDialog}
+      {accountDeleteDialog}
       {deleteConfirmationOpen && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setDeleteConfirmationOpen(false);

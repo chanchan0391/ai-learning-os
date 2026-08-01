@@ -24,7 +24,7 @@ React 页面通过 `LearningStateRepository` 读写学习状态，默认实现�
 - 绑定用户的不透明增量游标；
 - 每日记录只能引用当前用户拥有的计划。
 
-内存版本只用于测试领域规则，进程重启会丢失数据。PostgreSQL 版本已经通过兼容数据库集成测试。同步 HTTP 路由已通过可信身份解析器连接统一的 `SyncStore` 契约，并完成请求结构、条件头、来源白名单和错误映射。服务启动配置在同时提供 `DATABASE_URL` 与精确 `SYNC_ALLOWED_ORIGINS` 时注入 PostgreSQL 仓库和哈希会话解析器；配置缺失时同步关闭，配置不完整或来源不安全时拒绝启动。OIDC 登录回调、会话创建、轮换和登出已经接入页面。认证与同步端点限流、安全审计、账号删除和隐私流程仍是上线阻断项。
+内存版本只用于测试领域规则，进程重启会丢失数据。PostgreSQL 版本已经通过兼容数据库集成测试。同步 HTTP 路由已通过可信身份解析器连接统一的 `SyncStore` 契约，并完成请求结构、条件头、来源白名单和错误映射。服务启动配置在同时提供 `DATABASE_URL` 与精确 `SYNC_ALLOWED_ORIGINS` 时注入 PostgreSQL 仓库和哈希会话解析器；配置缺失时同步关闭，配置不完整或来源不安全时拒绝启动。OIDC 登录回调、会话创建、轮换和登出已经接入页面。认证与同步端点限流、安全审计、账号删除和隐私说明已实现。生产部署仍需完成真实 OIDC/数据库恢复演练，并公布其备份、日志和模型提供商保留期限。
 
 ## 服务端关系模型
 
@@ -34,7 +34,7 @@ React 页面通过 `LearningStateRepository` 读写学习状态，默认实现�
 
 | 表 | 关键字段 | 约束与用途 |
 | --- | --- | --- |
-| `users` | `id`, `created_at`, `deleted_at` | 身份主体；删除采用可审计的异步清除流程 |
+| `users` | `id`, `created_at`, `deleted_at` | 身份主体；当前删除接口硬删除该行并触发全部所属数据级联清除 |
 | `learning_plans` | `id`, `user_id`, `subject`, `current_level`, `target_outcome`, `daily_minutes`, `duration_weeks`, `created_at`, `updated_at`, `revision` | `user_id` 强制所有权；`revision` 支持乐观并发 |
 | `learning_stages` | `id`, `plan_id`, `position`, `title`, `outcome`, `start_week`, `end_week` | `(plan_id, position)` 与 `(plan_id, id)` 唯一 |
 | `daily_records` | `id`, `plan_id`, `day_number`, `local_date`, `status`, `completed_at`, `difficulty`, `reflection`, `revision` | `(plan_id, day_number)` 唯一；每天独立同步 |
@@ -92,7 +92,7 @@ PUT  /api/sync/daily-records/:id
 ## 隐私、保留与恢复
 
 - 默认只收集学习闭环需要的内容，不保存模型密钥、浏览器指纹或原始模型请求日志。
-- 删除账号后立即撤销会话并进入限时清除队列；具体保留期限须在上线前写入隐私政策。
+- 删除账号通过当前有效会话授权，在一个数据库事务中硬删除用户行；外键级联清除身份、设备、会话、计划、每日记录、游标和幂等记录。
 - 备份加密、传输加密和按用户授权是上线阻断项。
 - 导出继续使用可移植快照；恢复到已有云计划前必须预览并确认。
 - 服务端写入、同步冲突和删除流程都要有不含学习正文的安全审计事件。
@@ -103,4 +103,4 @@ PUT  /api/sync/daily-records/:id
 2. **已完成首版：认证与远端仓库。** 已选择 OIDC 授权码 + PKCE 与服务端会话方案，并完成可信会话解析、OIDC 身份映射、用户与设备登记、会话创建/轮换/登出、PostgreSQL 适配器、迁移、启动注入及用户隔离测试。
 3. **已完成服务端同步试点。** HTTP API 已验证计划与每日记录的领域校验、revision、游标、幂等、来源校验和错误映射。
 4. **已完成首版：离线与冲突界面。** 页面已提供自动队列、离线恢复、退避重试、最近同步时间、显式刷新、写入前冲突检查、本地/云端版本摘要和明确保留选择。
-5. **上线准备。** 完成数据删除、备份恢复、隐私告知和容量监控演练。
+5. **已完成本地上线准备基线。** 已实现账号级联删除、隐私说明和可重复的恢复演练清单；真实部署仍需执行 OIDC/数据库恢复演练并补充容量监控。

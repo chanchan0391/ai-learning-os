@@ -18,6 +18,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - 多天进度记录：连续学习天数、最近历史和每日反馈
 - 版本化本地保存：保存教学回答、成果和评估，自动迁移旧计划并安全恢复异常数据
 - 学习数据控制：导出或验证恢复版本化 JSON 副本，并通过二次确认删除本地记录
+- 账号数据控制：已登录用户可在二次确认后删除账号、云端学习数据、设备、会话和当前浏览器记录
 - 可替换持久化边界：页面通过仓库接口保存进度，为账号与跨设备同步预留并发模型
 - 同步领域契约：按认证用户隔离计划与每日记录，验证 revision 冲突、不透明游标和幂等重试
 - PostgreSQL 同步适配器：事务化条件写入、设备校验、持久幂等记录和可执行迁移
@@ -66,6 +67,8 @@ npm run build
 
 开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。启用登录还需同时配置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`；配置完成后，页面会显示登录与“立即同步”控制。身份方案和 HTTP 契约见 [`docs/authentication-design.md`](docs/authentication-design.md)。
 
+数据收集边界、导出/删除控制和恢复演练见 [`docs/privacy-and-recovery.md`](docs/privacy-and-recovery.md)。
+
 ## 项目结构
 
 ```text
@@ -91,6 +94,7 @@ docs/
   mvp-spec.md       MVP 范围与产品决策
   persistence-model.md 持久化、所有权与同步设计
   authentication-design.md OIDC、服务端会话与身份信任边界
+  privacy-and-recovery.md 数据边界、用户控制与恢复演练
   todo.md           当前产品待办列表
 ```
 

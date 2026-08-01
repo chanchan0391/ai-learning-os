@@ -119,6 +119,12 @@ describe("AI Learning OS API", () => {
           return true;
         },
       },
+      accountDataLifecycle: {
+        deleteAccount: async (token) => {
+          calls.push(`delete:${token}`);
+          return true;
+        },
+      },
     };
     const baseUrl = await startApi(new DeterministicModelProvider(), options);
 
@@ -138,6 +144,13 @@ describe("AI Learning OS API", () => {
     expect(logout.status).toBe(200);
     expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
     expect(calls).toEqual(["rotate:old-token", "revoke:new-token"]);
+
+    const deletion = await fetch(`${baseUrl}/api/auth/account`, {
+      method: "DELETE", headers: { Cookie: "session=old-token", Origin: "https://learn.example" },
+    });
+    expect(deletion.status).toBe(200);
+    expect(deletion.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(calls).toEqual(["rotate:old-token", "revoke:new-token", "delete:old-token"]);
   });
 
   it("rejects cross-origin session changes", async () => {

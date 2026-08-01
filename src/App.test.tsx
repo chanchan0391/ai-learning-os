@@ -145,6 +145,37 @@ describe("learning data controls", () => {
     expect(screen.getByRole("button", { name: "退出" })).toBeTruthy();
   });
 
+  it("confirms account deletion before clearing cloud and local learning data", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{ path: string; method: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      requests.push({ path: url.pathname, method: init?.method ?? "GET" });
+      if (url.pathname === "/api/auth/session") return Response.json({ authenticated: true, principal: { userId: "user-1", deviceId: "device-1" } });
+      if (url.pathname === "/api/auth/account" && init?.method === "DELETE") return Response.json({ deleted: true });
+      if (url.pathname === "/api/sync/changes") return Response.json({ changes: [], cursor: "cursor-1" });
+      if (init?.method === "PUT") {
+        const value = JSON.parse(String(init.body));
+        const daily = url.pathname.includes("/daily-records/");
+        return Response.json({ entityType: daily ? "daily-record" : "learning-plan", entityId: decodeURIComponent(url.pathname.split("/").at(-1)!), revision: 1, updatedAt: "2026-08-01T10:00:00.000Z", value });
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+
+    await screen.findByText("已登录");
+    await user.click(screen.getByRole("button", { name: "删除账号" }));
+    expect(screen.getByRole("alertdialog", { name: "永久删除账号和全部学习数据？" })).toBeTruthy();
+    expect(requests.some((request) => request.path === "/api/auth/account")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "永久删除账号" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: /把想学的事/ })).toBeTruthy());
+    expect(requests).toContainEqual({ path: "/api/auth/account", method: "DELETE" });
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("已删除");
+  });
+
   it("previews diverged local and cloud progress and applies the selected cloud version", async () => {
     const user = userEvent.setup();
     const entities = new Map<string, { entityType: "learning-plan" | "daily-record"; entityId: string; revision: number; updatedAt: string; value: unknown }>();

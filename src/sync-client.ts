@@ -112,6 +112,11 @@ export class BrowserSyncClient {
     if (!response.ok) throw new Error("退出登录失败");
   }
 
+  async deleteAccount(): Promise<void> {
+    const response = await this.request("/api/auth/account", { method: "DELETE", credentials: "same-origin" });
+    if (!response.ok) throw new Error("账号数据删除失败，请稍后重试");
+  }
+
   clearMetadata(): void {
     this.storage.removeItem(SYNC_METADATA_KEY);
   }
