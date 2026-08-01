@@ -17,12 +17,25 @@ import {
 import { BrowserLearningStateRepository } from "./learning-storage";
 import { completionRate, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type AuthState, type SyncConflictPreview } from "./sync-client";
+import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import type { LearningStateExport } from "./learning-state";
 import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, TaskDifficulty, TeachingSession } from "./types";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
 const syncClient = new BrowserSyncClient(localStorage);
+
+function formatSyncStatus(status: AutoSyncStatus): string {
+  if (status.phase === "offline") return "离线 · 更改已排队";
+  if (status.phase === "pending") return "等待自动同步";
+  if (status.phase === "syncing") return "正在同步";
+  if (status.phase === "error") return "同步失败 · 将自动重试";
+  if (status.phase === "blocked") return "同步冲突 · 需要选择";
+  if (status.lastSyncedAt) {
+    return `上次同步 ${new Date(status.lastSyncedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+  return "自动同步已开启";
+}
 
 const INITIAL_GOAL: LearningGoal = {
   subject: "AI Agent 工程",
@@ -49,8 +62,21 @@ export function App() {
   const [storageNoticeIsError, setStorageNoticeIsError] = useState(initialLoad.status === "recovered");
   const [authState, setAuthState] = useState<AuthState>({ status: "checking" });
   const [isSyncing, setIsSyncing] = useState(false);
+  const [autoSyncStatus, setAutoSyncStatus] = useState<AutoSyncStatus>({ phase: "idle" });
   const [pendingSyncConflict, setPendingSyncConflict] = useState<SyncConflictPreview | null>(null);
   const importInput = useRef<HTMLInputElement>(null);
+  const learningStateRef = useRef<LearningState | null>(initialLoad.state);
+  const authStateRef = useRef<AuthState>({ status: "checking" });
+  const performSyncRef = useRef<() => Promise<void>>(async () => undefined);
+  const [autoSyncQueue] = useState(() => new AutoSyncQueue(
+    localStorage,
+    () => performSyncRef.current(),
+    (status) => {
+      setAutoSyncStatus(status);
+      setIsSyncing(status.phase === "syncing");
+    },
+    { shouldRetry: (error) => !(error instanceof SyncConflictError) },
+  ));
   const plan = learningState?.plan ?? null;
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
@@ -58,22 +84,35 @@ export function App() {
   useEffect(() => {
     let active = true;
     void syncClient.getAuthState().then((state) => {
-      if (active) setAuthState(state);
+      if (!active) return;
+      authStateRef.current = state;
+      setAuthState(state);
+      if (state.status === "signed-in") {
+        autoSyncQueue.start();
+        autoSyncQueue.enqueue();
+      }
     });
-    return () => { active = false; };
-  }, []);
+    return () => {
+      active = false;
+      autoSyncQueue.stop();
+    };
+  }, [autoSyncQueue]);
 
-  function saveState(next: LearningState | null) {
+  function saveState(next: LearningState | null, enqueueSync = true) {
+    learningStateRef.current = next;
     setLearningState(next);
     if (next) learningStateRepository.save(next);
     else learningStateRepository.clear();
+    if (enqueueSync && next && authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
   }
 
   function updateState(update: (current: LearningState) => LearningState) {
     setLearningState((current) => {
       if (!current) return current;
       const next = update(current);
+      learningStateRef.current = next;
       learningStateRepository.save(next);
+      if (authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
       return next;
     });
   }
@@ -229,21 +268,22 @@ export function App() {
   }
 
   function deleteLearningData() {
-    saveState(null);
+    saveState(null, false);
     syncClient.clearMetadata();
+    autoSyncQueue.clear();
+    if (authStateRef.current.status === "signed-in") autoSyncQueue.start();
     setSubmissionDrafts({});
     setAgentError("");
     setErrors([]);
     setDeleteConfirmationOpen(false);
   }
 
-  async function syncLearningData() {
-    setIsSyncing(true);
+  async function performSync() {
     setStorageNotice("");
     try {
-      const result = await syncClient.sync(learningState);
+      const result = await syncClient.sync(learningStateRef.current);
       if (result.state) {
-        saveState(result.state);
+        saveState(result.state, false);
         setGoal(result.state.plan.goal);
       }
       const changes = [
@@ -256,9 +296,14 @@ export function App() {
       if (error instanceof SyncConflictError && error.preview) setPendingSyncConflict(error.preview);
       setStorageNotice(error instanceof Error ? error.message : "同步失败，请稍后重试。");
       setStorageNoticeIsError(true);
-    } finally {
-      setIsSyncing(false);
+      throw error;
     }
+  }
+
+  performSyncRef.current = performSync;
+
+  async function syncLearningData() {
+    await autoSyncQueue.flushNow();
   }
 
   async function resolveSyncConflict(choice: "local" | "remote") {
@@ -268,9 +313,10 @@ export function App() {
     try {
       const result = await syncClient.resolveConflict(pendingSyncConflict, choice);
       if (result.state) {
-        saveState(result.state);
+        saveState(result.state, false);
         setGoal(result.state.plan.goal);
       }
+      autoSyncQueue.completeExternalSync();
       setPendingSyncConflict(null);
       setStorageNotice(`已保留${choice === "local" ? "本地" : "云端"}冲突版本，并完成同步。`);
       setStorageNoticeIsError(false);
@@ -287,7 +333,9 @@ export function App() {
     try {
       await syncClient.logout();
       syncClient.clearMetadata();
-      setAuthState({ status: "signed-out" });
+      autoSyncQueue.clear();
+      authStateRef.current = { status: "signed-out" };
+      setAuthState(authStateRef.current);
       setStorageNotice("已退出账号，本地学习记录仍保留在此浏览器中。");
       setStorageNoticeIsError(false);
     } catch (error) {
@@ -306,6 +354,7 @@ export function App() {
   const accountControls = authState.status === "signed-in" ? (
     <div className="account-controls" aria-label="账号与同步">
       <span className="sync-status">已登录</span>
+      <span className={`sync-detail sync-${autoSyncStatus.phase}`}>{formatSyncStatus(autoSyncStatus)}</span>
       <button className="text-button sync-button" disabled={isSyncing} onClick={syncLearningData}>{isSyncing ? "正在同步…" : "立即同步"}</button>
       <button className="text-button" onClick={logout}>退出</button>
     </div>

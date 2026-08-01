@@ -31,7 +31,7 @@
 
 ## 上线前阻断项
 
-1. **已实现 OIDC 登录：**覆盖 discovery、state、nonce、S256 PKCE、授权码交换和基于 JWKS 的 ID Token 验证；下一步是在账号界面中接入登录入口和跨设备同步状态。
+1. **已实现 OIDC 登录与账号界面：**覆盖 discovery、state、nonce、S256 PKCE、授权码交换、基于 JWKS 的 ID Token 验证，以及登录、自动同步、离线待办和最近同步状态。
 2. **已接入会话生命周期：**`PostgresSessionPrincipalResolver` 从 HttpOnly Cookie 的不透明令牌哈希解析 `SyncPrincipal`；`PostgresSessionLifecycle` 负责验证后身份映射、设备登记、令牌哈希存储、轮换和撤销，并已由服务启动配置注入。
 3. **已建立路由：**同步 HTTP API 已覆盖认证缺失、跨用户、条件写入、幂等冲突和来源校验；仍需覆盖撤销设备和会话过期的端到端测试。
 4. 明确会话、同步游标和已删除账号的保留期限。

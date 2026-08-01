@@ -116,7 +116,6 @@ describe("learning data controls", () => {
   });
 
   it("shows account controls and syncs local progress for an authenticated session", async () => {
-    const user = userEvent.setup();
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const url = new URL(rawUrl, "http://localhost");
@@ -140,9 +139,9 @@ describe("learning data controls", () => {
     render(<App />);
 
     expect(await screen.findByText("已登录")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "立即同步" }));
-
-    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("上传 2 项"));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("上传 2 项"), { timeout: 2_500 });
+    expect(screen.getByText(/上次同步/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "立即同步" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "退出" })).toBeTruthy();
   });
 
