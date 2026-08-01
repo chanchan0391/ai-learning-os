@@ -5,7 +5,14 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { initializeLearningState, serializeLearningStateExport } from "./learning-state";
+import {
+  completeCurrentDay,
+  getCurrentRecord,
+  initializeLearningState,
+  saveEvaluation,
+  serializeLearningStateExport,
+  toggleCurrentTask,
+} from "./learning-state";
 import { generateLearningPlan } from "./planner";
 
 const STORAGE_KEY = "ai-learning-os-state-v3";
@@ -41,6 +48,36 @@ describe("learning data controls", () => {
     expect(screen.getByRole("heading", { name: goal.subject })).toBeTruthy();
     const result = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(result.violations).toEqual([]);
+  });
+
+  it("records review recall from the dashboard before completing an adaptive review", async () => {
+    const user = userEvent.setup();
+    let state = initializeLearningState(generateLearningPlan(goal));
+    for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+    const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+    state = saveEvaluation(state, practice.id, "可验证成果", {
+      rubric: [
+        { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 8,
+      masteryLevel: "developing",
+      misconceptions: [],
+      nextAction: "独立解释关键机制",
+    });
+    state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    render(<App />);
+
+    expect(screen.getByRole("group", { name: "复习回忆表现" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "轻松想起 · 延长间隔" }));
+
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    const reviewTask = saved.days[1].tasks.find((task: { type: string }) => task.type === "diagnose");
+    expect(reviewTask.completed).toBe(true);
+    expect(saved.days[1].artifacts[reviewTask.id].reviewPerformance).toEqual({ sourceDays: [1], recall: "easy" });
   });
 
   it("keeps data on cancellation and removes every local version after confirmation", async () => {

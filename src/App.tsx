@@ -3,12 +3,14 @@ import {
   completeTeachingTask,
   completeCurrentDay,
   completedDayCount,
+  dueReviewItems,
   getCurrentRecord,
   initializeLearningState,
   learningStateExportFilename,
   learningStreak,
   parseLearningStateExport,
   saveEvaluation,
+  saveReviewPerformance,
   saveTeachingSession,
   saveUnderstandingResponse,
   serializeLearningStateExport,
@@ -19,7 +21,7 @@ import { completionRate, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import type { LearningStateExport } from "./learning-state";
-import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, TaskDifficulty, TeachingSession } from "./types";
+import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, ReviewRecall, TaskDifficulty, TeachingSession } from "./types";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
@@ -184,6 +186,10 @@ export function App() {
     } catch (error) {
       setAgentError(error instanceof Error ? error.message : "无法完成理解检查");
     }
+  }
+
+  function finishReview(taskId: string, recall: ReviewRecall) {
+    if (learningState) saveState(saveReviewPerformance(learningState, taskId, recall));
   }
 
   async function evaluatePractice(task: DailyTask) {
@@ -634,7 +640,9 @@ export function App() {
           <div className="task-list">
             {currentRecord.tasks.map((task, index) => {
               const artifact = currentRecord.artifacts[task.id];
-              const agentGuided = task.type === "learn" || task.type === "practice";
+              const reviewItems = task.type === "diagnose" ? dueReviewItems(learningState, learningState.currentDay) : [];
+              const isAdaptiveReview = reviewItems.length > 0;
+              const agentGuided = task.type === "learn" || task.type === "practice" || isAdaptiveReview;
               const submission = submissionDrafts[task.id] ?? artifact?.submission ?? "";
               return (
                 <article className={`task-block ${task.completed ? "done" : ""}`} key={task.id}>
@@ -643,6 +651,18 @@ export function App() {
                     <span className="task-copy"><strong>{task.title}</strong><small>{task.description}</small></span>
                     <span className="minutes">{task.minutes}<small>MIN</small></span>
                   </button>
+
+                  {isAdaptiveReview && !task.completed && (
+                    <div className="agent-workspace review-workspace">
+                      <span className="agent-label">Review Agent · 调整下次间隔</span>
+                      <p>完成闭卷回忆后，选择最符合实际的表现。系统会据此安排下一次复习。</p>
+                      <div className="difficulty-options" role="group" aria-label="复习回忆表现">
+                        <button onClick={() => finishReview(task.id, "forgot")}>忘记了 · 明天再练</button>
+                        <button onClick={() => finishReview(task.id, "effortful")}>费力想起 · 3 天后</button>
+                        <button onClick={() => finishReview(task.id, "easy")}>轻松想起 · 延长间隔</button>
+                      </div>
+                    </div>
+                  )}
 
                   {task.type === "learn" && !task.completed && (
                     <div className="agent-workspace">

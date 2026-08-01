@@ -43,6 +43,14 @@ export interface LearningTaskArtifact {
   understandingResponses?: Record<string, string>;
   submission?: string;
   evaluation?: EvaluationResult;
+  reviewPerformance?: ReviewPerformance;
+}
+
+export type ReviewRecall = "forgot" | "effortful" | "easy";
+
+export interface ReviewPerformance {
+  sourceDays: number[];
+  recall: ReviewRecall;
 }
 
 export interface DailyLearningRecord {

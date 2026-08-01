@@ -12,6 +12,7 @@ import {
   parseLearningState,
   parseLearningStateExport,
   saveEvaluation,
+  saveReviewPerformance,
   saveTeachingSession,
   saveUnderstandingResponse,
   serializeLearningStateExport,
@@ -62,6 +63,12 @@ describe("multi-day learning state", () => {
     const state = initializeLearningState(generateLearningPlan(goal));
     state.days[0].artifacts[state.days[0].tasks[0].id] = { evaluation: { totalScore: 99 } } as never;
     expect(parseLearningState(JSON.stringify(state)).status).toBe("recovered");
+
+    const invalidReview = completedState();
+    invalidReview.days[0].artifacts[invalidReview.days[0].tasks[0].id] = {
+      reviewPerformance: { sourceDays: [1], recall: "easy" },
+    };
+    expect(parseLearningState(JSON.stringify(invalidReview)).status).toBe("recovered");
   });
 
   it("creates a versioned, portable export without changing learning data", () => {
@@ -165,7 +172,7 @@ describe("multi-day learning state", () => {
     expect(state.days[1].tasks[1].description).toContain("忽略超时");
   });
 
-  it("schedules weak evaluator feedback for reviews after 1, 3, and 7 days", () => {
+  it("schedules the first weak evaluator review for the next day", () => {
     let state = completedState();
     const task = getCurrentRecord(state).tasks.find((item) => item.type === "practice")!;
     state = saveEvaluation(state, task.id, "可复查的学习成果", {
@@ -187,8 +194,8 @@ describe("multi-day learning state", () => {
       nextAction: "补充失败恢复测试",
     }]);
     expect(dueReviewItems(state, 3)).toEqual([]);
-    expect(dueReviewItems(state, 4)).toHaveLength(1);
-    expect(dueReviewItems(state, 8)).toHaveLength(1);
+    expect(dueReviewItems(state, 4)).toEqual([]);
+    expect(dueReviewItems(state, 8)).toEqual([]);
     expect(dueReviewItems(state, 9)).toEqual([]);
 
     state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "继续检查恢复路径" });
@@ -216,6 +223,70 @@ describe("multi-day learning state", () => {
     });
 
     expect(dueReviewItems(state, 2)).toEqual([]);
+  });
+
+  it("adapts the next review interval to recorded recall performance", () => {
+    let state = completedState();
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "practice")!;
+    state = saveEvaluation(state, task.id, "成果", {
+      rubric: [
+        { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 8,
+      masteryLevel: "developing",
+      misconceptions: [],
+      nextAction: "解释失败恢复机制",
+    });
+    state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    const reviewTask = getCurrentRecord(state).tasks.find((item) => item.type === "diagnose")!;
+
+    state = saveReviewPerformance(state, reviewTask.id, "effortful");
+
+    expect(getCurrentRecord(state).artifacts[reviewTask.id].reviewPerformance).toEqual({ sourceDays: [1], recall: "effortful" });
+    expect(dueReviewItems(state, 3)).toEqual([]);
+    expect(dueReviewItems(state, 4)).toEqual([]);
+    expect(dueReviewItems(state, 5)).toHaveLength(1);
+  });
+
+  it("retries forgotten reviews tomorrow and expands repeated easy recall up to 14 days", () => {
+    let state = completedState();
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "practice")!;
+    state = saveEvaluation(state, task.id, "成果", {
+      rubric: [
+        { dimension: "understanding", score: 1, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 1, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 1, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 1, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 4,
+      masteryLevel: "needs-support",
+      misconceptions: ["混淆重试与恢复"],
+      nextAction: "画出恢复路径",
+    });
+    state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "" });
+    let reviewTask = getCurrentRecord(state).tasks.find((item) => item.type === "diagnose")!;
+    state = saveReviewPerformance(state, reviewTask.id, "forgot");
+    expect(dueReviewItems(state, 3)).toHaveLength(1);
+
+    state = { ...state, currentDay: 3, days: [...state.days, {
+      day: 3, date: "2026-08-01", status: "active", artifacts: {},
+      tasks: state.days[1].tasks.map((item) => ({ ...item, id: item.id.replace("day-2", "day-3"), completed: false })),
+    }] };
+    reviewTask = getCurrentRecord(state).tasks.find((item) => item.type === "diagnose")!;
+    state = saveReviewPerformance(state, reviewTask.id, "easy");
+    expect(dueReviewItems(state, 10)).toHaveLength(1);
+    expect(dueReviewItems(state, 4)).toEqual([]);
+
+    state = { ...state, currentDay: 10, days: [...state.days, {
+      day: 10, date: "2026-08-08", status: "active", artifacts: {},
+      tasks: state.days[1].tasks.map((item) => ({ ...item, id: item.id.replace("day-2", "day-10"), completed: false })),
+    }] };
+    reviewTask = getCurrentRecord(state).tasks.find((item) => item.type === "diagnose")!;
+    state = saveReviewPerformance(state, reviewTask.id, "easy");
+    expect(dueReviewItems(state, 24)).toHaveLength(1);
   });
 
   it("preserves prior history while advancing consecutive days", () => {

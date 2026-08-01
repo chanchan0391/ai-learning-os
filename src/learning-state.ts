@@ -7,6 +7,7 @@ import type {
   LearningState,
   LearningStage,
   LearningTaskArtifact,
+  ReviewRecall,
   TeachingSession,
 } from "./types";
 
@@ -137,7 +138,13 @@ function isLearningTaskArtifact(value: unknown): value is LearningTaskArtifact {
   return responsesValid
     && (value.teachingSession === undefined || isTeachingSession(value.teachingSession))
     && (value.submission === undefined || typeof value.submission === "string")
-    && (value.evaluation === undefined || isEvaluationResult(value.evaluation));
+    && (value.evaluation === undefined || isEvaluationResult(value.evaluation))
+    && (value.reviewPerformance === undefined || (isRecord(value.reviewPerformance)
+      && ["forgot", "effortful", "easy"].includes(String(value.reviewPerformance.recall))
+      && Array.isArray(value.reviewPerformance.sourceDays)
+      && value.reviewPerformance.sourceDays.length > 0
+      && value.reviewPerformance.sourceDays.every((day) => Number.isInteger(day) && Number(day) > 0)
+      && new Set(value.reviewPerformance.sourceDays).size === value.reviewPerformance.sourceDays.length));
 }
 
 export function isDailyRecord(value: unknown): value is DailyLearningRecord {
@@ -155,7 +162,9 @@ export function isDailyRecord(value: unknown): value is DailyLearningRecord {
   const artifactsValid = isRecord(value.artifacts)
     && Object.entries(value.artifacts).every(([taskId, artifact]) => value.tasks instanceof Array
       && value.tasks.some((task) => isRecord(task) && task.id === taskId)
-      && isLearningTaskArtifact(artifact));
+      && isLearningTaskArtifact(artifact)
+      && (artifact.reviewPerformance === undefined
+        || artifact.reviewPerformance.sourceDays.every((sourceDay) => sourceDay < Number(value.day))));
   return Number.isInteger(value.day)
     && Number(value.day) > 0
     && /^\d{4}-\d{2}-\d{2}$/.test(String(value.date))
@@ -333,8 +342,6 @@ function allocateMinutes(total: number): [number, number, number, number] {
   return [diagnose, learn, total - diagnose - learn - reflect, reflect];
 }
 
-const REVIEW_INTERVAL_DAYS = new Set([1, 3, 7]);
-
 export interface DueReviewItem {
   sourceDay: number;
   nextAction: string;
@@ -343,18 +350,51 @@ export interface DueReviewItem {
 
 export function dueReviewItems(state: LearningState, targetDay = state.currentDay + 1): DueReviewItem[] {
   return state.days.flatMap((record) => {
-    if (!REVIEW_INTERVAL_DAYS.has(targetDay - record.day)) return [];
     const evaluation = Object.values(record.artifacts)
       .flatMap((artifact) => artifact.evaluation ? [artifact.evaluation] : [])
       .filter((result) => result.masteryLevel !== "ready" || result.misconceptions.length > 0)
       .sort((a, b) => a.totalScore - b.totalScore)[0];
     if (!evaluation) return [];
+    const attempts = state.days.flatMap((laterRecord) => Object.values(laterRecord.artifacts)
+      .flatMap((artifact) => artifact.reviewPerformance?.sourceDays.includes(record.day)
+        ? [{ day: laterRecord.day, recall: artifact.reviewPerformance.recall }]
+        : [])).sort((a, b) => a.day - b.day);
+    const lastAttempt = attempts.at(-1);
+    let dueDay = record.day + 1;
+    if (lastAttempt) {
+      const previousNonEasyIndex = lastAttempt.recall === "easy"
+        ? [...attempts].reverse().findIndex((attempt) => attempt.recall !== "easy")
+        : 0;
+      const consecutiveEasy = previousNonEasyIndex === -1 ? attempts.length : previousNonEasyIndex;
+      const interval = lastAttempt.recall === "forgot"
+        ? 1
+        : lastAttempt.recall === "effortful"
+          ? 3
+          : Math.min(14, 7 * (2 ** Math.max(0, consecutiveEasy - 1)));
+      dueDay = lastAttempt.day + interval;
+    }
+    if (targetDay !== dueDay) return [];
     return [{
       sourceDay: record.day,
       nextAction: evaluation.nextAction,
       misconceptions: evaluation.misconceptions,
     }];
   }).sort((a, b) => b.sourceDay - a.sourceDay);
+}
+
+export function saveReviewPerformance(state: LearningState, taskId: string, recall: ReviewRecall): LearningState {
+  const record = getCurrentRecord(state);
+  const task = record.tasks.find((item) => item.id === taskId);
+  const sourceDays = dueReviewItems(state, state.currentDay).map((item) => item.sourceDay);
+  if (!task || task.type !== "diagnose" || sourceDays.length === 0) throw new Error("当前任务不是待完成的间隔复习");
+  return updateCurrentRecord(state, (current) => ({
+    ...current,
+    tasks: current.tasks.map((item) => item.id === taskId ? { ...item, completed: true } : item),
+    artifacts: {
+      ...current.artifacts,
+      [taskId]: { ...current.artifacts[taskId], reviewPerformance: { sourceDays, recall } },
+    },
+  }));
 }
 
 function reviewPrompt(items: DueReviewItem[]): string {
