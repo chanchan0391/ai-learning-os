@@ -102,7 +102,12 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
       if (request.method === "GET" && request.url === "/api/health") {
-        return sendJson(response, 200, { status: "ok", provider: provider.id, aiEnabled: provider.isAiEnabled });
+        return sendJson(response, 200, {
+          status: "ok",
+          provider: provider.id,
+          aiEnabled: provider.isAiEnabled,
+          syncEnabled: Boolean(options.syncStore && options.resolvePrincipal),
+        });
       }
       if (request.method === "POST" && request.url === "/api/plans") {
         const goal = await readJson(request) as LearningGoal;

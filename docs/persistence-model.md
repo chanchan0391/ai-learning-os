@@ -24,7 +24,7 @@ React 页面通过 `LearningStateRepository` 读写学习状态，默认实现�
 - 绑定用户的不透明增量游标；
 - 每日记录只能引用当前用户拥有的计划。
 
-内存版本只用于测试领域规则，进程重启会丢失数据。PostgreSQL 版本已经通过兼容数据库集成测试。同步 HTTP 路由已通过可注入的可信身份解析器连接统一的 `SyncStore` 契约，并完成请求结构、条件头、来源白名单和错误映射；服务启动配置尚未注入 PostgreSQL 仓库与实际 OIDC 会话适配器，限流仍是上线阻断项。
+内存版本只用于测试领域规则，进程重启会丢失数据。PostgreSQL 版本已经通过兼容数据库集成测试。同步 HTTP 路由已通过可信身份解析器连接统一的 `SyncStore` 契约，并完成请求结构、条件头、来源白名单和错误映射。服务启动配置在同时提供 `DATABASE_URL` 与精确 `SYNC_ALLOWED_ORIGINS` 时注入 PostgreSQL 仓库和哈希会话解析器；配置缺失时同步关闭，配置不完整或来源不安全时拒绝启动。OIDC 登录回调、会话创建与轮换以及限流仍是上线阻断项。
 
 ## 服务端关系模型
 
@@ -41,6 +41,7 @@ React 页面通过 `LearningStateRepository` 读写学习状态，默认实现�
 | `daily_tasks` | `id`, `daily_record_id`, `position`, `type`, `title`, `description`, `minutes`, `completed` | `(daily_record_id, position)` 与 `(daily_record_id, id)` 唯一 |
 | `task_artifacts` | `daily_task_id`, `schema_version`, `teaching_session`, `understanding_responses`, `submission`, `evaluation`, `updated_at` | 每个任务最多一个产物集合；JSON 写入前必须走领域校验 |
 | `sync_devices` | `id`, `user_id`, `label`, `last_seen_at`, `revoked_at` | 可撤销设备身份，不保存浏览器指纹 |
+| `auth_sessions` | `token_hash`, `user_id`, `device_id`, `expires_at`, `revoked_at` | 只保存不透明会话令牌哈希；绑定可撤销设备并强制过期 |
 | `sync_operations` | `id`, `user_id`, `device_id`, `operation_id`, `entity_type`, `entity_id`, `base_revision`, `created_at` | `(user_id, operation_id)` 唯一，保证重试幂等 |
 
 所有业务表都包含 `user_id` 或通过不可绕过的外键链归属用户。数据库访问必须在事务内绑定已认证用户，任何客户端提交的 `user_id` 都不可信。
@@ -91,7 +92,7 @@ PUT  /api/sync/daily-records/:id
 ## 分阶段实施
 
 1. **已完成：本地仓库边界。** 页面不再直接管理键发现、迁移和删除。
-2. **进行中：认证与远端仓库。** 已选择 OIDC 授权码 + PKCE 与服务端会话方案，并完成可信身份解析边界、PostgreSQL 适配器、迁移及用户隔离测试；下一步实现会话生命周期并注入服务启动配置。
+2. **进行中：认证与远端仓库。** 已选择 OIDC 授权码 + PKCE 与服务端会话方案，并完成可信会话解析、PostgreSQL 适配器、迁移、启动注入及用户隔离测试；下一步实现 OIDC 回调和会话创建、轮换与登出生命周期。
 3. **已完成服务端同步试点。** HTTP API 已验证计划与每日记录的领域校验、revision、游标、幂等、来源校验和错误映射。
 4. **离线与冲突界面。** 展示待同步、失败和冲突状态，不静默覆盖。
 5. **上线准备。** 完成数据删除、备份恢复、隐私告知和容量监控演练。
