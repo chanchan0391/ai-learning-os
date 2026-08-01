@@ -48,4 +48,23 @@ describe("sync runtime configuration", () => {
       transactionSecret: "a-secure-random-value-with-32-characters",
     });
   });
+
+  it("allows an HTTP issuer only for local development", () => {
+    expect(readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "http://127.0.0.1:5173",
+      OIDC_ISSUER: "http://127.0.0.1:5556/dex",
+      OIDC_CLIENT_ID: "learning-client",
+      OIDC_REDIRECT_URI: "http://127.0.0.1:5173/api/auth/callback",
+      OIDC_TRANSACTION_SECRET: "a-secure-random-value-with-32-characters",
+    })?.oidc?.issuer).toBe("http://127.0.0.1:5556/dex");
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      OIDC_ISSUER: "http://identity.example",
+      OIDC_CLIENT_ID: "learning-client",
+      OIDC_REDIRECT_URI: "https://learn.example/api/auth/callback",
+      OIDC_TRANSACTION_SECRET: "a-secure-random-value-with-32-characters",
+    })).toThrow(/exact HTTPS/);
+  });
 });

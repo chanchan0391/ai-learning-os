@@ -24,6 +24,18 @@ npm run dev
 npm run check
 ```
 
+## dev 测试环境
+
+当前约定是每次代码或配置更新都同步到 `dev` 测试环境。部署流程为：
+
+1. 运行 `npm run check`。
+2. 将源码同步到 `~/services/ai-learning-os/source`，不上传 `.env.local`、密钥或 `node_modules`。
+3. 使用服务器 NVM 的 Node 22.21.1 构建并重启用户级 API/Web 服务。
+4. 检查 `http://127.0.0.1:8088/api/health`，并对受影响功能执行一次测试。
+5. 通过本机 SSH 隧道查看页面：`http://127.0.0.1:8088`。
+
+部署凭据和运行配置只保存在本机 `.env.local` 及服务器权限受限的 `app.env`，不进入 Git。
+
 ## 贡献要求
 
 - 保持用户端、Agent、模型适配器和领域规则之间的边界。

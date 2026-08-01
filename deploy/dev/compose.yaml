@@ -1,0 +1,50 @@
+services:
+  api:
+    build:
+      context: ./source
+      target: api
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - app.env
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  web:
+    build:
+      context: ./source
+      target: web
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - api
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  dex:
+    image: ghcr.io/dexidp/dex:v2.45.1-alpine
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    ports:
+      - "127.0.0.1:5556:5556"
+    environment:
+      DEX_STATIC_EMAIL: ${DEX_STATIC_EMAIL}
+      DEX_STATIC_PASSWORD_HASH: ${DEX_STATIC_PASSWORD_HASH}
+      DEX_STATIC_USER_ID: ${DEX_STATIC_USER_ID}
+    volumes:
+      - ./dex-config.yaml:/etc/dex/config.yaml:ro
+      - dex-data:/var/dex
+
+volumes:
+  dex-data:

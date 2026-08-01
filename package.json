@@ -12,6 +12,7 @@
     "dev": "concurrently -k -n web,api \"vite\" \"tsx watch server/index.ts\"",
     "dev:web": "vite",
     "dev:api": "tsx watch server/index.ts",
+    "preview": "vite preview",
     "db:migrate": "tsx server/sync/migrate.ts",
     "start": "concurrently -k -n web,api \"vite --host 127.0.0.1 --open\" \"tsx server/index.ts\"",
     "build": "tsc -b && vite build",

@@ -4,6 +4,7 @@ interface OpenAIProviderConfig {
   apiKey: string;
   model: string;
   baseUrl?: string;
+  apiMode?: "responses" | "chat-completions";
   fetchImplementation?: typeof fetch;
   timeoutMs?: number;
   maxRetries?: number;
@@ -14,11 +15,14 @@ interface OpenAIResponseBody {
   id?: string;
   output_text?: string;
   output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+  choices?: Array<{ message?: { content?: string } }>;
   error?: { message?: string };
 }
 
 function extractOutputText(body: OpenAIResponseBody): string | undefined {
   if (body.output_text) return body.output_text;
+  const chatContent = body.choices?.[0]?.message?.content;
+  if (chatContent) return chatContent;
   for (const item of body.output ?? []) {
     for (const content of item.content ?? []) {
       if (content.type === "output_text" && content.text) return content.text;
@@ -58,7 +62,7 @@ function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
 }
 
 export class OpenAIResponsesProvider implements ModelProvider {
-  readonly id = "openai-responses";
+  readonly id: string;
   readonly isAiEnabled = true;
   private readonly baseUrl: string;
   private readonly fetchImplementation: typeof fetch;
@@ -69,6 +73,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
   constructor(private readonly config: OpenAIProviderConfig) {
     if (!config.apiKey.trim()) throw new Error("OpenAI API key is required");
     if (!config.model.trim()) throw new Error("OpenAI model is required");
+    this.id = config.apiMode === "chat-completions" ? "openai-compatible-chat" : "openai-responses";
     this.baseUrl = (config.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
     this.fetchImplementation = config.fetchImplementation ?? fetch;
     this.timeoutMs = config.timeoutMs ?? 30_000;
@@ -79,18 +84,33 @@ export class OpenAIResponsesProvider implements ModelProvider {
   }
 
   async generateStructured<T>(request: StructuredGenerationRequest): Promise<StructuredGenerationResult<T>> {
-    const body = JSON.stringify({
+    const format = {
+      type: "json_schema",
+      name: request.schema.name,
+      schema: request.schema.value,
+      strict: true,
+    } as const;
+    const chatCompletions = this.config.apiMode === "chat-completions";
+    const body = JSON.stringify(chatCompletions ? {
       model: this.config.model,
-      instructions: request.instructions,
-      input: request.input,
-      text: {
-        format: {
-          type: "json_schema",
+      messages: [
+        { role: "system", content: request.instructions },
+        { role: "user", content: request.input },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
           name: request.schema.name,
           schema: request.schema.value,
           strict: true,
         },
       },
+      stream: false,
+    } : {
+      model: this.config.model,
+      instructions: request.instructions,
+      input: request.input,
+      text: { format },
       store: false,
     });
 
@@ -101,7 +121,8 @@ export class OpenAIResponsesProvider implements ModelProvider {
       const signal = request.signal ? AbortSignal.any([request.signal, timeoutController.signal]) : timeoutController.signal;
       let response: Response | undefined;
       try {
-        response = await this.fetchImplementation(`${this.baseUrl}/responses`, {
+        const endpoint = chatCompletions ? "chat/completions" : "responses";
+        response = await this.fetchImplementation(`${this.baseUrl}/${endpoint}`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${this.config.apiKey}`,

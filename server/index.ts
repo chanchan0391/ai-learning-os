@@ -9,13 +9,14 @@ try {
 }
 
 const port = Number(process.env.AI_API_PORT ?? 8787);
+const host = process.env.AI_API_HOST?.trim() || "127.0.0.1";
 const provider = createModelProvider();
 const syncRuntime = createSyncRuntime(process.env);
 const server = createApp(provider, syncRuntime.appOptions);
 
-server.listen(port, "127.0.0.1", () => {
+server.listen(port, host, () => {
   const syncStatus = syncRuntime.appOptions.syncStore ? ", sync enabled" : ", sync disabled";
-  console.log(`AI Learning OS API ready on http://127.0.0.1:${port} (${provider.id}${syncStatus})`);
+  console.log(`AI Learning OS API ready on http://${host}:${port} (${provider.id}${syncStatus})`);
 });
 
 function shutdown() {

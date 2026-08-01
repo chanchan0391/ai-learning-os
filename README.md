@@ -62,6 +62,8 @@ cp .env.example .env.local
 
 然后在 `.env.local` 中填写 `OPENAI_API_KEY` 和 `OPENAI_MODEL`，重新运行 `npm start`。密钥文件不会被 Git 提交。
 
+如果使用 OpenAI-compatible 服务，可改为配置 `OPENAI_COMPATIBLE_API_KEY`、`OPENAI_COMPATIBLE_BASE_URL`，并通过 `OPENAI_MODEL`（或 `OPENAI_COMPATIBLE_MODEL`）指定模型。兼容模式使用 `/v1/chat/completions` 和 JSON Schema 结构化输出；base URL 可填写服务根地址或已经包含 `/v1` 的地址。远端服务必须使用 HTTPS，本机回环开发服务可使用 HTTP；不要同时配置 OpenAI 和兼容服务的两组密钥。
+
 ## 验证
 
 ```sh

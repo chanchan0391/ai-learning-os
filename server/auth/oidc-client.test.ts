@@ -19,6 +19,29 @@ function discovery() {
 }
 
 describe("standard OIDC client", () => {
+  it("supports a same-origin local HTTP provider for development", async () => {
+    const localConfig = {
+      ...config,
+      issuer: "http://127.0.0.1:5556/dex",
+      redirectUri: "http://127.0.0.1:5173/api/auth/callback",
+    };
+    const localDiscovery = new Response(JSON.stringify({
+      issuer: localConfig.issuer,
+      authorization_endpoint: `${localConfig.issuer}/auth`,
+      token_endpoint: `${localConfig.issuer}/token`,
+      jwks_uri: `${localConfig.issuer}/keys`,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    const randomValues = [Buffer.alloc(32, 1), Buffer.alloc(24, 2), Buffer.alloc(24, 3)];
+    const client = new StandardOidcClient(
+      localConfig,
+      () => 1_000,
+      () => randomValues.shift()!,
+      vi.fn(async () => localDiscovery) as typeof fetch,
+    );
+
+    await expect(client.begin()).resolves.toMatchObject({ authorizationUrl: expect.stringContaining("http://127.0.0.1:5556/dex/auth") });
+  });
+
   it("starts login with state, nonce, and an S256 PKCE challenge", async () => {
     const fetcher = vi.fn(async () => discovery());
     const randomValues = [Buffer.alloc(32, 1), Buffer.alloc(24, 2), Buffer.alloc(24, 3)];

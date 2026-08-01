@@ -52,8 +52,10 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     }
     const issuer = env.OIDC_ISSUER!.trim().replace(/\/$/, "");
     const issuerUrl = new URL(issuer);
-    if (issuerUrl.protocol !== "https:" || issuerUrl.origin + issuerUrl.pathname.replace(/\/$/, "") !== issuer) {
-      throw new Error("OIDC_ISSUER must be an exact HTTPS URL without query or fragment");
+    const localIssuer = issuerUrl.hostname === "127.0.0.1" || issuerUrl.hostname === "localhost";
+    if ((issuerUrl.protocol !== "https:" && !(localIssuer && issuerUrl.protocol === "http:"))
+      || issuerUrl.origin + issuerUrl.pathname.replace(/\/$/, "") !== issuer) {
+      throw new Error("OIDC_ISSUER must be an exact HTTPS URL (or local HTTP development URL) without query or fragment");
     }
     const redirectUri = env.OIDC_REDIRECT_URI!.trim();
     const redirectUrl = new URL(redirectUri);

@@ -71,9 +71,13 @@ function cookieValue(header: string | undefined, name: string): string | null {
   return null;
 }
 
-function isHttpsUrl(value: string): boolean {
+function isSafeProviderUrl(value: string, issuer: string): boolean {
   try {
-    return new URL(value).protocol === "https:";
+    const url = new URL(value);
+    if (url.protocol === "https:") return true;
+    const issuerUrl = new URL(issuer);
+    const localIssuer = issuerUrl.hostname === "127.0.0.1" || issuerUrl.hostname === "localhost";
+    return localIssuer && issuerUrl.protocol === "http:" && url.protocol === "http:" && url.origin === issuerUrl.origin;
   } catch {
     return false;
   }
@@ -177,7 +181,9 @@ export class StandardOidcClient implements OidcAuthenticator {
     const value = await response.json() as Partial<OidcDiscovery>;
     if (value.issuer?.replace(/\/$/, "") !== issuer) throw new Error("OIDC discovery issuer mismatch");
     for (const key of ["authorization_endpoint", "token_endpoint", "jwks_uri"] as const) {
-      if (typeof value[key] !== "string" || !isHttpsUrl(value[key])) throw new Error(`OIDC discovery ${key} must be HTTPS`);
+      if (typeof value[key] !== "string" || !isSafeProviderUrl(value[key], issuer)) {
+        throw new Error(`OIDC discovery ${key} must be HTTPS or use the same local HTTP origin as the issuer`);
+      }
     }
     const discovery = value as OidcDiscovery;
     this.discoveryCache = { value: discovery, expiresAt: this.now() + DISCOVERY_TTL_MS };

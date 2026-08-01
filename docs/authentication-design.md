@@ -54,4 +54,4 @@ Cookie 固定使用 `Path=/; HttpOnly; Secure; SameSite=Lax`。数据库只保�
 
 ## 运行配置
 
-启用登录需要在数据库和同步来源配置之外，同时设置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`。issuer 和生产回调必须使用 HTTPS；本地回调可以使用 `localhost` 或 `127.0.0.1`。四项配置不完整时服务会拒绝启动，避免运行一个部分可信的登录流程。
+启用登录需要在数据库和同步来源配置之外，同时设置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`。issuer 和生产回调必须使用 HTTPS；通过 SSH 隧道进行本地开发时，issuer 和回调可以使用 `http://localhost` 或 `http://127.0.0.1`。四项配置不完整时服务会拒绝启动，避免运行一个部分可信的登录流程。

@@ -1,0 +1,14 @@
+[Unit]
+Description=AI Learning OS Web Preview
+After=ai-learning-os-api.service
+Requires=ai-learning-os-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/services/ai-learning-os/source
+ExecStart=%h/.nvm/versions/node/v22.21.1/bin/node node_modules/vite/bin/vite.js preview
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,27 @@
+issuer: http://127.0.0.1:5556/dex
+
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  skipApprovalScreen: true
+
+staticClients:
+  - id: ai-learning-os
+    public: true
+    name: AI Learning OS
+    redirectURIs:
+      - http://127.0.0.1:5173/api/auth/callback
+      - http://127.0.0.1:8088/api/auth/callback
+
+enablePasswordDB: true
+staticPasswords:
+  - email: "{{ .Env.DEX_STATIC_EMAIL }}"
+    hash: "{{ .Env.DEX_STATIC_PASSWORD_HASH }}"
+    username: Simon
+    userID: "{{ .Env.DEX_STATIC_USER_ID }}"
