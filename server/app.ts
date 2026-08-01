@@ -12,11 +12,13 @@ import type { AccountDataLifecycle, SessionLifecycle } from "./auth/postgres-ses
 import { DEFAULT_SESSION_COOKIE_NAME, readSessionToken } from "./auth/postgres-session-resolver";
 import {
   InMemoryFixedWindowRateLimiter,
+  RollingRequestCapacityMonitor,
   auditOutcome,
   clientRateLimitKey,
   principalFields,
   type RateLimitPolicy,
   type RequestRateLimiter,
+  type RequestCapacityMonitor,
   type SecurityAuditEvent,
   type SecurityAuditSink,
 } from "./security/request-security";
@@ -45,6 +47,7 @@ export interface AppOptions {
   oidcAuthenticator?: OidcAuthenticator;
   rateLimiter?: RequestRateLimiter;
   auditSink?: SecurityAuditSink;
+  capacityMonitor?: RequestCapacityMonitor;
 }
 
 interface ProtectedRoute {
@@ -148,6 +151,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
   const teacher = createTeacherAgent(provider);
   const evaluator = createEvaluatorAgent(provider);
   const rateLimiter = options.rateLimiter ?? new InMemoryFixedWindowRateLimiter();
+  const capacityMonitor = options.capacityMonitor ?? new RollingRequestCapacityMonitor();
   return createServer(async (request, response) => {
     const controller = new AbortController();
     request.once("aborted", () => controller.abort());
@@ -158,6 +162,10 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
     const route = protectedRoute(request.method, url.pathname);
     let auditPrincipal: { userId: string; deviceId: string } | null = null;
     let auditReason: string | undefined;
+    const completeCapacity = route ? capacityMonitor.start(route.rateLimitScope) : null;
+    if (completeCapacity) {
+      response.once("finish", () => completeCapacity(response.statusCode, auditReason === "rate-limit-exceeded"));
+    }
     if (route && options.auditSink) {
       response.once("finish", () => {
         const event: SecurityAuditEvent = {
@@ -180,7 +188,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
     }
     try {
       if (route) {
-        const decision = rateLimiter.consume(route.rateLimitScope, clientRateLimitKey(request), route.policy);
+        const decision = await rateLimiter.consume(route.rateLimitScope, clientRateLimitKey(request), route.policy);
         response.setHeader("RateLimit-Limit", String(decision.limit));
         response.setHeader("RateLimit-Remaining", String(decision.remaining));
         response.setHeader("RateLimit-Reset", String(Math.ceil(decision.resetAt / 1000)));
@@ -196,6 +204,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           provider: provider.id,
           aiEnabled: provider.isAiEnabled,
           syncEnabled: Boolean(options.syncStore && options.resolvePrincipal),
+          capacity: capacityMonitor.snapshot(),
         });
       }
       if (request.method === "POST" && request.url === "/api/plans") {

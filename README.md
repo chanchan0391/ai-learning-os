@@ -27,6 +27,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - 账号与跨设备同步界面：登录后自动合并本地与云端进度，合并快速连续编辑，离线时保留待同步状态并在恢复连接后重试，同时显示最近同步时间
 - 冲突安全：两端同时更改时停止自动重试，先预览本地与云端摘要，再明确选择要保留的冲突版本
 - 同步安全边界：认证与同步路由按客户端限流，并输出不含 Cookie、令牌、查询参数和正文的结构化安全审计事件
+- 多实例容量保护：PostgreSQL 原子共享哈希客户端限流计数，健康端点报告 60 秒滚动的认证/同步容量与延迟
 - 响应式界面：支持桌面和移动端
 - 自动化测试：覆盖输入校验、路线分期、时间预算、学习状态、关键界面交互和可访问性扫描
 - 持续集成：推送和 Pull Request 自动运行测试与生产构建
@@ -65,7 +66,7 @@ npm test
 npm run build
 ```
 
-开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。启用登录还需同时配置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`；配置完成后，页面会显示登录与“立即同步”控制。身份方案和 HTTP 契约见 [`docs/authentication-design.md`](docs/authentication-design.md)。
+开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。迁移也会创建多实例共享限流表；缺少最新迁移时受保护路由会拒绝服务，不会退回不安全的单实例配额。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。启用登录还需同时配置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`；配置完成后，页面会显示登录与“立即同步”控制。身份方案和 HTTP 契约见 [`docs/authentication-design.md`](docs/authentication-design.md)。
 
 数据收集边界、导出/删除控制和恢复演练见 [`docs/privacy-and-recovery.md`](docs/privacy-and-recovery.md)。
 

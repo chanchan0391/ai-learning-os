@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryFixedWindowRateLimiter, auditOutcome } from "./request-security";
+import { InMemoryFixedWindowRateLimiter, RollingRequestCapacityMonitor, auditOutcome } from "./request-security";
 
 describe("request security", () => {
   it("limits each scope and client independently and resets expired windows", () => {
@@ -21,5 +21,35 @@ describe("request security", () => {
     expect(auditOutcome(302)).toBe("success");
     expect(auditOutcome(401)).toBe("rejected");
     expect(auditOutcome(503)).toBe("failed");
+  });
+
+  it("reports rolling privacy-safe request capacity by scope", () => {
+    let now = Date.parse("2026-08-01T12:00:01.000Z");
+    const monitor = new RollingRequestCapacityMonitor(() => now);
+    const completeRead = monitor.start("sync-read");
+    now += 25;
+    completeRead(200);
+    const completeWrite = monitor.start("sync-write");
+    now += 75;
+    completeWrite(429, true);
+
+    expect(monitor.snapshot()).toMatchObject({
+      windowStartedAt: "2026-08-01T12:00:00.000Z",
+      windowMs: 60_000,
+      inFlight: 0,
+      requests: 2,
+      rejected: 1,
+      failed: 0,
+      rateLimited: 1,
+      averageLatencyMs: 50,
+      maxLatencyMs: 75,
+      byScope: {
+        "sync-read": { requests: 1, rejected: 0, failed: 0, rateLimited: 0 },
+        "sync-write": { requests: 1, rejected: 1, failed: 0, rateLimited: 1 },
+      },
+    });
+
+    now += 60_000;
+    expect(monitor.snapshot()).toMatchObject({ requests: 0, rejected: 0, rateLimited: 0, byScope: {} });
   });
 });

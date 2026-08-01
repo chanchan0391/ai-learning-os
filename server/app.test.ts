@@ -22,8 +22,9 @@ describe("AI Learning OS API", () => {
 
   it("reports whether a live AI model is enabled", async () => {
     const baseUrl = await startApi();
-    await expect(fetch(`${baseUrl}/api/health`).then((response) => response.json())).resolves.toEqual({
+    await expect(fetch(`${baseUrl}/api/health`).then((response) => response.json())).resolves.toMatchObject({
       status: "ok", provider: "deterministic-development", aiEnabled: false, syncEnabled: false,
+      capacity: { inFlight: 0, requests: 0, rejected: 0, failed: 0, rateLimited: 0, byScope: {} },
     });
   });
 
