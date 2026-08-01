@@ -48,7 +48,7 @@
 - [x] 选择 provider-neutral OIDC + 服务端会话身份方案
 - [x] 实现 PostgreSQL 同步适配器、迁移与数据库契约测试
 - [x] 建立可信身份解析边界与同步 HTTP API，覆盖条件写入、幂等、冲突和来源校验
-- [ ] 实现 OIDC 授权发起与登录回调（discovery、state、nonce、PKCE 和 ID Token 验证）
+- [x] 实现 OIDC 授权发起与登录回调（discovery、state、nonce、PKCE 和 ID Token 验证）
 - [x] 实现 OIDC 身份映射后的用户/设备登记、服务端会话轮换与登出
 - [x] 把 PostgreSQL 同步仓库和会话解析适配器接入服务启动配置
 - [ ] 接入账号与跨设备同步界面

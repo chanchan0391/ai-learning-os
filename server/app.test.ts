@@ -108,6 +108,7 @@ describe("AI Learning OS API", () => {
       resolvePrincipal: async (request) => request.headers.cookie === "session=old-token"
         ? { userId: "user-1", deviceId: "device-1" } : null,
       sessionLifecycle: {
+        establishFromOidc: async () => { throw new Error("not used"); },
         rotate: async (token) => {
           calls.push(`rotate:${token}`);
           return { token: "new-token", userId: "user-1", deviceId: "device-1", expiresAt: new Date(Date.now() + 60_000).toISOString() };
@@ -142,9 +143,44 @@ describe("AI Learning OS API", () => {
     const baseUrl = await startApi(new DeterministicModelProvider(), {
       allowedSyncOrigins: ["https://learn.example"],
       resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
-      sessionLifecycle: { rotate: async () => null, revoke: async () => true },
+      sessionLifecycle: { establishFromOidc: async () => { throw new Error("not used"); }, rotate: async () => null, revoke: async () => true },
     });
     const response = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: { Origin: "https://evil.example" } });
     expect(response.status).toBe(403);
+  });
+
+  it("completes OIDC login and issues an application session", async () => {
+    const established: unknown[] = [];
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      allowedSyncOrigins: ["https://learn.example"],
+      resolvePrincipal: async () => null,
+      oidcAuthenticator: {
+        transactionCookieName: "oidc_txn",
+        begin: async () => ({ authorizationUrl: "https://identity.example/authorize", transactionCookie: "signed-transaction" }),
+        complete: async () => ({
+          identity: { issuer: "https://identity.example", subject: "subject-1", deviceLabel: "Browser" },
+          returnTo: "/progress",
+        }),
+      },
+      sessionLifecycle: {
+        establishFromOidc: async (identity) => {
+          established.push(identity);
+          return { token: "application-token", userId: "user-1", deviceId: "device-1", expiresAt: new Date(Date.now() + 60_000).toISOString() };
+        },
+        rotate: async () => null,
+        revoke: async () => true,
+      },
+    });
+
+    const login = await fetch(`${baseUrl}/api/auth/login?returnTo=%2Fprogress`, { redirect: "manual" });
+    expect(login.status).toBe(302);
+    expect(login.headers.get("location")).toBe("https://identity.example/authorize");
+    expect(login.headers.get("set-cookie")).toContain("oidc_txn=signed-transaction");
+
+    const callback = await fetch(`${baseUrl}/api/auth/callback?code=code&state=state`, { redirect: "manual" });
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get("location")).toBe("/progress");
+    expect(callback.headers.get("set-cookie")).toContain("ai_learning_os_session=application-token");
+    expect(established).toHaveLength(1);
   });
 });

@@ -18,6 +18,7 @@ export interface IssuedSession {
 }
 
 export interface SessionLifecycle {
+  establishFromOidc(identity: VerifiedOidcIdentity): Promise<IssuedSession>;
   rotate(token: string): Promise<IssuedSession | null>;
   revoke(token: string): Promise<boolean>;
 }

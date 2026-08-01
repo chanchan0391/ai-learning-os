@@ -27,5 +27,25 @@ describe("sync runtime configuration", () => {
     expect(() => readSyncRuntimeConfig({
       DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example/path",
     })).toThrow(/exact HTTPS/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      OIDC_ISSUER: "https://identity.example",
+    })).toThrow(/configured together/);
+  });
+
+  it("loads a complete provider-neutral OIDC configuration", () => {
+    expect(readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      OIDC_ISSUER: "https://identity.example",
+      OIDC_CLIENT_ID: "learning-client",
+      OIDC_REDIRECT_URI: "https://learn.example/api/auth/callback",
+      OIDC_TRANSACTION_SECRET: "a-secure-random-value-with-32-characters",
+    })?.oidc).toEqual({
+      issuer: "https://identity.example",
+      clientId: "learning-client",
+      redirectUri: "https://learn.example/api/auth/callback",
+      transactionSecret: "a-secure-random-value-with-32-characters",
+    });
   });
 });

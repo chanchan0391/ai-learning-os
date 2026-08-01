@@ -7,6 +7,7 @@ import { createPlannerAgent } from "./agents/planner-agent";
 import { createTeacherAgent } from "./agents/teacher-agent";
 import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
 import type { AuthenticatedPrincipalResolver } from "./auth/authenticated-principal";
+import type { OidcAuthenticator } from "./auth/oidc-client";
 import type { SessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { DEFAULT_SESSION_COOKIE_NAME, readSessionToken } from "./auth/postgres-session-resolver";
 import {
@@ -30,12 +31,18 @@ export interface AppOptions {
   allowedSyncOrigins?: readonly string[];
   sessionLifecycle?: SessionLifecycle;
   sessionCookieName?: string;
+  oidcAuthenticator?: OidcAuthenticator;
 }
 
 function sessionCookie(name: string, token?: string, maxAgeSeconds?: number): string {
   const value = token ? `${name}=${token}` : `${name}=`;
   const age = maxAgeSeconds === undefined ? "" : `; Max-Age=${maxAgeSeconds}`;
   return `${value}; Path=/; HttpOnly; Secure; SameSite=Lax${age}`;
+}
+
+function transientCookie(name: string, value?: string): string {
+  const maxAge = value ? "; Max-Age=600" : "; Max-Age=0";
+  return `${name}=${value ?? ""}; Path=/api/auth/callback; HttpOnly; Secure; SameSite=Lax${maxAge}`;
 }
 
 function requireHeader(request: IncomingMessage, name: string): string {
@@ -136,6 +143,35 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           return sendJson(response, 503, { error: "Authentication is not configured" });
         }
         const cookieName = options.sessionCookieName ?? DEFAULT_SESSION_COOKIE_NAME;
+        if (request.method === "GET" && url.pathname === "/api/auth/login") {
+          if (!options.oidcAuthenticator) return sendJson(response, 503, { error: "OIDC login is not configured" });
+          const authorization = await options.oidcAuthenticator.begin(url.searchParams.get("returnTo") ?? undefined);
+          response.writeHead(302, {
+            Location: authorization.authorizationUrl,
+            "Cache-Control": "no-store",
+            "Set-Cookie": transientCookie(options.oidcAuthenticator.transactionCookieName, authorization.transactionCookie),
+          });
+          return response.end();
+        }
+        if (request.method === "GET" && url.pathname === "/api/auth/callback") {
+          if (!options.oidcAuthenticator) return sendJson(response, 503, { error: "OIDC login is not configured" });
+          const callback = await options.oidcAuthenticator.complete(
+            url,
+            request.headers.cookie,
+            typeof request.headers["user-agent"] === "string" ? request.headers["user-agent"] : "Browser",
+          );
+          const issued = await options.sessionLifecycle.establishFromOidc(callback.identity);
+          const maxAge = Math.max(0, Math.floor((Date.parse(issued.expiresAt) - Date.now()) / 1000));
+          response.writeHead(302, {
+            Location: callback.returnTo,
+            "Cache-Control": "no-store",
+            "Set-Cookie": [
+              sessionCookie(cookieName, issued.token, maxAge),
+              transientCookie(options.oidcAuthenticator.transactionCookieName),
+            ],
+          });
+          return response.end();
+        }
         if (request.method === "GET" && url.pathname === "/api/auth/session") {
           const principal = await options.resolvePrincipal(request);
           return principal ? sendJson(response, 200, { authenticated: true, principal })
