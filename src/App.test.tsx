@@ -127,6 +127,24 @@ describe("learning data controls", () => {
     expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).selectedPlanId).toBe(second.plan.id);
   });
 
+  it("downloads the cross-goal weekly review as Markdown", async () => {
+    const user = userEvent.setup();
+    const downloads: string[] = [];
+    const first = initializeLearningState(generateLearningPlan(goal));
+    const second = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统" }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(first));
+    localStorage.setItem(ACTIVE_STATES_KEY, JSON.stringify({ selectedPlanId: first.plan.id, states: [first, second] }));
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:portfolio-review") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) { downloads.push(this.download); });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "导出跨目标周回顾" }));
+
+    expect(downloads).toEqual([expect.stringMatching(/^ai-learning-os-cross-goal-weekly-review-\d{4}-\d{2}-\d{2}\.md$/)]);
+    expect(screen.getByText("已导出跨目标周回顾 Markdown。")).toBeTruthy();
+  });
+
   it("archives a completed goal and returns to goal creation without losing its history", async () => {
     const user = userEvent.setup();
     let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));

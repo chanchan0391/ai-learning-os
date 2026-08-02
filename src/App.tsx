@@ -3,6 +3,7 @@ import {
   activeGoalOverview,
   activeGoalPortfolioOverview,
   crossGoalWeeklyReview,
+  crossGoalWeeklyReviewMarkdownFilename,
   portfolioBudgetStatus,
   addCrossStageReviewTask,
   appendStageNoteEvidence,
@@ -32,6 +33,7 @@ import {
   saveUnderstandingResponse,
   scheduledReviewItems,
   serializeLearningStateExport,
+  serializeCrossGoalWeeklyReviewMarkdown,
   serializeLearningProgressMarkdown,
   serializeStageNoteMarkdown,
   stageNoteMarkdownFilename,
@@ -570,6 +572,21 @@ export function App() {
     setStorageNoticeIsError(false);
   }
 
+  function exportCrossGoalWeeklyReview() {
+    const now = new Date();
+    const blob = new Blob([serializeCrossGoalWeeklyReviewMarkdown(activeGoals, now)], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = crossGoalWeeklyReviewMarkdownFilename(now);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setStorageNotice("已导出跨目标周回顾 Markdown。");
+    setStorageNoticeIsError(false);
+  }
+
   async function selectImportFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -868,7 +885,7 @@ export function App() {
     <div className="portfolio-weekly-review" role="region" aria-label="跨目标周回顾">
       <div className="portfolio-review-heading">
         <div><strong>跨目标周回顾</strong><span>{portfolioWeeklyReview.windowStart} 至 {portfolioWeeklyReview.windowEnd}</span></div>
-        <p>{portfolioWeeklyReview.headline} 共投入 {portfolioWeeklyReview.totalMinutes} 分钟，完成 {portfolioWeeklyReview.completedDays} 个学习日。</p>
+        <div className="portfolio-review-summary"><p>{portfolioWeeklyReview.headline} 共投入 {portfolioWeeklyReview.totalMinutes} 分钟，完成 {portfolioWeeklyReview.completedDays} 个学习日。</p><button className="text-button" type="button" onClick={exportCrossGoalWeeklyReview}>导出跨目标周回顾</button></div>
       </div>
       <div className="portfolio-review-goals">
         {portfolioWeeklyReview.goals.map((item) => (

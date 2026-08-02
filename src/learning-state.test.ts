@@ -12,6 +12,7 @@ import {
   createLearningStateExport,
   crossStageMisconceptionInsights,
   crossGoalWeeklyReview,
+  crossGoalWeeklyReviewMarkdownFilename,
   crossStageReviewTaskId,
   deleteStageNote,
   detectLearningInterruption,
@@ -34,6 +35,7 @@ import {
   saveUnderstandingResponse,
   scheduledReviewItems,
   serializeLearningStateExport,
+  serializeCrossGoalWeeklyReviewMarkdown,
   serializeLearningProgressMarkdown,
   serializeStageNoteMarkdown,
   stageNoteMarkdownFilename,
@@ -166,6 +168,15 @@ describe("multi-day learning state", () => {
       expect.objectContaining({ subject: "分布式系统", totalMinutes: 60, allocationPercent: 50, averageEvaluationScore: 12, evaluationScoreDelta: 4, difficultDaysDelta: -1, riskTrend: "improving" }),
     ]);
     expect(review.focusReason).toContain("偏难日比前一周增加");
+
+    const markdown = serializeCrossGoalWeeklyReviewMarkdown([agent, systems], new Date("2026-08-02T20:00:00.000Z"));
+    expect(crossGoalWeeklyReviewMarkdownFilename(new Date("2026-08-02T20:00:00.000Z"))).toBe("ai-learning-os-cross-goal-weekly-review-2026-08-02.md");
+    expect(markdown).toContain("> 回顾周期：2026-07-27 至 2026-08-02");
+    expect(markdown).toContain("- 总投入：120 分钟");
+    expect(markdown).toContain("### AI Agent 工程");
+    expect(markdown).toContain("- 成果：8/16（较前一周 -2）");
+    expect(markdown).toContain("- 风险：1 个偏难日（较前一周 +1）；");
+    expect(markdown).toContain(review.focusReason);
   });
 
   it("detects missed learning days without treating a one-day gap as an interruption", () => {

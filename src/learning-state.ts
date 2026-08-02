@@ -960,6 +960,58 @@ export function crossGoalWeeklyReview(states: LearningState[], now = new Date())
   };
 }
 
+export function crossGoalWeeklyReviewMarkdownFilename(now = new Date()): string {
+  return `ai-learning-os-cross-goal-weekly-review-${dateKey(now)}.md`;
+}
+
+/** Exports the same derived portfolio review shown in the UI without persisting a second analytics copy. */
+export function serializeCrossGoalWeeklyReviewMarkdown(states: LearningState[], now = new Date()): string {
+  const review = crossGoalWeeklyReview(states, now);
+  const lines = [
+    "# AI Learning OS 跨目标周回顾",
+    "",
+    `> 回顾周期：${review.windowStart} 至 ${review.windowEnd}`,
+    `> 导出时间：${now.toISOString()}`,
+    "",
+    "## 组合摘要",
+    "",
+    review.headline,
+    "",
+    `- 进行中目标：${review.goals.length}`,
+    `- 完成学习日：${review.completedDays}`,
+    `- 总投入：${review.totalMinutes} 分钟`,
+    `- 成果评估：${review.evaluationCount} 次`,
+    "",
+    "## 各目标证据",
+    "",
+  ];
+
+  if (review.goals.length === 0) {
+    lines.push("暂无进行中的学习目标。", "");
+  } else {
+    for (const goal of review.goals) {
+      const outcome = goal.averageEvaluationScore === null
+        ? "暂无评分"
+        : `${goal.averageEvaluationScore}/16${goal.evaluationScoreDelta === null ? "（基线）" : `（较前一周 ${goal.evaluationScoreDelta >= 0 ? "+" : ""}${goal.evaluationScoreDelta}）`}`;
+      const risk = goal.difficultDaysDelta === null
+        ? `${goal.difficultDays} 个偏难日（基线）`
+        : `${goal.difficultDays} 个偏难日（较前一周 ${goal.difficultDaysDelta >= 0 ? "+" : ""}${goal.difficultDaysDelta}）`;
+      lines.push(
+        `### ${goal.subject.replace(/[\r\n]+/g, " ").trim()}`,
+        "",
+        `- 投入：${goal.totalMinutes} 分钟（组合占比 ${goal.allocationPercent}%）`,
+        `- 完成学习日：${goal.completedDays}`,
+        `- 成果：${outcome}`,
+        `- 风险：${risk}；${goal.currentRiskLabel}`,
+        "",
+      );
+    }
+  }
+
+  lines.push("## 本周优先项", "", review.focusReason, "");
+  return lines.join("\n");
+}
+
 export function toggleCurrentTask(state: LearningState, taskId: string): LearningState {
   if (getCurrentRecord(state).status === "completed") return state;
   return {
