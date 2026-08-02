@@ -64,6 +64,9 @@ describe("learning data controls", () => {
 
     expect(screen.getByRole("heading", { name: goal.subject, level: 1 })).toBeTruthy();
     expect(screen.getByText("2 个目标 · 今日 0/8 项 · 剩余 120 分钟 · 0 个需关注")).toBeTruthy();
+    const portfolioReview = screen.getByRole("region", { name: "跨目标周回顾" });
+    expect(within(portfolioReview).getByText("本周跨目标证据尚未形成。", { exact: false })).toBeTruthy();
+    expect(within(portfolioReview).getByText("完成任一目标的首个学习日后，这里会给出投入分配与风险建议。")).toBeTruthy();
     const firstSummary = screen.getByLabelText(`${goal.subject}目标摘要`);
     expect(within(firstSummary).getByText("0/4 项 · 剩余 60 分钟", { exact: false })).toBeTruthy();
     expect(within(firstSummary).getByText("当前节奏稳定")).toBeTruthy();
@@ -104,6 +107,24 @@ describe("learning data controls", () => {
 
     await user.click(screen.getByRole("button", { name: "清除" }));
     expect(localStorage.getItem(DAILY_BUDGET_KEY)).toBeNull();
+  });
+
+  it("opens the goal prioritized by the cross-goal weekly review", async () => {
+    const user = userEvent.setup();
+    let first = initializeLearningState(generateLearningPlan(goal, new Date("2026-08-02T08:00:00.000Z")));
+    for (const task of getCurrentRecord(first).tasks) first = toggleCurrentTask(first, task.id);
+    first = completeCurrentDay(first, { difficulty: "just-right", reflection: "完成闭环" }, new Date("2026-08-02T10:00:00.000Z"));
+    const second = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统" }, new Date("2026-08-02T08:00:00.000Z")));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(first));
+    localStorage.setItem(ACTIVE_STATES_KEY, JSON.stringify({ selectedPlanId: first.plan.id, states: [first, second] }));
+    render(<App />);
+
+    const review = screen.getByRole("region", { name: "跨目标周回顾" });
+    expect(within(review).getByText("“分布式系统”本周尚未投入，先完成一次最小学习闭环。")).toBeTruthy();
+    await user.click(within(review).getByRole("button", { name: "打开本周优先目标" }));
+
+    expect(screen.getByRole("heading", { name: "分布式系统", level: 1 })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).selectedPlanId).toBe(second.plan.id);
   });
 
   it("archives a completed goal and returns to goal creation without losing its history", async () => {

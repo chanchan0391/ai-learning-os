@@ -11,6 +11,7 @@ import {
   createStageNote,
   createLearningStateExport,
   crossStageMisconceptionInsights,
+  crossGoalWeeklyReview,
   crossStageReviewTaskId,
   deleteStageNote,
   detectLearningInterruption,
@@ -120,6 +121,51 @@ describe("multi-day learning state", () => {
       availableMinutes: 15,
       status: "within-budget",
     });
+  });
+
+  it("compares weekly allocation, outcomes, and risk across active goals", () => {
+    const completeOn = (subject: string, dates: string[], difficulties: ("just-right" | "too-hard")[], scores: number[]) => {
+      let state = initializeLearningState(generateLearningPlan({ ...goal, subject }), new Date(`${dates[0]}T08:00:00.000Z`));
+      dates.forEach((date, index) => {
+        for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        if (scores[index] !== undefined) {
+          const base = Math.floor(scores[index] / 4);
+          const remainder = scores[index] % 4;
+          const dimensionScores = [0, 1, 2, 3].map((dimension) => base + (dimension < remainder ? 1 : 0));
+          state = saveEvaluation(state, practice.id, "成果", {
+            rubric: [
+              { dimension: "understanding", score: dimensionScores[0], evidence: "证据", feedback: "反馈" },
+              { dimension: "application", score: dimensionScores[1], evidence: "证据", feedback: "反馈" },
+              { dimension: "evidence", score: dimensionScores[2], evidence: "证据", feedback: "反馈" },
+              { dimension: "reflection", score: dimensionScores[3], evidence: "证据", feedback: "反馈" },
+            ],
+            totalScore: scores[index], masteryLevel: "developing", misconceptions: [], nextAction: "补充证据",
+          });
+        }
+        state = completeCurrentDay(state, { difficulty: difficulties[index], reflection: "复盘" }, new Date(`${date}T18:00:00.000Z`));
+      });
+      return state;
+    };
+    const agent = completeOn("AI Agent 工程", ["2026-07-24", "2026-08-01"], ["just-right", "too-hard"], [10, 8]);
+    const systems = completeOn("分布式系统", ["2026-07-25", "2026-08-02"], ["too-hard", "just-right"], [8, 12]);
+
+    const review = crossGoalWeeklyReview([agent, systems], new Date("2026-08-02T20:00:00.000Z"));
+
+    expect(review).toMatchObject({
+      windowStart: "2026-07-27",
+      windowEnd: "2026-08-02",
+      totalMinutes: 120,
+      completedDays: 2,
+      evaluationCount: 2,
+      headline: "本周有目标的学习风险上升。",
+      focusPlanId: agent.plan.id,
+    });
+    expect(review.goals).toEqual([
+      expect.objectContaining({ subject: "AI Agent 工程", totalMinutes: 60, allocationPercent: 50, averageEvaluationScore: 8, evaluationScoreDelta: -2, difficultDaysDelta: 1, riskTrend: "needs-attention" }),
+      expect.objectContaining({ subject: "分布式系统", totalMinutes: 60, allocationPercent: 50, averageEvaluationScore: 12, evaluationScoreDelta: 4, difficultDaysDelta: -1, riskTrend: "improving" }),
+    ]);
+    expect(review.focusReason).toContain("偏难日比前一周增加");
   });
 
   it("detects missed learning days without treating a one-day gap as an interruption", () => {

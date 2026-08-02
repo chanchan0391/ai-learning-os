@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import {
   activeGoalOverview,
   activeGoalPortfolioOverview,
+  crossGoalWeeklyReview,
   portfolioBudgetStatus,
   addCrossStageReviewTask,
   appendStageNoteEvidence,
@@ -143,6 +144,7 @@ export function App() {
   ));
   const plan = learningState?.plan ?? null;
   const activePortfolio = useMemo(() => activeGoalPortfolioOverview(activeGoals), [activeGoals]);
+  const portfolioWeeklyReview = useMemo(() => crossGoalWeeklyReview(activeGoals), [activeGoals]);
   const budgetStatus = useMemo(() => dailyBudgetMinutes === null ? null : portfolioBudgetStatus(activePortfolio, dailyBudgetMinutes), [activePortfolio, dailyBudgetMinutes]);
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
@@ -862,6 +864,27 @@ export function App() {
     </div>
   );
 
+  const portfolioWeeklyReviewPanel = activeGoals.length > 1 && (
+    <div className="portfolio-weekly-review" role="region" aria-label="跨目标周回顾">
+      <div className="portfolio-review-heading">
+        <div><strong>跨目标周回顾</strong><span>{portfolioWeeklyReview.windowStart} 至 {portfolioWeeklyReview.windowEnd}</span></div>
+        <p>{portfolioWeeklyReview.headline} 共投入 {portfolioWeeklyReview.totalMinutes} 分钟，完成 {portfolioWeeklyReview.completedDays} 个学习日。</p>
+      </div>
+      <div className="portfolio-review-goals">
+        {portfolioWeeklyReview.goals.map((item) => (
+          <article className={item.planId === portfolioWeeklyReview.focusPlanId ? "focus" : ""} key={item.planId}>
+            <div><strong>{item.subject}</strong><span>{item.totalMinutes} 分钟 · 占本周 {item.allocationPercent}% · {item.completedDays} 个完成日</span></div>
+            <ul aria-label={`${item.subject}周度变化`}>
+              <li>成果 {item.averageEvaluationScore === null ? "暂无评分" : `${item.averageEvaluationScore}/16${item.evaluationScoreDelta === null ? " · 基线" : ` · ${item.evaluationScoreDelta >= 0 ? "+" : ""}${item.evaluationScoreDelta}`}`}</li>
+              <li className={`risk-${item.riskTrend}`}>风险 {item.difficultDaysDelta === null ? `${item.difficultDays} 个偏难日 · 基线` : `${item.difficultDaysDelta >= 0 ? "+" : ""}${item.difficultDaysDelta} 个偏难日`} · {item.currentRiskLabel}</li>
+            </ul>
+          </article>
+        ))}
+      </div>
+      <div className="portfolio-review-focus"><p><strong>本周优先项</strong>{portfolioWeeklyReview.focusReason}</p>{portfolioWeeklyReview.focusPlanId && portfolioWeeklyReview.focusPlanId !== plan?.id && <button className="text-button" type="button" onClick={() => switchActiveGoal(portfolioWeeklyReview.focusPlanId!)}>打开本周优先目标</button>}</div>
+    </div>
+  );
+
   const accountControls = authState.status === "signed-in" ? (
     <div className="account-controls" aria-label="账号与同步">
       <span className="sync-status">已登录</span>
@@ -1039,6 +1062,7 @@ export function App() {
               <p className="goal-portfolio-summary">{activePortfolio.activeGoals} 个目标 · 今日 {activePortfolio.completedTasks}/{activePortfolio.totalTasks} 项 · 剩余 {activePortfolio.remainingMinutes} 分钟 · {activePortfolio.goalsNeedingAttention} 个需关注</p>
             </div>
             {portfolioBudgetControl}
+            {portfolioWeeklyReviewPanel}
             <div className="active-goal-list">
               {activeGoals.map((state) => {
                 const overview = activeGoalOverview(state);
@@ -1136,6 +1160,7 @@ export function App() {
           <button className="secondary-action" onClick={beginParallelGoal}>新建并行目标</button>
         </div>
         {portfolioBudgetControl}
+        {portfolioWeeklyReviewPanel}
         <div className="active-goal-list">
           {activeGoals.map((state) => {
             const overview = activeGoalOverview(state);

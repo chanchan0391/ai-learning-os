@@ -748,6 +748,32 @@ export interface PortfolioBudgetStatus {
   status: "over-budget" | "within-budget";
 }
 
+export interface CrossGoalWeeklyItem {
+  planId: string;
+  subject: string;
+  completedDays: number;
+  totalMinutes: number;
+  allocationPercent: number;
+  averageEvaluationScore: number | null;
+  evaluationScoreDelta: number | null;
+  difficultDays: number;
+  difficultDaysDelta: number | null;
+  riskTrend: "baseline" | "improving" | "steady" | "needs-attention";
+  currentRiskLabel: string;
+}
+
+export interface CrossGoalWeeklyReview {
+  windowStart: string;
+  windowEnd: string;
+  totalMinutes: number;
+  completedDays: number;
+  evaluationCount: number;
+  headline: string;
+  focusPlanId: string | null;
+  focusReason: string;
+  goals: CrossGoalWeeklyItem[];
+}
+
 /** Derives the compact, evidence-based summary used by the cross-goal home. */
 export function activeGoalOverview(state: LearningState, now = new Date()): ActiveGoalOverview {
   const current = getCurrentRecord(state);
@@ -824,6 +850,113 @@ export function portfolioBudgetStatus(overview: ActiveGoalPortfolioOverview, bud
     overloadedBy,
     availableMinutes: Math.max(0, budgetMinutes - overview.scheduledMinutes),
     status: overloadedBy > 0 ? "over-budget" : "within-budget",
+  };
+}
+
+function shiftDateKey(value: Date, days: number): string {
+  const shifted = new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate() + days));
+  return dateKey(shifted);
+}
+
+function recordCompletionDate(record: DailyLearningRecord): string {
+  return record.completedAt?.slice(0, 10) ?? record.date;
+}
+
+/** Compares evidence from the current seven calendar days with the preceding seven across all active goals. */
+export function crossGoalWeeklyReview(states: LearningState[], now = new Date()): CrossGoalWeeklyReview {
+  const windowEnd = shiftDateKey(now, 0);
+  const windowStart = shiftDateKey(now, -6);
+  const previousStart = shiftDateKey(now, -13);
+  const previousEnd = shiftDateKey(now, -7);
+  const inWindow = (record: DailyLearningRecord, start: string, end: string) => {
+    const completedOn = recordCompletionDate(record);
+    return record.status === "completed" && completedOn >= start && completedOn <= end;
+  };
+  const summarize = (records: DailyLearningRecord[]) => {
+    const scores = records.flatMap((record) => Object.values(record.artifacts)
+      .flatMap((artifact) => artifact.evaluation ? [artifact.evaluation.totalScore] : []));
+    return {
+      completedDays: records.length,
+      totalMinutes: records.reduce((sum, record) => sum + record.tasks.reduce((minutes, task) => minutes + task.minutes, 0), 0),
+      evaluationCount: scores.length,
+      averageEvaluationScore: roundedAverage(scores),
+      difficultDays: records.filter((record) => record.feedback?.difficulty === "too-hard").length,
+    };
+  };
+  const windows = states.map((state) => ({
+    state,
+    current: summarize(state.days.filter((record) => inWindow(record, windowStart, windowEnd))),
+    previous: summarize(state.days.filter((record) => inWindow(record, previousStart, previousEnd))),
+  }));
+  const totalMinutes = windows.reduce((sum, item) => sum + item.current.totalMinutes, 0);
+  const goals = windows.map(({ state, current, previous }): CrossGoalWeeklyItem => {
+    const hasPreviousEvidence = previous.completedDays > 0;
+    const difficultDaysDelta = hasPreviousEvidence ? current.difficultDays - previous.difficultDays : null;
+    const evaluationScoreDelta = current.averageEvaluationScore === null || previous.averageEvaluationScore === null
+      ? null
+      : Math.round((current.averageEvaluationScore - previous.averageEvaluationScore) * 10) / 10;
+    const riskTrend = difficultDaysDelta === null
+      ? "baseline"
+      : difficultDaysDelta > 0
+        ? "needs-attention"
+        : difficultDaysDelta < 0
+          ? "improving"
+          : "steady";
+    return {
+      planId: state.plan.id,
+      subject: state.plan.goal.subject,
+      completedDays: current.completedDays,
+      totalMinutes: current.totalMinutes,
+      allocationPercent: totalMinutes === 0 ? 0 : Math.round(current.totalMinutes / totalMinutes * 100),
+      averageEvaluationScore: current.averageEvaluationScore,
+      evaluationScoreDelta,
+      difficultDays: current.difficultDays,
+      difficultDaysDelta,
+      riskTrend,
+      currentRiskLabel: activeGoalOverview(state, now).riskLabel,
+    };
+  });
+  const attention = windows.map(({ state }, index) => {
+    const goal = goals[index];
+    const currentRisk = activeGoalOverview(state, now).riskLevel;
+    const priority = (goal.riskTrend === "needs-attention" ? 4 : 0)
+      + (currentRisk === "attention" ? 3 : currentRisk === "review" ? 1 : 0)
+      + (goal.averageEvaluationScore !== null && goal.averageEvaluationScore < 10 ? 2 : 0)
+      + (goal.completedDays === 0 ? 1 : 0);
+    return { goal, currentRisk, priority };
+  }).sort((left, right) => right.priority - left.priority || left.goal.allocationPercent - right.goal.allocationPercent);
+  const focus = attention[0];
+  const hasEvidence = goals.some((goal) => goal.completedDays > 0);
+  const focusPlanId = states.length > 0 && focus && (focus.priority > 0 || hasEvidence) ? focus.goal.planId : null;
+  const focusReason = !hasEvidence
+    ? "完成任一目标的首个学习日后，这里会给出投入分配与风险建议。"
+    : focus?.goal.riskTrend === "needs-attention"
+      ? `“${focus.goal.subject}”的偏难日比前一周增加，优先缩小任务范围。`
+      : focus?.currentRisk === "attention"
+        ? `“${focus.goal.subject}”当前需要恢复节奏，优先完成最小学习闭环。`
+        : focus?.goal.completedDays === 0
+          ? `“${focus.goal.subject}”本周尚未投入，先完成一次最小学习闭环。`
+        : focus?.goal.averageEvaluationScore !== null && focus.goal.averageEvaluationScore < 10
+          ? `“${focus.goal.subject}”的成果证据较弱，优先执行该目标的评估反馈。`
+          : `继续保持当前分配，并优先检查“${focus?.goal.subject}”的下一份成果证据。`;
+  const headline = !hasEvidence
+    ? "本周跨目标证据尚未形成。"
+    : goals.some((goal) => goal.riskTrend === "needs-attention")
+      ? "本周有目标的学习风险上升。"
+      : attention.some((item) => item.currentRisk === "attention")
+        ? "本周投入已有记录，但有目标需要恢复节奏。"
+        : "本周投入与成果正在形成可比较的组合视图。";
+
+  return {
+    windowStart,
+    windowEnd,
+    totalMinutes,
+    completedDays: windows.reduce((sum, item) => sum + item.current.completedDays, 0),
+    evaluationCount: windows.reduce((sum, item) => sum + item.current.evaluationCount, 0),
+    headline,
+    focusPlanId,
+    focusReason,
+    goals,
   };
 }
 
