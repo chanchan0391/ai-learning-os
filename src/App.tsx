@@ -37,7 +37,7 @@ import {
   weeklyLearningReview,
   weeklyLearningTrend,
 } from "./learning-state";
-import { BrowserLearningStateRepository } from "./learning-storage";
+import { BrowserLearningStateRepository, type ArchivedLearningState } from "./learning-storage";
 import { completionRate, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
@@ -82,6 +82,7 @@ const INITIAL_GOAL: LearningGoal = {
 export function App() {
   const [initialLoad] = useState(() => learningStateRepository.load());
   const [learningState, setLearningState] = useState<LearningState | null>(initialLoad.state);
+  const [archivedGoals, setArchivedGoals] = useState<ArchivedLearningState[]>(() => learningStateRepository.loadArchived());
   const [goal, setGoal] = useState<LearningGoal>(INITIAL_GOAL);
   const [errors, setErrors] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -95,6 +96,7 @@ export function App() {
   const [submissionDrafts, setSubmissionDrafts] = useState<Record<string, string>>({});
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, string>>({});
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+  const [archiveConfirmationOpen, setArchiveConfirmationOpen] = useState(false);
   const [accountDeleteConfirmationOpen, setAccountDeleteConfirmationOpen] = useState(false);
   const [logoutAllConfirmationOpen, setLogoutAllConfirmationOpen] = useState(false);
   const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
@@ -536,6 +538,7 @@ export function App() {
 
   function deleteLearningData() {
     saveState(null, false);
+    setArchivedGoals([]);
     syncClient.clearMetadata();
     autoSyncQueue.clear();
     if (authStateRef.current.status === "signed-in") autoSyncQueue.start();
@@ -543,6 +546,40 @@ export function App() {
     setAgentError("");
     setErrors([]);
     setDeleteConfirmationOpen(false);
+  }
+
+  function archiveCompletedGoal() {
+    if (!learningState) return;
+    try {
+      const archived = learningStateRepository.archiveCompleted(learningState);
+      learningStateRef.current = null;
+      setLearningState(null);
+      setArchivedGoals(archived);
+      syncClient.clearMetadata();
+      autoSyncQueue.clear();
+      setArchiveConfirmationOpen(false);
+      setGoal(INITIAL_GOAL);
+      setStorageNotice(`“${learningState.plan.goal.subject}”已归档，可以创建下一个学习目标。`);
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法归档学习目标");
+      setStorageNoticeIsError(true);
+    }
+  }
+
+  function restoreArchivedGoal(planId: string) {
+    try {
+      const restored = learningStateRepository.restoreArchived(planId);
+      learningStateRef.current = restored;
+      setLearningState(restored);
+      setGoal(restored.plan.goal);
+      setArchivedGoals(learningStateRepository.loadArchived());
+      setStorageNotice(`已恢复“${restored.plan.goal.subject}”的完整学习记录。`);
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法恢复已归档目标");
+      setStorageNoticeIsError(true);
+    }
   }
 
   async function performSync() {
@@ -665,6 +702,7 @@ export function App() {
       await syncClient.deleteAccount();
       autoSyncQueue.stop();
       saveState(null, false);
+      setArchivedGoals([]);
       syncClient.clearMetadata();
       autoSyncQueue.clear();
       authStateRef.current = { status: "signed-out" };
@@ -859,6 +897,20 @@ export function App() {
             <p className="privacy">进度保存在当前浏览器；启用实时模型后，学习内容会发送给所选模型服务</p>
           </form>
         </section>
+        {archivedGoals.length > 0 && (
+          <section className="panel archived-goals" aria-labelledby="archived-goals-title">
+            <div><p className="eyebrow">本地学习档案</p><h2 id="archived-goals-title">已完成目标</h2></div>
+            <div className="archived-goal-list">
+              {archivedGoals.map((entry) => (
+                <article key={entry.state.plan.id}>
+                  <div><strong>{entry.state.plan.goal.subject}</strong><span>{entry.state.plan.goal.targetOutcome}</span><small>{entry.state.days.length} 个完成日 · 归档于 {new Date(entry.archivedAt).toLocaleDateString("zh-CN")}</small></div>
+                  <button className="secondary-action" onClick={() => restoreArchivedGoal(entry.state.plan.id)}>恢复查看</button>
+                </article>
+              ))}
+            </div>
+            <p className="archive-boundary">归档记录只保存在当前浏览器；跨设备多目标同步将在下一阶段接入。</p>
+          </section>
+        )}
       </main>
     );
   }
@@ -871,6 +923,9 @@ export function App() {
           {accountControls}
           {importControl}
           <button className="text-button" onClick={exportLearningData}>导出学习记录</button>
+          {completedDayCount(learningState) === plan.goal.durationWeeks * 7 && (authState.status === "signed-out" || authState.status === "local-only") && (
+            <button className="text-button" onClick={() => setArchiveConfirmationOpen(true)}>归档已完成目标</button>
+          )}
           <button className="text-button danger-text" onClick={() => setDeleteConfirmationOpen(true)}>删除本地数据</button>
         </div>
       </header>
@@ -881,6 +936,21 @@ export function App() {
       {logoutAllDialog}
       {deviceDialog}
       {accountDeleteDialog}
+      {archiveConfirmationOpen && (
+        <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setArchiveConfirmationOpen(false);
+        }}>
+          <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="archive-dialog-title" aria-describedby="archive-dialog-description">
+            <p className="eyebrow">完成目标 · 保留全部证据</p>
+            <h2 id="archive-dialog-title">归档“{plan.goal.subject}”？</h2>
+            <p id="archive-dialog-description">完整计划、每日记录、成果和评估会保存在当前浏览器的归档中。归档后可立即创建新目标，也可以稍后恢复查看。</p>
+            <div className="dialog-actions">
+              <button className="secondary-action" autoFocus onClick={() => setArchiveConfirmationOpen(false)}>取消</button>
+              <button className="primary-dialog-action" onClick={archiveCompletedGoal}>确认归档</button>
+            </div>
+          </section>
+        </div>
+      )}
       {deleteConfirmationOpen && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setDeleteConfirmationOpen(false);
@@ -888,7 +958,7 @@ export function App() {
           <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-dialog-title" aria-describedby="delete-dialog-description">
             <p className="eyebrow">不可撤销操作</p>
             <h2 id="delete-dialog-title">删除当前浏览器中的学习数据？</h2>
-            <p id="delete-dialog-description">学习计划、任务历史、教学回答、成果和评估都会被永久删除。需要保留副本时，请先导出学习记录。</p>
+            <p id="delete-dialog-description">当前计划、已归档目标、任务历史、教学回答、成果和评估都会被永久删除。需要保留副本时，请先导出学习记录。</p>
             <div className="dialog-actions">
               <button className="secondary-action" autoFocus onClick={() => setDeleteConfirmationOpen(false)}>取消</button>
               <button className="danger-action" onClick={deleteLearningData}>确认删除</button>

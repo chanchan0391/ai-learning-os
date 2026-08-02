@@ -14,6 +14,8 @@ React 页面通过 `LearningStateRepository` 读写学习状态，默认实现�
 - 对损坏数据安全重置；
 - 清除所有受支持的本地版本。
 
+仓库还用独立的 `ai-learning-os-archived-states-v1` 集合保存已完成目标的完整快照。归档前必须验证计划的全部学习日已经完成；恢复时再次走版本 3 领域校验，并从归档集合移回当前状态键。损坏的当前状态不会连带删除仍可验证的归档。归档目前是明确的本地能力，不进入仍按单活跃计划工作的同步客户端。
+
 这让界面不依赖学习状态的 `localStorage` 键名。`BrowserSyncClient` 另外保存不含学习正文的 revision 和内容指纹，用来判断本地更改、远端更改和两端冲突；`AutoSyncQueue` 只保存是否仍有待同步更改和最近成功时间，不复制学习正文。同步元数据损坏时可以安全丢弃，不影响本地学习记录。
 
 服务端包含不对外暴露的 `InMemorySyncStore` 领域基线，以及实现同一语义的 `PostgresSyncStore`。PostgreSQL 版本通过事务、用户行锁、复合外键和持久幂等记录覆盖并发写入；迁移位于 `server/sync/migrations/`，可通过 `npm run db:migrate` 执行。调用方必须先从可信会话解析 `userId` 和 `deviceId`，再传入存储层；存储层不会接受客户端提交的所有者字段。当前实现覆盖：

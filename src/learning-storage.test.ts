@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { initializeLearningState } from "./learning-state";
+import { completeCurrentDay, getCurrentRecord, initializeLearningState, toggleCurrentTask } from "./learning-state";
 import {
   BrowserLearningStateRepository,
+  ARCHIVED_LEARNING_STATES_KEY,
   CURRENT_LEARNING_STATE_KEY,
   LEGACY_LEARNING_PLAN_KEY,
   PREVIOUS_LEARNING_STATE_KEY,
@@ -69,12 +70,39 @@ describe("browser learning-state repository", () => {
 
   it("removes every supported local version", () => {
     const repository = new BrowserLearningStateRepository(localStorage);
-    for (const key of [CURRENT_LEARNING_STATE_KEY, PREVIOUS_LEARNING_STATE_KEY, LEGACY_LEARNING_PLAN_KEY]) {
+    for (const key of [CURRENT_LEARNING_STATE_KEY, PREVIOUS_LEARNING_STATE_KEY, LEGACY_LEARNING_PLAN_KEY, ARCHIVED_LEARNING_STATES_KEY]) {
       localStorage.setItem(key, "data");
     }
 
     repository.clear();
 
     expect(localStorage.length).toBe(0);
+  });
+
+  it("archives a completed goal as a full snapshot and can restore it", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let index = 0; index < 7; index += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: `完成第 ${index + 1} 天` }, new Date(`2026-08-0${index + 1}T10:00:00.000Z`));
+    }
+    repository.save(state);
+
+    const archived = repository.archiveCompleted(state, new Date("2026-08-08T10:00:00.000Z"));
+
+    expect(repository.load().state).toBeNull();
+    expect(archived).toEqual([{ archivedAt: "2026-08-08T10:00:00.000Z", state }]);
+    expect(repository.loadArchived()).toEqual(archived);
+    expect(repository.restoreArchived(state.plan.id)).toEqual(state);
+    expect(repository.load().state).toEqual(state);
+    expect(repository.loadArchived()).toEqual([]);
+  });
+
+  it("refuses to archive an unfinished goal", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const state = initializeLearningState(generateLearningPlan(goal));
+
+    expect(() => repository.archiveCompleted(state)).toThrow("只有完成全部计划学习日后才能归档目标");
+    expect(repository.loadArchived()).toEqual([]);
   });
 });

@@ -17,6 +17,7 @@ import {
 import { generateLearningPlan } from "./planner";
 
 const STORAGE_KEY = "ai-learning-os-state-v3";
+const ARCHIVE_KEY = "ai-learning-os-archived-states-v1";
 const goal = {
   subject: "AI Agent 工程",
   currentLevel: "Java 高级工程师",
@@ -49,6 +50,30 @@ describe("learning data controls", () => {
     expect(screen.getByRole("heading", { name: goal.subject })).toBeTruthy();
     const result = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(result.violations).toEqual([]);
+  });
+
+  it("archives a completed goal and returns to goal creation without losing its history", async () => {
+    const user = userEvent.setup();
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let index = 0; index < 7; index += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: `完成第 ${index + 1} 天` }, new Date(`2026-08-0${index + 1}T10:00:00.000Z`));
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "归档已完成目标" }));
+    await user.click(screen.getByRole("button", { name: "确认归档" }));
+
+    expect(screen.getByRole("heading", { name: "已完成目标" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /生成我的学习路线/ })).toBeTruthy();
+    expect(screen.getByText("7 个完成日", { exact: false })).toBeTruthy();
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(JSON.parse(localStorage.getItem(ARCHIVE_KEY)!)[0].state.plan.id).toBe(state.plan.id);
+
+    await user.click(screen.getByRole("button", { name: "恢复查看" }));
+    expect(screen.getByRole("heading", { name: goal.subject })).toBeTruthy();
+    expect(localStorage.getItem(ARCHIVE_KEY)).toBeNull();
   });
 
   it("shows a weekly evidence review with a concrete next action", () => {
