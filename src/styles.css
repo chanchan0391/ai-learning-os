@@ -236,6 +236,18 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .retrospective-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
 .retrospective-form label { margin: 0; }
 .retrospective-form .note-actions { grid-column: 1 / -1; }
+.stage-mastery { display: grid; gap: 9px; margin-top: 13px; padding: 12px; background: #f2f5f1; border-left: 3px solid #9aa69f; border-radius: 8px; }
+.stage-mastery.ready { border-left-color: #237a5b; }
+.stage-mastery.developing { border-left-color: #c9633f; }
+.stage-mastery > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; }
+.stage-mastery > div strong { color: #33463b; font-size: 11px; }
+.stage-mastery > div span, .stage-mastery p { color: #617069; font-size: 10px; line-height: 1.5; }
+.stage-mastery ul { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.stage-mastery li { padding: 4px 7px; color: #68736d; background: #e3e7e3; border-radius: 999px; font-size: 9px; }
+.stage-mastery li.demonstrated { color: #1c674c; background: #dfeee5; }
+.stage-mastery li.developing { color: #963f2f; background: #f8e7e2; }
+.stage-mastery p { display: flex; gap: 6px; margin: 0; }
+.stage-mastery p b { flex: 0 0 auto; color: #526058; }
 .progress-ring { --progress: 0deg; width: 106px; height: 106px; display: flex; flex-direction: column; justify-content: center; align-items: center; border-radius: 50%; background: radial-gradient(circle closest-side, #f2f0e9 80%, transparent 81%), conic-gradient(#c9633f var(--progress), #d9ddd7 0); }
 .progress-ring strong { font-size: 23px; }
 .progress-ring span { color: #7c8580; font-size: 10px; }

@@ -62,6 +62,25 @@ export interface CrossStageMisconceptionInsight {
   reviewPrompt: string;
 }
 
+export interface StageMasteryDimension {
+  dimension: "understanding" | "application" | "evidence" | "reflection";
+  label: string;
+  averageScore: number | null;
+  evidenceCount: number;
+  status: "missing" | "developing" | "demonstrated";
+}
+
+export interface StageMasteryReport {
+  stageId: string;
+  completedDays: number;
+  evaluationCount: number;
+  averageTotalScore: number | null;
+  status: "insufficient-evidence" | "developing" | "ready";
+  headline: string;
+  nextAction: string;
+  dimensions: StageMasteryDimension[];
+}
+
 export function crossStageReviewTaskId(day: number, misconception: string): string {
   const normalized = normalizedMisconception(misconception);
   let hash = 2166136261;
@@ -596,6 +615,7 @@ export function serializeLearningProgressMarkdown(state: LearningState, now = ne
     const plannedDays = (stage.endWeek - stage.startWeek + 1) * 7;
     const note = (state.plan.notes ?? []).find((item) => item.stageId === stage.id);
     const retrospective = (state.plan.retrospectives ?? []).find((item) => item.stageId === stage.id);
+    const mastery = completed.some((record) => record.day === stage.endWeek * 7) ? stageMasteryReport(state, stage.id) : null;
     return [
       `### ${stage.title}`,
       "",
@@ -604,6 +624,10 @@ export function serializeLearningProgressMarkdown(state: LearningState, now = ne
       `- 成果评估：${evaluations.length} 次${average === null ? "" : `，平均 ${average}/16`}`,
       `- 阶段笔记：${note ? `${note.title}（${note.sourceDays.length} 个来源日）` : "尚未建立"}`,
       `- 阶段回顾：${retrospective ? retrospective.goalReflection : "尚未完成"}`,
+      ...(mastery ? [
+        `- 阶段掌握度：${mastery.headline}${mastery.averageTotalScore === null ? "" : ` 平均成果 ${mastery.averageTotalScore}/16`}`,
+        `- 掌握度下一步：${mastery.nextAction}`,
+      ] : []),
       ...(retrospective ? [
         `- 代表成果：${retrospective.representativeArtifact}`,
         `- 可迁移能力：${retrospective.transferableSkills}`,
@@ -1173,6 +1197,56 @@ function requireCompletedStage(state: LearningState, stageId: string): { stage: 
   const records = completedStageRecords(state, stage);
   if (!records.some((record) => record.day === stage.endWeek * 7)) throw new Error("完成这个阶段后才能生成阶段回顾");
   return { stage, records };
+}
+
+/** Derives a conservative stage-readiness check from saved Evaluator evidence. */
+export function stageMasteryReport(state: LearningState, stageId: string): StageMasteryReport {
+  const stage = state.plan.stages.find((item) => item.id === stageId);
+  if (!stage) throw new Error("学习阶段不存在");
+  const records = completedStageRecords(state, stage);
+  if (!records.some((record) => record.day === stage.endWeek * 7)) throw new Error("完成这个阶段后才能检查阶段掌握度");
+  const evaluations = records.flatMap((record) => Object.values(record.artifacts)
+    .flatMap((artifact) => artifact.evaluation ? [artifact.evaluation] : []));
+  const labels: Record<StageMasteryDimension["dimension"], string> = {
+    understanding: "理解",
+    application: "应用",
+    evidence: "证据",
+    reflection: "反思",
+  };
+  const dimensions = (Object.keys(labels) as StageMasteryDimension["dimension"][]).map((dimension) => {
+    const scores = evaluations.flatMap((evaluation) => evaluation.rubric
+      .filter((item) => item.dimension === dimension)
+      .map((item) => item.score));
+    const averageScore = roundedAverage(scores);
+    return {
+      dimension,
+      label: labels[dimension],
+      averageScore,
+      evidenceCount: scores.length,
+      status: averageScore === null ? "missing" as const : averageScore >= 3 ? "demonstrated" as const : "developing" as const,
+    };
+  });
+  const averageTotalScore = roundedAverage(evaluations.map((evaluation) => evaluation.totalScore));
+  const status: StageMasteryReport["status"] = evaluations.length === 0
+    ? "insufficient-evidence"
+    : dimensions.every((item) => item.status === "demonstrated") && (averageTotalScore ?? 0) >= 12
+      ? "ready"
+      : "developing";
+  const weakest = [...evaluations].sort((left, right) => left.totalScore - right.totalScore)[0];
+  return {
+    stageId,
+    completedDays: records.length,
+    evaluationCount: evaluations.length,
+    averageTotalScore,
+    status,
+    headline: status === "ready"
+      ? "现有成果证据支持进入下一阶段。"
+      : status === "developing"
+        ? "阶段已完成，但掌握证据仍需加强。"
+        : "阶段已完成，但还没有经过评估的成果证据。",
+    nextAction: weakest?.nextAction.trim() || "补充一份可验证的实践成果并获取四维评估。",
+    dimensions,
+  };
 }
 
 export function generateStageRetrospective(state: LearningState, stageId: string, now = new Date()): LearningState {

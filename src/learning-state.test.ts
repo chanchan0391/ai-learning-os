@@ -35,6 +35,7 @@ import {
   saveTeachingSession,
   saveUnderstandingResponse,
   scheduledReviewItems,
+  stageMasteryReport,
   serializeLearningStateExport,
   serializeCrossGoalWeeklyReviewMarkdown,
   serializeLearningProgressMarkdown,
@@ -554,6 +555,23 @@ describe("multi-day learning state", () => {
       state = completeCurrentDay(state, { difficulty: "just-right", reflection: day === 7 ? "继续验证迁移效果" : "" });
     }
 
+    expect(stageMasteryReport(state, "stage-1")).toMatchObject({
+      status: "developing", completedDays: 7, evaluationCount: 1, averageTotalScore: 13,
+      nextAction: "把恢复策略迁移到下一阶段项目",
+      dimensions: [
+        { dimension: "understanding", averageScore: 4, status: "demonstrated" },
+        { dimension: "application", averageScore: 4, status: "demonstrated" },
+        { dimension: "evidence", averageScore: 3, status: "demonstrated" },
+        { dimension: "reflection", averageScore: 2, status: "developing" },
+      ],
+    });
+    const readyState = structuredClone(state);
+    const readyEvaluation = Object.values(readyState.days[2].artifacts).find((artifact) => artifact.evaluation)?.evaluation!;
+    readyEvaluation.rubric.find((score) => score.dimension === "reflection")!.score = 3;
+    readyEvaluation.totalScore = 14;
+    expect(stageMasteryReport(readyState, "stage-1")).toMatchObject({
+      status: "ready", averageTotalScore: 14, headline: "现有成果证据支持进入下一阶段。",
+    });
     state = generateStageRetrospective(state, "stage-1", new Date("2026-08-01T12:00:00.000Z"));
     expect(state.plan.retrospectives?.[0]).toMatchObject({
       id: "retrospective-stage-1", stageId: "stage-1", sourceDays: [1, 2, 3, 4, 5, 6, 7],
@@ -572,6 +590,20 @@ describe("multi-day learning state", () => {
     expect(state.plan.retrospectives?.[0]).toMatchObject({ goalReflection: "我已能独立完成阶段目标。", updatedAt: "2026-08-01T13:00:00.000Z" });
     expect(parseLearningState(JSON.stringify(state)).status).toBe("valid");
     expect(serializeLearningProgressMarkdown(state)).toContain("- 可迁移能力：定义边界、验证失败路径。");
+    expect(serializeLearningProgressMarkdown(state)).toContain("- 阶段掌握度：阶段已完成，但掌握证据仍需加强。 平均成果 13/16");
+  });
+
+  it("requires complete, four-dimensional evidence before marking a stage ready", () => {
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    expect(() => stageMasteryReport(state, "stage-1")).toThrow("完成这个阶段后");
+    for (let day = 1; day <= 7; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "稳定推进" });
+    }
+    expect(stageMasteryReport(state, "stage-1")).toMatchObject({
+      status: "insufficient-evidence", evaluationCount: 0, averageTotalScore: null,
+      nextAction: "补充一份可验证的实践成果并获取四维评估。",
+    });
   });
 
   it("uses persisted evaluation feedback to focus the next day", () => {

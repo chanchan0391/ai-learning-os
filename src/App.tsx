@@ -37,6 +37,7 @@ import {
   serializeCrossGoalWeeklyReviewMarkdown,
   serializeLearningProgressMarkdown,
   serializeStageNoteMarkdown,
+  stageMasteryReport,
   stageNoteMarkdownFilename,
   toggleCurrentTask,
   updateStageNote,
@@ -85,6 +86,17 @@ const INITIAL_GOAL: LearningGoal = {
   dailyMinutes: 60,
   durationWeeks: 12,
 };
+
+function StageMasterySummary({ report }: { report: ReturnType<typeof stageMasteryReport> }) {
+  const statusLabel = report.status === "ready" ? "可以进入下一阶段" : report.status === "developing" ? "需要加强证据" : "证据不足";
+  return (
+    <div className={`stage-mastery ${report.status}`} role="status" aria-label="阶段掌握度">
+      <div><strong>{statusLabel}</strong><span>{report.headline}</span></div>
+      <ul>{report.dimensions.map((item) => <li className={item.status} key={item.dimension}>{item.label} {item.averageScore === null ? "—" : `${item.averageScore}/4`}</li>)}</ul>
+      <p><b>最小下一步</b>{report.nextAction}</p>
+    </div>
+  );
+}
 
 export function App() {
   const [initialLoad] = useState(() => learningStateRepository.load());
@@ -1427,9 +1439,10 @@ export function App() {
           <div className="retrospective-list">
             {retrospectiveStages.map((stage) => {
               const retrospective = (plan.retrospectives ?? []).find((item) => item.stageId === stage.id);
+              const mastery = stageMasteryReport(learningState, stage.id);
               if (!retrospective) return (
                 <article className="retrospective-empty" key={stage.id}>
-                  <div><small>已完成 · 第 {stage.startWeek}{stage.endWeek > stage.startWeek ? `–${stage.endWeek}` : ""} 周</small><h3>{stage.title}</h3><p>{stage.outcome}</p></div>
+                  <div><small>已完成 · 第 {stage.startWeek}{stage.endWeek > stage.startWeek ? `–${stage.endWeek}` : ""} 周</small><h3>{stage.title}</h3><p>{stage.outcome}</p><StageMasterySummary report={mastery} /></div>
                   <button className="secondary-action" onClick={() => createRetrospective(stage.id)}>生成阶段回顾</button>
                 </article>
               );
@@ -1437,6 +1450,7 @@ export function App() {
               return (
                 <article key={stage.id}>
                   <div className="retrospective-title"><div><small>{stage.title} · 来源第 {retrospective.sourceDays.join("、")} 天</small><h3>{stage.title}阶段回顾</h3></div>{!editing && <button className="text-button sync-button" onClick={() => beginEditingRetrospective(retrospective)}>编辑回顾</button>}</div>
+                  <StageMasterySummary report={mastery} />
                   {editing ? (
                     <div className="retrospective-form">
                       <label>阶段目标回顾<textarea rows={3} value={retrospectiveDraft.goalReflection} onChange={(event) => setRetrospectiveDraft({ ...retrospectiveDraft, goalReflection: event.target.value })} /></label>

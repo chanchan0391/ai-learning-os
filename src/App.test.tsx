@@ -428,6 +428,8 @@ describe("learning data controls", () => {
     render(<App />);
 
     const section = screen.getByRole("region", { name: "阶段结束回顾" });
+    expect(within(section).getByRole("status", { name: "阶段掌握度" }).textContent).toContain("证据不足");
+    expect(within(section).getByText("补充一份可验证的实践成果并获取四维评估。")).toBeTruthy();
     await user.click(within(section).getByRole("button", { name: "生成阶段回顾" }));
     expect(within(section).getByText(/已完成 7 个学习日/)).toBeTruthy();
     await user.click(within(section).getByRole("button", { name: "编辑回顾" }));
