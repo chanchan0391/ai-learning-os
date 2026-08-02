@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { completeCurrentDay, getCurrentRecord, initializeLearningState, toggleCurrentTask } from "./learning-state";
 import {
   BrowserLearningStateRepository,
+  ACTIVE_LEARNING_STATES_KEY,
   ARCHIVED_LEARNING_STATES_KEY,
   CURRENT_LEARNING_STATE_KEY,
   LEGACY_LEARNING_PLAN_KEY,
@@ -29,6 +30,35 @@ describe("browser learning-state repository", () => {
     repository.save(state);
 
     expect(repository.load()).toEqual({ state, status: "valid" });
+    expect(repository.loadActive()).toEqual([state]);
+  });
+
+  it("keeps multiple active goals and restores the selected goal across reloads", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const first = initializeLearningState(generateLearningPlan(goal));
+    const second = initializeLearningState(generateLearningPlan({ ...goal, subject: "事件驱动架构" }, new Date("2026-08-02T10:00:00.000Z")));
+
+    repository.save(first);
+    repository.save(second);
+
+    expect(repository.loadActive().map((state) => state.plan.goal.subject)).toEqual(["事件驱动架构", "分布式系统"]);
+    expect(repository.load().state?.plan.id).toBe(second.plan.id);
+    expect(repository.selectActive(first.plan.id)).toEqual(first);
+    expect(repository.load().state?.plan.id).toBe(first.plan.id);
+
+    repository.deselectActive();
+    expect(repository.load()).toEqual({ state: null, status: "empty" });
+    expect(repository.loadActive()).toHaveLength(2);
+    expect(localStorage.getItem(CURRENT_LEARNING_STATE_KEY)).toBeNull();
+  });
+
+  it("migrates the former single active state into the active-goal collection", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const state = initializeLearningState(generateLearningPlan(goal));
+    localStorage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(state));
+
+    expect(repository.load()).toEqual({ state, status: "valid" });
+    expect(JSON.parse(localStorage.getItem(ACTIVE_LEARNING_STATES_KEY)!)).toEqual({ selectedPlanId: state.plan.id, states: [state] });
   });
 
   it("promotes a legacy plan and removes obsolete keys", () => {
@@ -70,7 +100,7 @@ describe("browser learning-state repository", () => {
 
   it("removes every supported local version", () => {
     const repository = new BrowserLearningStateRepository(localStorage);
-    for (const key of [CURRENT_LEARNING_STATE_KEY, PREVIOUS_LEARNING_STATE_KEY, LEGACY_LEARNING_PLAN_KEY, ARCHIVED_LEARNING_STATES_KEY]) {
+    for (const key of [CURRENT_LEARNING_STATE_KEY, PREVIOUS_LEARNING_STATE_KEY, LEGACY_LEARNING_PLAN_KEY, ARCHIVED_LEARNING_STATES_KEY, ACTIVE_LEARNING_STATES_KEY]) {
       localStorage.setItem(key, "data");
     }
 
@@ -104,6 +134,23 @@ describe("browser learning-state repository", () => {
 
     expect(() => repository.archiveCompleted(state)).toThrow("只有完成全部计划学习日后才能归档目标");
     expect(repository.loadArchived()).toEqual([]);
+  });
+
+  it("selects another active goal after archiving a completed goal", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const remaining = initializeLearningState(generateLearningPlan({ ...goal, subject: "事件驱动架构" }));
+    let completed = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }, new Date("2026-08-02T10:00:00.000Z")));
+    repository.save(remaining);
+    for (let index = 0; index < 7; index += 1) {
+      for (const task of getCurrentRecord(completed).tasks) completed = toggleCurrentTask(completed, task.id);
+      completed = completeCurrentDay(completed, { difficulty: "just-right", reflection: "完成" });
+    }
+    repository.save(completed);
+
+    repository.archiveCompleted(completed);
+
+    expect(repository.load().state?.plan.id).toBe(remaining.plan.id);
+    expect(repository.loadActive()).toEqual([remaining]);
   });
 
   it("merges newly downloaded archives without replacing an existing local snapshot", () => {

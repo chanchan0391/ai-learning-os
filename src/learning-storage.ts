@@ -5,12 +5,14 @@ export const CURRENT_LEARNING_STATE_KEY = "ai-learning-os-state-v3";
 export const PREVIOUS_LEARNING_STATE_KEY = "ai-learning-os-state-v2";
 export const LEGACY_LEARNING_PLAN_KEY = "ai-learning-os-plan-v1";
 export const ARCHIVED_LEARNING_STATES_KEY = "ai-learning-os-archived-states-v1";
+export const ACTIVE_LEARNING_STATES_KEY = "ai-learning-os-active-states-v1";
 
 const ALL_LEARNING_STORAGE_KEYS = [
   CURRENT_LEARNING_STATE_KEY,
   PREVIOUS_LEARNING_STATE_KEY,
   LEGACY_LEARNING_PLAN_KEY,
   ARCHIVED_LEARNING_STATES_KEY,
+  ACTIVE_LEARNING_STATES_KEY,
 ] as const;
 
 const CURRENT_AND_LEGACY_KEYS = [
@@ -26,6 +28,9 @@ export interface ArchivedLearningState {
 
 export interface LearningStateRepository {
   load(now?: Date): ParsedLearningState;
+  loadActive(): LearningState[];
+  selectActive(planId: string): LearningState;
+  deselectActive(): void;
   loadArchived(): ArchivedLearningState[];
   mergeArchived(entries: ArchivedLearningState[]): ArchivedLearningState[];
   save(state: LearningState): void;
@@ -45,11 +50,25 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
 
   load(now = new Date()): ParsedLearningState {
     try {
+      const collection = this.readActiveCollection();
+      if (collection) {
+        if (!collection.selectedPlanId) return { state: null, status: "empty" };
+        const selected = collection.states.find((state) => state.plan.id === collection.selectedPlanId);
+        if (!selected) {
+          this.writeActiveCollection({ selectedPlanId: null, states: collection.states });
+          this.removeCurrentKeys();
+          return { state: null, status: "recovered" };
+        }
+        this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(selected));
+        return { state: selected, status: "valid" };
+      }
       const source = this.firstStoredValue();
       const result = parseLearningState(source, now);
       if (result.state && result.status === "migrated") {
         this.save(result.state);
         this.removeLegacyKeys();
+      } else if (result.state) {
+        this.save(result.state);
       } else if (result.status === "recovered") {
         this.removeCurrentKeys();
       }
@@ -63,6 +82,36 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
 
   save(state: LearningState): void {
     this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(state));
+    const collection = this.readActiveCollection() ?? { selectedPlanId: null, states: [] };
+    const states = [state, ...collection.states.filter((item) => item.plan.id !== state.plan.id)];
+    this.writeActiveCollection({ selectedPlanId: state.plan.id, states });
+  }
+
+  loadActive(): LearningState[] {
+    try {
+      const collection = this.readActiveCollection();
+      if (collection) return structuredClone(collection.states);
+      const current = this.load().state;
+      return current ? [structuredClone(current)] : [];
+    } catch {
+      return [];
+    }
+  }
+
+  selectActive(planId: string): LearningState {
+    const collection = this.readActiveCollection();
+    if (!collection) throw new Error("找不到要切换的学习目标");
+    const state = collection.states.find((item) => item.plan.id === planId);
+    if (!state) throw new Error("找不到要切换的学习目标");
+    this.writeActiveCollection({ selectedPlanId: planId, states: collection.states });
+    this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(state));
+    return structuredClone(state);
+  }
+
+  deselectActive(): void {
+    const collection = this.readActiveCollection() ?? { selectedPlanId: null, states: [] };
+    this.writeActiveCollection({ ...collection, selectedPlanId: null });
+    this.removeCurrentKeys();
   }
 
   loadArchived(): ArchivedLearningState[] {
@@ -105,7 +154,12 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
       ...this.loadArchived().filter((entry) => entry.state.plan.id !== state.plan.id),
     ];
     this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(archived));
-    this.removeCurrentKeys();
+    const collection = this.readActiveCollection();
+    const remaining = collection?.states.filter((item) => item.plan.id !== state.plan.id) ?? [];
+    const nextPlanId = remaining[0]?.plan.id ?? null;
+    this.writeActiveCollection({ selectedPlanId: nextPlanId, states: remaining });
+    if (remaining[0]) this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(remaining[0]));
+    else this.removeCurrentKeys();
     return archived;
   }
 
@@ -139,5 +193,29 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
 
   private removeCurrentKeys(): void {
     for (const key of CURRENT_AND_LEGACY_KEYS) this.storage.removeItem(key);
+  }
+
+  private readActiveCollection(): { selectedPlanId: string | null; states: LearningState[] } | null {
+    const raw = this.storage.getItem(ACTIVE_LEARNING_STATES_KEY);
+    if (raw === null) return null;
+    try {
+      const value = JSON.parse(raw) as { selectedPlanId?: unknown; states?: unknown };
+      if (!value || !Array.isArray(value.states) || (value.selectedPlanId !== null && typeof value.selectedPlanId !== "string")) {
+        throw new TypeError("Invalid active learning-state collection");
+      }
+      const states = value.states.flatMap((candidate) => {
+        const parsed = parseLearningState(JSON.stringify(candidate));
+        return parsed.state ? [parsed.state] : [];
+      });
+      const uniqueStates = states.filter((state, index) => states.findIndex((item) => item.plan.id === state.plan.id) === index);
+      return { selectedPlanId: value.selectedPlanId as string | null, states: uniqueStates };
+    } catch {
+      this.storage.removeItem(ACTIVE_LEARNING_STATES_KEY);
+      return null;
+    }
+  }
+
+  private writeActiveCollection(collection: { selectedPlanId: string | null; states: LearningState[] }): void {
+    this.storage.setItem(ACTIVE_LEARNING_STATES_KEY, JSON.stringify(collection));
   }
 }

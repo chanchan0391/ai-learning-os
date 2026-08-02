@@ -18,6 +18,7 @@ import { generateLearningPlan } from "./planner";
 
 const STORAGE_KEY = "ai-learning-os-state-v3";
 const ARCHIVE_KEY = "ai-learning-os-archived-states-v1";
+const ACTIVE_STATES_KEY = "ai-learning-os-active-states-v1";
 const goal = {
   subject: "AI Agent 工程",
   currentLevel: "Java 高级工程师",
@@ -50,6 +51,34 @@ describe("learning data controls", () => {
     expect(screen.getByRole("heading", { name: goal.subject })).toBeTruthy();
     const result = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(result.violations).toEqual([]);
+  });
+
+  it("switches between parallel active goals without losing either plan", async () => {
+    const user = userEvent.setup();
+    const first = initializeLearningState(generateLearningPlan(goal, new Date("2026-07-31T10:00:00.000Z")));
+    const second = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统" }, new Date("2026-08-01T10:00:00.000Z")));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(first));
+    localStorage.setItem(ACTIVE_STATES_KEY, JSON.stringify({ selectedPlanId: first.plan.id, states: [first, second] }));
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: goal.subject, level: 1 })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "切换" }));
+
+    expect(screen.getByRole("heading", { name: "分布式系统", level: 1 })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).selectedPlanId).toBe(second.plan.id);
+    expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).states).toHaveLength(2);
+  });
+
+  it("starts a parallel goal while preserving existing active progress", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "新建并行目标" }));
+
+    expect(screen.getByRole("button", { name: /生成我的学习路线/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "进行中的目标" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "打开目标" })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).states).toHaveLength(1);
   });
 
   it("archives a completed goal and returns to goal creation without losing its history", async () => {

@@ -82,6 +82,7 @@ const INITIAL_GOAL: LearningGoal = {
 export function App() {
   const [initialLoad] = useState(() => learningStateRepository.load());
   const [learningState, setLearningState] = useState<LearningState | null>(initialLoad.state);
+  const [activeGoals, setActiveGoals] = useState<LearningState[]>(() => learningStateRepository.loadActive());
   const [archivedGoals, setArchivedGoals] = useState<ArchivedLearningState[]>(() => learningStateRepository.loadArchived());
   const [goal, setGoal] = useState<LearningGoal>(INITIAL_GOAL);
   const [errors, setErrors] = useState<string[]>([]);
@@ -190,6 +191,7 @@ export function App() {
     setLearningState(next);
     if (next) learningStateRepository.save(next);
     else learningStateRepository.clear();
+    setActiveGoals(learningStateRepository.loadActive());
     if (enqueueSync && next && authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
   }
 
@@ -199,9 +201,42 @@ export function App() {
       const next = update(current);
       learningStateRef.current = next;
       learningStateRepository.save(next);
+      setActiveGoals(learningStateRepository.loadActive());
       if (authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
       return next;
     });
+  }
+
+  function resetGoalWorkspace(next: LearningState | null) {
+    learningStateRef.current = next;
+    setLearningState(next);
+    setGoal(next?.plan.goal ?? INITIAL_GOAL);
+    setSubmissionDrafts({});
+    setReviewDrafts({});
+    setDifficulty("");
+    setReflection("");
+    setAgentError("");
+    setErrors([]);
+  }
+
+  function switchActiveGoal(planId: string) {
+    try {
+      const selected = learningStateRepository.selectActive(planId);
+      resetGoalWorkspace(selected);
+      setActiveGoals(learningStateRepository.loadActive());
+      setStorageNotice(`已切换到“${selected.plan.goal.subject}”。`);
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法切换学习目标");
+      setStorageNoticeIsError(true);
+    }
+  }
+
+  function beginParallelGoal() {
+    learningStateRepository.deselectActive();
+    resetGoalWorkspace(null);
+    setStorageNotice("现有目标已安全保留。创建后可在多个目标之间切换。");
+    setStorageNoticeIsError(false);
   }
 
   async function createPlan(event: FormEvent) {
@@ -556,12 +591,15 @@ export function App() {
       const archived = learningStateRepository.archiveCompleted(learningState);
       learningStateRef.current = null;
       archivedGoalsRef.current = archived;
-      setLearningState(null);
+      const next = learningStateRepository.load().state;
+      resetGoalWorkspace(next);
+      setActiveGoals(learningStateRepository.loadActive());
       setArchivedGoals(archived);
       if (authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
       setArchiveConfirmationOpen(false);
-      setGoal(INITIAL_GOAL);
-      setStorageNotice(`“${learningState.plan.goal.subject}”已归档，可以创建下一个学习目标。`);
+      setStorageNotice(next
+        ? `“${learningState.plan.goal.subject}”已归档，已切换到“${next.plan.goal.subject}”。`
+        : `“${learningState.plan.goal.subject}”已归档，可以创建下一个学习目标。`);
       setStorageNoticeIsError(false);
     } catch (error) {
       setStorageNotice(error instanceof Error ? error.message : "无法归档学习目标");
@@ -575,6 +613,7 @@ export function App() {
       learningStateRef.current = restored;
       setLearningState(restored);
       setGoal(restored.plan.goal);
+      setActiveGoals(learningStateRepository.loadActive());
       const archived = learningStateRepository.loadArchived();
       archivedGoalsRef.current = archived;
       setArchivedGoals(archived);
@@ -774,7 +813,7 @@ export function App() {
       <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="import-dialog-title" aria-describedby="import-dialog-description">
         <p className="eyebrow">已验证学习记录</p>
         <h2 id="import-dialog-title">恢复“{pendingImport.state.plan.goal.subject}”？</h2>
-        <p id="import-dialog-description">将恢复到第 {pendingImport.state.currentDay} 天，并替换当前浏览器中的学习进度。导出时间：{new Date(pendingImport.exportedAt).toLocaleString("zh-CN")}。</p>
+        <p id="import-dialog-description">将恢复到第 {pendingImport.state.currentDay} 天；同一目标的本地版本会被替换，其他进行中目标会保留。导出时间：{new Date(pendingImport.exportedAt).toLocaleString("zh-CN")}。</p>
         <div className="dialog-actions">
           <button className="secondary-action" autoFocus onClick={() => setPendingImport(null)}>取消</button>
           <button className="primary-dialog-action" onClick={importLearningData}>确认恢复</button>
@@ -921,6 +960,23 @@ export function App() {
             <p className="privacy">进度保存在当前浏览器；启用实时模型后，学习内容会发送给所选模型服务</p>
           </form>
         </section>
+        {activeGoals.length > 0 && (
+          <section className="panel active-goals" aria-labelledby="active-goals-title">
+            <div><p className="eyebrow">并行学习</p><h2 id="active-goals-title">进行中的目标</h2></div>
+            <div className="active-goal-list">
+              {activeGoals.map((state) => (
+                <article key={state.plan.id}>
+                  <div>
+                    <strong>{state.plan.goal.subject}</strong>
+                    <span>{state.plan.goal.targetOutcome}</span>
+                    <small>第 {state.currentDay} 天 · 已完成 {completedDayCount(state)} 天</small>
+                  </div>
+                  <button className="secondary-action" onClick={() => switchActiveGoal(state.plan.id)}>打开目标</button>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
         {archivedGoals.length > 0 && (
           <section className="panel archived-goals" aria-labelledby="archived-goals-title">
             <div><p className="eyebrow">本地学习档案</p><h2 id="archived-goals-title">已完成目标</h2></div>
@@ -982,7 +1038,7 @@ export function App() {
           <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-dialog-title" aria-describedby="delete-dialog-description">
             <p className="eyebrow">不可撤销操作</p>
             <h2 id="delete-dialog-title">删除当前浏览器中的学习数据？</h2>
-            <p id="delete-dialog-description">当前计划、已归档目标、任务历史、教学回答、成果和评估都会被永久删除。需要保留副本时，请先导出学习记录。</p>
+            <p id="delete-dialog-description">全部进行中计划、已归档目标、任务历史、教学回答、成果和评估都会被永久删除。需要保留副本时，请先逐个导出学习记录。</p>
             <div className="dialog-actions">
               <button className="secondary-action" autoFocus onClick={() => setDeleteConfirmationOpen(false)}>取消</button>
               <button className="danger-action" onClick={deleteLearningData}>确认删除</button>
@@ -990,6 +1046,27 @@ export function App() {
           </section>
         </div>
       )}
+      <section className="panel active-goals dashboard-goals" aria-labelledby="dashboard-goals-title">
+        <div className="active-goals-heading">
+          <div><p className="eyebrow">并行学习</p><h2 id="dashboard-goals-title">进行中的目标</h2></div>
+          <button className="secondary-action" onClick={beginParallelGoal}>新建并行目标</button>
+        </div>
+        <div className="active-goal-list">
+          {activeGoals.map((state) => (
+            <article className={state.plan.id === plan.id ? "selected" : ""} key={state.plan.id}>
+              <div>
+                <strong>{state.plan.goal.subject}</strong>
+                <span>{state.plan.goal.targetOutcome}</span>
+                <small>第 {state.currentDay} 天 · 已完成 {completedDayCount(state)} 天</small>
+              </div>
+              {state.plan.id === plan.id
+                ? <span className="current-goal-label">当前目标</span>
+                : <button className="secondary-action" onClick={() => switchActiveGoal(state.plan.id)}>切换</button>}
+            </article>
+          ))}
+        </div>
+        {authState.status === "signed-in" && activeGoals.length > 1 && <p className="archive-boundary">当前云端同步仍以所选目标为单位；切换目标前请确认上次同步已完成。</p>}
+      </section>
       <section className="welcome">
         <div><p className="eyebrow">DAY {learningState.currentDay} · 持续推进你的学习系统</p><h1>{plan.goal.subject}</h1><p>目标：{plan.goal.targetOutcome}</p></div>
         <div className="progress-ring" style={{ "--progress": `${progress * 3.6}deg` } as React.CSSProperties}><strong>{progress}%</strong><span>今日完成</span></div>
