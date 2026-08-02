@@ -18,8 +18,18 @@ interface SyncMetadataEntry {
   fingerprint: string;
 }
 
-interface SyncMetadata {
+interface LegacySyncMetadata {
   version: 1;
+  planId: string;
+  entities: Record<string, SyncMetadataEntry>;
+}
+
+interface SyncMetadata {
+  version: 2;
+  plans: Record<string, Record<string, SyncMetadataEntry>>;
+}
+
+interface PlanSyncMetadata {
   planId: string;
   entities: Record<string, SyncMetadataEntry>;
 }
@@ -40,6 +50,12 @@ export interface ActiveDevice {
 
 export interface SyncResult {
   state: LearningState | null;
+  uploaded: number;
+  downloaded: number;
+}
+
+export interface ActiveSyncResult {
+  states: LearningState[];
   uploaded: number;
   downloaded: number;
 }
@@ -181,26 +197,14 @@ export class BrowserSyncClient {
       return this.restoreFromRemote(remoteEntities);
     }
 
-    const otherRemotePlan = remoteEntities.find((entity) => entity.entityType === "learning-plan"
-      && entity.entityId !== localState.plan.id
-      && !(entity.value as LearningPlan).archivedAt);
     const matchingRemotePlan = remoteEntities.find((entity) => entity.entityType === "learning-plan" && entity.entityId === localState.plan.id);
-    if (!localState.plan.archivedAt && !matchingRemotePlan && otherRemotePlan) {
-      const remoteState = this.stateFromRemote(remoteEntities, otherRemotePlan.entityId);
-      throw new SyncConflictError("云端已有另一份学习计划。请比较后选择继续使用哪一份计划。", {
-        kind: "different-plan",
-        localState,
-        remoteState,
-        remoteUpdatedAt: otherRemotePlan.updatedAt,
-      });
-    }
 
     const previous = this.loadMetadata(localState.plan.id);
     const restoringArchived = this.storage.getItem(RESTORED_ARCHIVE_PLAN_KEY) === localState.plan.id
       && Boolean((matchingRemotePlan?.value as LearningPlan | undefined)?.archivedAt)
       && !localState.plan.archivedAt;
     this.assertNoDivergedEntities(localState, remoteEntities, previous, restoringArchived);
-    const nextMetadata: SyncMetadata = { version: 1, planId: localState.plan.id, entities: { ...previous.entities } };
+    const nextMetadata: PlanSyncMetadata = { planId: localState.plan.id, entities: { ...previous.entities } };
     let nextState = structuredClone(localState);
     let uploaded = 0;
     let downloaded = 0;
@@ -255,11 +259,38 @@ export class BrowserSyncClient {
     nextState.days.sort((left, right) => left.day - right.day);
     nextState.currentDay = nextState.days.find((day) => day.status === "active")?.day ?? nextState.days.at(-1)?.day ?? 1;
     nextState = this.validateState(nextState);
-    this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify(nextMetadata));
+    this.saveMetadata(nextMetadata);
     if (this.storage.getItem(RESTORED_ARCHIVE_PLAN_KEY) === localState.plan.id) {
       this.storage.removeItem(RESTORED_ARCHIVE_PLAN_KEY);
     }
     return { state: nextState, uploaded, downloaded };
+  }
+
+  async syncActive(localStates: LearningState[]): Promise<ActiveSyncResult> {
+    const states: LearningState[] = [];
+    let uploaded = 0;
+    let downloaded = 0;
+    for (const localState of localStates) {
+      const result = await this.sync(localState);
+      if (result.state) states.push(result.state);
+      uploaded += result.uploaded;
+      downloaded += result.downloaded;
+    }
+
+    const response = await this.request("/api/sync/changes", { credentials: "same-origin" });
+    const body = await response.json() as { changes?: SyncEntity[]; error?: string };
+    if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端进度"));
+    const knownPlanIds = new Set(states.map((state) => state.plan.id));
+    const missingPlans = body.changes
+      .filter((entity) => entity.entityType === "learning-plan" && !(entity.value as LearningPlan).archivedAt)
+      .filter((entity) => !knownPlanIds.has(entity.entityId))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    for (const planEntity of missingPlans) {
+      const result = this.restoreFromRemote(body.changes, planEntity.entityId);
+      if (result.state) states.push(result.state);
+      downloaded += result.downloaded;
+    }
+    return { states, uploaded, downloaded };
   }
 
   /**
@@ -326,7 +357,7 @@ export class BrowserSyncClient {
     return { ...result, uploaded: result.uploaded + 1 };
   }
 
-  private assertNoDivergedEntities(localState: LearningState, remoteEntities: SyncEntity[], previous: SyncMetadata, restoringArchived = false): void {
+  private assertNoDivergedEntities(localState: LearningState, remoteEntities: SyncEntity[], previous: PlanSyncMetadata, restoringArchived = false): void {
     const locals = this.localEntities(localState);
     for (const local of locals) {
       if (restoringArchived && local.entityType === "learning-plan") continue;
@@ -381,14 +412,14 @@ export class BrowserSyncClient {
       revision: preview.remoteRevision,
       fingerprint: fingerprint(value),
     };
-    this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify(metadata));
+    this.saveMetadata(metadata);
   }
 
   private async uploadLocalPlan(state: LearningState): Promise<SyncResult> {
     const response = await this.request("/api/sync/changes", { credentials: "same-origin" });
     const body = await response.json() as { changes?: SyncEntity[]; error?: string };
     if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端进度"));
-    const metadata: SyncMetadata = { version: 1, planId: state.plan.id, entities: {} };
+    const metadata: PlanSyncMetadata = { planId: state.plan.id, entities: {} };
     let uploaded = 0;
     for (const local of this.localEntities(state)) {
       const remote = body.changes.find((entity) => entity.entityType === local.entityType && entity.entityId === local.entityId);
@@ -396,7 +427,7 @@ export class BrowserSyncClient {
       metadata.entities[metadataKey(entity)] = { revision: entity.revision, fingerprint: fingerprint(entity.value) };
       uploaded += 1;
     }
-    this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify(metadata));
+    this.saveMetadata(metadata);
     return { state, uploaded, downloaded: 0 };
   }
 
@@ -448,11 +479,11 @@ export class BrowserSyncClient {
     const recordEntities = entities
       .filter((entity) => entity.entityType === "daily-record")
       .filter((entity) => (entity.value as { planId?: string }).planId === state.plan.id);
-    const metadata: SyncMetadata = { version: 1, planId: state.plan.id, entities: {} };
+    const metadata: PlanSyncMetadata = { planId: state.plan.id, entities: {} };
     for (const entity of [planEntity, ...recordEntities]) {
       metadata.entities[metadataKey(entity)] = { revision: entity.revision, fingerprint: fingerprint(entity.value) };
     }
-    this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify(metadata));
+    this.saveMetadata(metadata);
     return { state, uploaded: 0, downloaded: 1 + recordEntities.length };
   }
 
@@ -477,16 +508,36 @@ export class BrowserSyncClient {
     });
   }
 
-  private loadMetadata(planId: string): SyncMetadata {
+  private loadMetadata(planId: string): PlanSyncMetadata {
     try {
-      const parsed = JSON.parse(this.storage.getItem(SYNC_METADATA_KEY) ?? "null") as Partial<SyncMetadata> | null;
+      const parsed = JSON.parse(this.storage.getItem(SYNC_METADATA_KEY) ?? "null") as Partial<SyncMetadata> | Partial<LegacySyncMetadata> | null;
+      if (parsed?.version === 2 && parsed.plans && typeof parsed.plans === "object") {
+        return { planId, entities: parsed.plans[planId] ?? {} };
+      }
       if (parsed?.version === 1 && parsed.planId === planId && parsed.entities && typeof parsed.entities === "object") {
-        return parsed as SyncMetadata;
+        return { planId, entities: parsed.entities };
       }
     } catch {
       // Corrupt sync metadata can be discarded without touching learning data.
     }
-    return { version: 1, planId, entities: {} };
+    return { planId, entities: {} };
+  }
+
+  private saveMetadata(metadata: PlanSyncMetadata): void {
+    let plans: SyncMetadata["plans"] = {};
+    try {
+      const parsed = JSON.parse(this.storage.getItem(SYNC_METADATA_KEY) ?? "null") as Partial<SyncMetadata> | Partial<LegacySyncMetadata> | null;
+      if (parsed?.version === 2 && parsed.plans && typeof parsed.plans === "object") plans = parsed.plans;
+      if (parsed?.version === 1 && typeof parsed.planId === "string" && parsed.entities && typeof parsed.entities === "object") {
+        plans = { [parsed.planId]: parsed.entities };
+      }
+    } catch {
+      // Corrupt metadata is replaced; learning data remains untouched.
+    }
+    this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify({
+      version: 2,
+      plans: { ...plans, [metadata.planId]: metadata.entities },
+    } satisfies SyncMetadata));
   }
 
   private validateState(state: LearningState): LearningState {

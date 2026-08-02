@@ -29,6 +29,7 @@ export interface ArchivedLearningState {
 export interface LearningStateRepository {
   load(now?: Date): ParsedLearningState;
   loadActive(): LearningState[];
+  replaceActive(states: LearningState[]): LearningState[];
   selectActive(planId: string): LearningState;
   deselectActive(): void;
   loadArchived(): ArchivedLearningState[];
@@ -96,6 +97,19 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
     } catch {
       return [];
     }
+  }
+
+  replaceActive(states: LearningState[]): LearningState[] {
+    const collection = this.readActiveCollection() ?? { selectedPlanId: null, states: [] };
+    const uniqueStates = states.filter((state, index) => states.findIndex((item) => item.plan.id === state.plan.id) === index);
+    const selectedPlanId = collection.selectedPlanId && uniqueStates.some((state) => state.plan.id === collection.selectedPlanId)
+      ? collection.selectedPlanId
+      : null;
+    this.writeActiveCollection({ selectedPlanId, states: uniqueStates });
+    const selected = uniqueStates.find((state) => state.plan.id === selectedPlanId);
+    if (selected) this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(selected));
+    else this.removeCurrentKeys();
+    return structuredClone(uniqueStates);
   }
 
   selectActive(planId: string): LearningState {

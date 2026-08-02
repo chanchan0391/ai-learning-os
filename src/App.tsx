@@ -639,14 +639,27 @@ export function App() {
         archivedUploaded += archivedResult.uploaded;
         archivedDownloaded += archivedResult.downloaded;
       }
-      const result = await syncClient.sync(learningStateRef.current);
-      if (result.state) {
-        saveState(result.state, false);
-        setGoal(result.state.plan.goal);
+      const selectedPlanId = learningStateRef.current?.plan.id;
+      const localActive = learningStateRepository.loadActive();
+      localActive.sort((left, right) => left.plan.id === selectedPlanId ? -1 : right.plan.id === selectedPlanId ? 1 : 0);
+      const result = await syncClient.syncActive(localActive);
+      const syncedActive = learningStateRepository.replaceActive(result.states);
+      setActiveGoals(syncedActive);
+      const selected = selectedPlanId
+        ? syncedActive.find((state) => state.plan.id === selectedPlanId)
+        : localActive.length === 0 && syncedActive[0]
+          ? learningStateRepository.selectActive(syncedActive[0].plan.id)
+          : null;
+      if (selected) {
+        learningStateRef.current = selected;
+        setLearningState(selected);
+        setGoal(selected.plan.goal);
       }
       const remoteArchives = await syncClient.downloadArchived(
-        archivedGoalsRef.current.map((entry) => entry.state.plan.id),
-        result.state?.plan.id,
+        [
+          ...archivedGoalsRef.current.map((entry) => entry.state.plan.id),
+          ...result.states.map((state) => state.plan.id),
+        ],
       );
       if (remoteArchives.entries.length > 0) {
         const merged = learningStateRepository.mergeArchived(remoteArchives.entries);
@@ -680,8 +693,16 @@ export function App() {
     try {
       const result = await syncClient.resolveConflict(pendingSyncConflict, choice);
       if (result.state) {
-        saveState(result.state, false);
-        setGoal(result.state.plan.goal);
+        const currentPlanId = learningStateRef.current?.plan.id;
+        const states = learningStateRepository.loadActive();
+        const merged = [result.state, ...states.filter((state) => state.plan.id !== result.state?.plan.id)];
+        learningStateRepository.replaceActive(merged);
+        setActiveGoals(learningStateRepository.loadActive());
+        if (result.state.plan.id === currentPlanId) {
+          learningStateRef.current = result.state;
+          setLearningState(result.state);
+          setGoal(result.state.plan.goal);
+        }
       }
       autoSyncQueue.completeExternalSync();
       setPendingSyncConflict(null);
@@ -1065,7 +1086,7 @@ export function App() {
             </article>
           ))}
         </div>
-        {authState.status === "signed-in" && activeGoals.length > 1 && <p className="archive-boundary">当前云端同步仍以所选目标为单位；切换目标前请确认上次同步已完成。</p>}
+        {authState.status === "signed-in" && activeGoals.length > 1 && <p className="archive-boundary">全部进行中目标都会自动同步；切换目标不会中断其他目标的云端更新。</p>}
       </section>
       <section className="welcome">
         <div><p className="eyebrow">DAY {learningState.currentDay} · 持续推进你的学习系统</p><h1>{plan.goal.subject}</h1><p>目标：{plan.goal.targetOutcome}</p></div>

@@ -52,6 +52,21 @@ describe("browser learning-state repository", () => {
     expect(localStorage.getItem(CURRENT_LEARNING_STATE_KEY)).toBeNull();
   });
 
+  it("replaces synchronized active goals without changing the current selection", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const first = initializeLearningState(generateLearningPlan(goal));
+    const second = initializeLearningState(generateLearningPlan({ ...goal, subject: "事件驱动架构" }, new Date("2026-08-02T10:00:00.000Z")));
+    const remote = initializeLearningState(generateLearningPlan({ ...goal, subject: "数据库内核" }, new Date("2026-08-03T10:00:00.000Z")));
+    repository.save(first);
+    repository.save(second);
+    repository.selectActive(first.plan.id);
+
+    repository.replaceActive([second, first, remote]);
+
+    expect(repository.load().state?.plan.id).toBe(first.plan.id);
+    expect(repository.loadActive().map((state) => state.plan.id)).toEqual([second.plan.id, first.plan.id, remote.plan.id]);
+  });
+
   it("migrates the former single active state into the active-goal collection", () => {
     const repository = new BrowserLearningStateRepository(localStorage);
     const state = initializeLearningState(generateLearningPlan(goal));

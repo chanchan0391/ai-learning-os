@@ -96,10 +96,51 @@ describe("browser sync client", () => {
 
     expect(result).toMatchObject({ uploaded: 2, downloaded: 0, state });
     expect(server.entities.size).toBe(2);
-    expect(JSON.parse(localStorage.getItem(SYNC_METADATA_KEY)!).entities).toMatchObject({
+    expect(JSON.parse(localStorage.getItem(SYNC_METADATA_KEY)!).plans[state.plan.id]).toMatchObject({
       [`learning-plan:${state.plan.id}`]: { revision: 1 },
       [`daily-record:${state.plan.id}:day-1`]: { revision: 1 },
     });
+  });
+
+  it("syncs multiple active goals with isolated revision metadata", async () => {
+    const server = fakeServer();
+    const first = learningState();
+    const second = initializeLearningState(generateLearningPlan(
+      { ...goal, subject: "事件驱动架构" },
+      new Date("2026-08-02T10:00:00.000Z"),
+    ), new Date("2026-08-02T10:00:00.000Z"));
+    const client = new BrowserSyncClient(localStorage, server.request);
+
+    const initial = await client.syncActive([first, second]);
+    const changedFirst = toggleCurrentTask(first, first.days[0].tasks[0].id);
+    const changedSecond = toggleCurrentTask(second, second.days[0].tasks[1].id);
+    const updated = await client.syncActive([changedFirst, changedSecond]);
+
+    expect(initial).toMatchObject({ uploaded: 4, downloaded: 0 });
+    expect(updated).toMatchObject({ uploaded: 2, downloaded: 0 });
+    expect(updated.states).toEqual([changedFirst, changedSecond]);
+    const metadata = JSON.parse(localStorage.getItem(SYNC_METADATA_KEY)!);
+    expect(metadata.version).toBe(2);
+    expect(Object.keys(metadata.plans).sort()).toEqual([first.plan.id, second.plan.id].sort());
+    expect(metadata.plans[first.plan.id][`daily-record:${first.plan.id}:day-1`].revision).toBe(2);
+    expect(metadata.plans[second.plan.id][`daily-record:${second.plan.id}:day-1`].revision).toBe(2);
+  });
+
+  it("downloads every missing active cloud goal into an empty browser", async () => {
+    const first = learningState();
+    const second = initializeLearningState(generateLearningPlan(
+      { ...goal, subject: "事件驱动架构" },
+      new Date("2026-08-02T10:00:00.000Z"),
+    ), new Date("2026-08-02T10:00:00.000Z"));
+    const entities = [first, second].flatMap((state) => [
+      { entityType: "learning-plan" as const, entityId: state.plan.id, revision: 1, updatedAt: state.plan.createdAt, value: state.plan },
+      { entityType: "daily-record" as const, entityId: `${state.plan.id}:day-1`, revision: 1, updatedAt: state.plan.createdAt, value: { planId: state.plan.id, record: state.days[0] } },
+    ]);
+
+    const result = await new BrowserSyncClient(localStorage, fakeServer(entities).request).syncActive([]);
+
+    expect(result.downloaded).toBe(4);
+    expect(result.states.map((state) => state.plan.id).sort()).toEqual([first.plan.id, second.plan.id].sort());
   });
 
   it("marks a completed goal as archived and does not treat it as a competing active plan", async () => {
@@ -208,6 +249,28 @@ describe("browser sync client", () => {
 
     expect(result.uploaded).toBe(1);
     expect(server.entities.get(`daily-record:${state.plan.id}:day-1`)?.revision).toBe(2);
+  });
+
+  it("upgrades legacy single-plan metadata without losing its sync base", async () => {
+    const server = fakeServer();
+    const client = new BrowserSyncClient(localStorage, server.request);
+    const state = learningState();
+    await client.sync(state);
+    const current = JSON.parse(localStorage.getItem(SYNC_METADATA_KEY)!);
+    localStorage.setItem(SYNC_METADATA_KEY, JSON.stringify({
+      version: 1,
+      planId: state.plan.id,
+      entities: current.plans[state.plan.id],
+    }));
+
+    const changed = toggleCurrentTask(state, state.days[0].tasks[0].id);
+    const result = await client.sync(changed);
+
+    expect(result.uploaded).toBe(1);
+    expect(JSON.parse(localStorage.getItem(SYNC_METADATA_KEY)!)).toMatchObject({
+      version: 2,
+      plans: { [state.plan.id]: { [`daily-record:${state.plan.id}:day-1`]: { revision: 2 } } },
+    });
   });
 
   it("pulls a remote change when the local entity still matches its sync base", async () => {
