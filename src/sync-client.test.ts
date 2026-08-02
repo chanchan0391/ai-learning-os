@@ -102,6 +102,44 @@ describe("browser sync client", () => {
     });
   });
 
+  it("marks a completed goal as archived and does not treat it as a competing active plan", async () => {
+    const server = fakeServer();
+    const client = new BrowserSyncClient(localStorage, server.request);
+    const archivedState = learningState();
+
+    await client.sync(archivedState);
+    const archived = await client.syncArchived({
+      archivedAt: "2026-08-02T12:00:00.000Z",
+      state: archivedState,
+    });
+    const nextState = initializeLearningState(generateLearningPlan(
+      { ...goal, subject: "事件驱动架构" },
+      new Date("2026-08-03T10:00:00.000Z"),
+    ), new Date("2026-08-03T10:00:00.000Z"));
+    const next = await client.sync(nextState);
+
+    expect(archived.uploaded).toBe(1);
+    expect((server.entities.get(`learning-plan:${archivedState.plan.id}`)?.value as { archivedAt?: string }).archivedAt)
+      .toBe("2026-08-02T12:00:00.000Z");
+    expect(next.state?.plan.id).toBe(nextState.plan.id);
+    expect(next.uploaded).toBe(2);
+  });
+
+  it("does not restore an archived cloud plan as the active goal", async () => {
+    const state = learningState();
+    const server = fakeServer([{
+      entityType: "learning-plan",
+      entityId: state.plan.id,
+      revision: 2,
+      updatedAt: "2026-08-02T12:00:00.000Z",
+      value: { ...state.plan, archivedAt: "2026-08-02T12:00:00.000Z" },
+    }]);
+
+    const result = await new BrowserSyncClient(localStorage, server.request).sync(null);
+
+    expect(result).toEqual({ state: null, uploaded: 0, downloaded: 0 });
+  });
+
   it("conditionally uploads a local change after the first successful sync", async () => {
     const server = fakeServer();
     const client = new BrowserSyncClient(localStorage, server.request);

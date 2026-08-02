@@ -39,8 +39,8 @@ describe("PostgreSQL session principal resolver", () => {
     const { pool, resolve } = await setup();
     const token = "local-test-session-token-with-enough-entropy";
     await pool.query(
-      `INSERT INTO auth_sessions (token_hash, user_id, device_id, expires_at)
-       VALUES ($1, 'user-alice', 'device-laptop', '2026-08-02T12:00:00.000Z')`,
+      `INSERT INTO auth_sessions (token_hash, user_id, device_id, created_at, expires_at)
+       VALUES ($1, 'user-alice', 'device-laptop', '2026-07-31T12:00:00.000Z', '2026-08-02T12:00:00.000Z')`,
       [hashSessionToken(token)],
     );
 

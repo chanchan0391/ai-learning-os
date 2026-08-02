@@ -46,6 +46,8 @@ export interface DailyTask {
 export interface LearningPlan {
   id: string;
   createdAt: string;
+  /** Present only in the synchronized representation of a locally archived goal. */
+  archivedAt?: string;
   goal: LearningGoal;
   stages: LearningStage[];
   today: DailyTask[];

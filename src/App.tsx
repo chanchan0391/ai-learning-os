@@ -123,6 +123,7 @@ export function App() {
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(initialCalendarDate);
   const importInput = useRef<HTMLInputElement>(null);
   const learningStateRef = useRef<LearningState | null>(initialLoad.state);
+  const archivedGoalsRef = useRef<ArchivedLearningState[]>(learningStateRepository.loadArchived());
   const authStateRef = useRef<AuthState>({ status: "checking" });
   const performSyncRef = useRef<() => Promise<void>>(async () => undefined);
   const [autoSyncQueue] = useState(() => new AutoSyncQueue(
@@ -538,6 +539,7 @@ export function App() {
 
   function deleteLearningData() {
     saveState(null, false);
+    archivedGoalsRef.current = [];
     setArchivedGoals([]);
     syncClient.clearMetadata();
     autoSyncQueue.clear();
@@ -553,10 +555,10 @@ export function App() {
     try {
       const archived = learningStateRepository.archiveCompleted(learningState);
       learningStateRef.current = null;
+      archivedGoalsRef.current = archived;
       setLearningState(null);
       setArchivedGoals(archived);
-      syncClient.clearMetadata();
-      autoSyncQueue.clear();
+      if (authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
       setArchiveConfirmationOpen(false);
       setGoal(INITIAL_GOAL);
       setStorageNotice(`“${learningState.plan.goal.subject}”已归档，可以创建下一个学习目标。`);
@@ -573,7 +575,9 @@ export function App() {
       learningStateRef.current = restored;
       setLearningState(restored);
       setGoal(restored.plan.goal);
-      setArchivedGoals(learningStateRepository.loadArchived());
+      const archived = learningStateRepository.loadArchived();
+      archivedGoalsRef.current = archived;
+      setArchivedGoals(archived);
       setStorageNotice(`已恢复“${restored.plan.goal.subject}”的完整学习记录。`);
       setStorageNoticeIsError(false);
     } catch (error) {
@@ -585,14 +589,21 @@ export function App() {
   async function performSync() {
     setStorageNotice("");
     try {
+      let archivedUploaded = 0;
+      let archivedDownloaded = 0;
+      for (const entry of archivedGoalsRef.current) {
+        const archivedResult = await syncClient.syncArchived(entry);
+        archivedUploaded += archivedResult.uploaded;
+        archivedDownloaded += archivedResult.downloaded;
+      }
       const result = await syncClient.sync(learningStateRef.current);
       if (result.state) {
         saveState(result.state, false);
         setGoal(result.state.plan.goal);
       }
       const changes = [
-        result.uploaded > 0 ? `上传 ${result.uploaded} 项` : "",
-        result.downloaded > 0 ? `下载 ${result.downloaded} 项` : "",
+        result.uploaded + archivedUploaded > 0 ? `上传 ${result.uploaded + archivedUploaded} 项` : "",
+        result.downloaded + archivedDownloaded > 0 ? `下载 ${result.downloaded + archivedDownloaded} 项` : "",
       ].filter(Boolean).join("，");
       setStorageNotice(changes ? `同步完成：${changes}。` : "本地与云端进度已一致。");
       setStorageNoticeIsError(false);

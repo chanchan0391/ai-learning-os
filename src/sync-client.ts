@@ -1,4 +1,5 @@
 import { parseLearningState } from "./learning-state";
+import type { ArchivedLearningState } from "./learning-storage";
 import type { DailyLearningRecord, LearningPlan, LearningState } from "./types";
 
 export const SYNC_METADATA_KEY = "ai-learning-os-sync-v1";
@@ -163,15 +164,17 @@ export class BrowserSyncClient {
 
     const remoteEntities = body.changes;
     if (!localState) {
-      if (!remoteEntities.some((entity) => entity.entityType === "learning-plan")) {
+      if (!remoteEntities.some((entity) => entity.entityType === "learning-plan" && !(entity.value as LearningPlan).archivedAt)) {
         return { state: null, uploaded: 0, downloaded: 0 };
       }
       return this.restoreFromRemote(remoteEntities);
     }
 
-    const otherRemotePlan = remoteEntities.find((entity) => entity.entityType === "learning-plan" && entity.entityId !== localState.plan.id);
+    const otherRemotePlan = remoteEntities.find((entity) => entity.entityType === "learning-plan"
+      && entity.entityId !== localState.plan.id
+      && !(entity.value as LearningPlan).archivedAt);
     const matchingRemotePlan = remoteEntities.find((entity) => entity.entityType === "learning-plan" && entity.entityId === localState.plan.id);
-    if (!matchingRemotePlan && otherRemotePlan) {
+    if (!localState.plan.archivedAt && !matchingRemotePlan && otherRemotePlan) {
       const remoteState = this.stateFromRemote(remoteEntities, otherRemotePlan.entityId);
       throw new SyncConflictError("云端已有另一份学习计划。请比较后选择继续使用哪一份计划。", {
         kind: "different-plan",
@@ -233,6 +236,18 @@ export class BrowserSyncClient {
     nextState = this.validateState(nextState);
     this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify(nextMetadata));
     return { state: nextState, uploaded, downloaded };
+  }
+
+  /**
+   * Reconciles a complete archived snapshot using the same per-entity revisions
+   * as an active goal. The archive timestamp lives on the synchronized plan so
+   * other devices can distinguish it from the one active plan.
+   */
+  async syncArchived(entry: ArchivedLearningState): Promise<SyncResult> {
+    return this.sync({
+      ...structuredClone(entry.state),
+      plan: { ...structuredClone(entry.state.plan), archivedAt: entry.archivedAt },
+    });
   }
 
   async resolveConflict(preview: SyncConflictPreview, choice: "local" | "remote"): Promise<SyncResult> {
@@ -395,6 +410,7 @@ export class BrowserSyncClient {
     const planEntity = entities
       .filter((entity) => entity.entityType === "learning-plan")
       .filter((entity) => !preferredPlanId || entity.entityId === preferredPlanId)
+      .filter((entity) => preferredPlanId || !(entity.value as LearningPlan).archivedAt)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
     if (!planEntity) throw new Error("云端没有可恢复的学习计划");
     const plan = planEntity.value as LearningPlan;

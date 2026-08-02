@@ -119,6 +119,7 @@ export function isLearningPlan(value: unknown): value is LearningPlan {
   const goal = value.goal;
   if (!isNonEmptyString(value.id)
     || !isValidDate(value.createdAt)
+    || (value.archivedAt !== undefined && !isValidDate(value.archivedAt))
     || !isNonEmptyString(goal.subject)
     || !isNonEmptyString(goal.currentLevel)
     || !isNonEmptyString(goal.targetOutcome)
