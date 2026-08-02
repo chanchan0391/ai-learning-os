@@ -11,6 +11,7 @@ import type {
   ReviewRecall,
   ReviewAssessment,
   StageLearningNote,
+  StageRetrospective,
   TeachingSession,
 } from "./types";
 
@@ -129,11 +130,28 @@ export function isLearningPlan(value: unknown): value is LearningPlan {
       && isValidDate(note.updatedAt))
     && new Set(value.notes.map((note) => isRecord(note) ? note.id : undefined)).size === value.notes.length
     && new Set(value.notes.map((note) => isRecord(note) ? note.stageId : undefined)).size === value.notes.length);
+  const retrospectivesValid = value.retrospectives === undefined || (Array.isArray(value.retrospectives)
+    && value.retrospectives.every((retrospective) => isRecord(retrospective)
+      && isNonEmptyString(retrospective.id)
+      && isNonEmptyString(retrospective.stageId)
+      && stageIds.includes(retrospective.stageId)
+      && isNonEmptyString(retrospective.goalReflection)
+      && isNonEmptyString(retrospective.representativeArtifact)
+      && isNonEmptyString(retrospective.transferableSkills)
+      && isNonEmptyString(retrospective.nextApplication)
+      && Array.isArray(retrospective.sourceDays)
+      && retrospective.sourceDays.length > 0
+      && retrospective.sourceDays.every((day) => Number.isInteger(day) && Number(day) > 0 && Number(day) <= Number(goal.durationWeeks) * 7)
+      && new Set(retrospective.sourceDays).size === retrospective.sourceDays.length
+      && isValidDate(retrospective.updatedAt))
+    && new Set(value.retrospectives.map((item) => isRecord(item) ? item.id : undefined)).size === value.retrospectives.length
+    && new Set(value.retrospectives.map((item) => isRecord(item) ? item.stageId : undefined)).size === value.retrospectives.length);
   return stagesValid
     && Number((stages.at(-1) as Record<string, unknown>).endWeek) === Number(goal.durationWeeks)
     && new Set(stageIds).size === stageIds.length
     && new Set(taskIds).size === taskIds.length
     && notesValid
+    && retrospectivesValid
     && today.reduce((sum, task) => sum + task.minutes, 0) === Number(goal.dailyMinutes);
 }
 
@@ -474,6 +492,7 @@ export function serializeLearningProgressMarkdown(state: LearningState, now = ne
       : null;
     const plannedDays = (stage.endWeek - stage.startWeek + 1) * 7;
     const note = (state.plan.notes ?? []).find((item) => item.stageId === stage.id);
+    const retrospective = (state.plan.retrospectives ?? []).find((item) => item.stageId === stage.id);
     return [
       `### ${stage.title}`,
       "",
@@ -481,6 +500,12 @@ export function serializeLearningProgressMarkdown(state: LearningState, now = ne
       `- 已完成：${completed.length}/${plannedDays} 个学习日`,
       `- 成果评估：${evaluations.length} 次${average === null ? "" : `，平均 ${average}/16`}`,
       `- 阶段笔记：${note ? `${note.title}（${note.sourceDays.length} 个来源日）` : "尚未建立"}`,
+      `- 阶段回顾：${retrospective ? retrospective.goalReflection : "尚未完成"}`,
+      ...(retrospective ? [
+        `- 代表成果：${retrospective.representativeArtifact}`,
+        `- 可迁移能力：${retrospective.transferableSkills}`,
+        `- 下一阶段应用：${retrospective.nextApplication}`,
+      ] : []),
     ].join("\n");
   });
   return [
@@ -664,6 +689,74 @@ function stageRecords(state: LearningState, stage: LearningStage): DailyLearning
     const week = Math.ceil(record.day / 7);
     return week >= stage.startWeek && week <= stage.endWeek;
   });
+}
+
+function completedStageRecords(state: LearningState, stage: LearningStage): DailyLearningRecord[] {
+  return stageRecords(state, stage).filter((record) => record.status === "completed");
+}
+
+function requireCompletedStage(state: LearningState, stageId: string): { stage: LearningStage; records: DailyLearningRecord[] } {
+  const stage = state.plan.stages.find((item) => item.id === stageId);
+  if (!stage) throw new Error("学习阶段不存在");
+  const records = completedStageRecords(state, stage);
+  if (!records.some((record) => record.day === stage.endWeek * 7)) throw new Error("完成这个阶段后才能生成阶段回顾");
+  return { stage, records };
+}
+
+export function generateStageRetrospective(state: LearningState, stageId: string, now = new Date()): LearningState {
+  const { stage, records } = requireCompletedStage(state, stageId);
+  if ((state.plan.retrospectives ?? []).some((item) => item.stageId === stageId)) throw new Error("这个阶段已经有阶段回顾");
+  const evaluatedArtifacts = records.flatMap((record) => Object.values(record.artifacts).flatMap((artifact) =>
+    artifact.evaluation ? [{ day: record.day, submission: artifact.submission?.trim() ?? "", evaluation: artifact.evaluation }] : []));
+  const representative = [...evaluatedArtifacts]
+    .filter((item) => item.submission)
+    .sort((left, right) => right.evaluation.totalScore - left.evaluation.totalScore || right.day - left.day)[0];
+  const demonstratedSkills = evaluatedArtifacts.flatMap((item) => item.evaluation.rubric
+    .filter((score) => score.score >= 3 && score.evidence.trim())
+    .map((score) => score.evidence.trim()));
+  const weakest = [...evaluatedArtifacts].sort((left, right) => left.evaluation.totalScore - right.evaluation.totalScore || right.day - left.day)[0];
+  const latestReflection = [...records].reverse().find((record) => record.feedback?.reflection.trim())?.feedback?.reflection.trim();
+  const retrospective: StageRetrospective = {
+    id: `retrospective-${stage.id}`,
+    stageId: stage.id,
+    goalReflection: `围绕“${stage.outcome}”，已完成 ${records.length} 个学习日并形成可复查证据。`,
+    representativeArtifact: representative
+      ? `第 ${representative.day} 天（${representative.evaluation.totalScore}/16）：${representative.submission}`
+      : latestReflection ?? "尚缺少经过评估的代表成果，请补充最能证明阶段目标的成果。",
+    transferableSkills: [...new Set(demonstratedSkills)].slice(0, 3).join("；")
+      || `能够用自己的话解释并应用“${stage.title}”阶段的核心方法。`,
+    nextApplication: weakest?.evaluation.nextAction.trim()
+      || latestReflection
+      || "在下一阶段的真实任务中再次应用，并保留结果与失败案例。",
+    sourceDays: records.map((record) => record.day),
+    updatedAt: now.toISOString(),
+  };
+  return { ...state, plan: { ...state.plan, retrospectives: [...(state.plan.retrospectives ?? []), retrospective] } };
+}
+
+export function updateStageRetrospective(
+  state: LearningState,
+  retrospectiveId: string,
+  changes: Pick<StageRetrospective, "goalReflection" | "representativeArtifact" | "transferableSkills" | "nextApplication">,
+  now = new Date(),
+): LearningState {
+  const normalized = {
+    goalReflection: changes.goalReflection.trim(),
+    representativeArtifact: changes.representativeArtifact.trim(),
+    transferableSkills: changes.transferableSkills.trim(),
+    nextApplication: changes.nextApplication.trim(),
+  };
+  if (Object.values(normalized).some((value) => !value)) throw new Error("阶段回顾的四项内容不能为空");
+  if (!(state.plan.retrospectives ?? []).some((item) => item.id === retrospectiveId)) throw new Error("阶段回顾不存在");
+  return {
+    ...state,
+    plan: {
+      ...state.plan,
+      retrospectives: (state.plan.retrospectives ?? []).map((item) => item.id === retrospectiveId
+        ? { ...item, ...normalized, updatedAt: now.toISOString() }
+        : item),
+    },
+  };
 }
 
 function noteEvidenceForRecords(records: DailyLearningRecord[]): { content: string; sourceDays: number[] } {

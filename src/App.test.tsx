@@ -280,6 +280,28 @@ describe("learning data controls", () => {
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.notes).toEqual([]);
   });
 
+  it("generates and edits a retrospective after a stage is complete", async () => {
+    const user = userEvent.setup();
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let day = 1; day <= 7; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: day === 7 ? "把基础方法用于真实项目" : "" });
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    render(<App />);
+
+    const section = screen.getByRole("region", { name: "阶段结束回顾" });
+    await user.click(within(section).getByRole("button", { name: "生成阶段回顾" }));
+    expect(within(section).getByText(/已完成 7 个学习日/)).toBeTruthy();
+    await user.click(within(section).getByRole("button", { name: "编辑回顾" }));
+    await user.clear(within(section).getByLabelText("可迁移能力"));
+    await user.type(within(section).getByLabelText("可迁移能力"), "拆解问题并验证最小成果");
+    await user.click(within(section).getByRole("button", { name: "保存阶段回顾" }));
+
+    expect(within(section).getByText("拆解问题并验证最小成果")).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.retrospectives[0].transferableSkills).toBe("拆解问题并验证最小成果");
+  });
+
   it("keeps data on cancellation and removes every local version after confirmation", async () => {
     const user = userEvent.setup();
     localStorage.setItem("ai-learning-os-state-v2", "legacy-state");

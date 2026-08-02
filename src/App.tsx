@@ -8,6 +8,7 @@ import {
   deleteStageNote,
   detectLearningInterruption,
   dueReviewItems,
+  generateStageRetrospective,
   generateStageNote,
   getCurrentRecord,
   initializeLearningState,
@@ -27,6 +28,7 @@ import {
   stageNoteMarkdownFilename,
   toggleCurrentTask,
   updateStageNote,
+  updateStageRetrospective,
   weeklyLearningReview,
   weeklyLearningTrend,
 } from "./learning-state";
@@ -35,7 +37,7 @@ import { completionRate, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import type { LearningStateExport } from "./learning-state";
-import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, RecoveryPlan, ReviewAssessment, StageLearningNote, TaskDifficulty, TeachingSession } from "./types";
+import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, RecoveryPlan, ReviewAssessment, StageLearningNote, StageRetrospective, TaskDifficulty, TeachingSession } from "./types";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
@@ -105,6 +107,10 @@ export function App() {
   const [creatingStageNote, setCreatingStageNote] = useState(false);
   const [pendingDeleteNote, setPendingDeleteNote] = useState<StageLearningNote | null>(null);
   const [noteDraft, setNoteDraft] = useState({ title: "", content: "" });
+  const [editingRetrospectiveId, setEditingRetrospectiveId] = useState("");
+  const [retrospectiveDraft, setRetrospectiveDraft] = useState<Pick<StageRetrospective, "goalReflection" | "representativeArtifact" | "transferableSkills" | "nextApplication">>({
+    goalReflection: "", representativeArtifact: "", transferableSkills: "", nextApplication: "",
+  });
   const initialCalendarDate = initialLoad.state?.days.at(-1)?.date ?? new Date().toISOString().slice(0, 10);
   const [calendarMonth, setCalendarMonth] = useState(initialCalendarDate.slice(0, 7));
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(initialCalendarDate);
@@ -142,6 +148,9 @@ export function App() {
     if (!query) return notes;
     return notes.filter((note) => `${note.title}\n${note.content}`.toLocaleLowerCase("zh-CN").includes(query));
   }, [noteQuery, plan]);
+  const retrospectiveStages = plan?.stages.filter((stage) =>
+    learningState?.days.some((record) => record.day === stage.endWeek * 7 && record.status === "completed")
+    || plan.retrospectives?.some((item) => item.stageId === stage.id)) ?? [];
 
   useEffect(() => {
     let active = true;
@@ -413,6 +422,39 @@ export function App() {
     setPendingDeleteNote(null);
     setStorageNotice(`已删除“${title}”阶段笔记。`);
     setStorageNoticeIsError(false);
+  }
+
+  function createRetrospective(stageId: string) {
+    try {
+      updateState((current) => generateStageRetrospective(current, stageId));
+      setStorageNotice("阶段结束回顾已生成；请检查并补充你真正想迁移到下一阶段的能力。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法生成阶段回顾");
+      setStorageNoticeIsError(true);
+    }
+  }
+
+  function beginEditingRetrospective(retrospective: StageRetrospective) {
+    setEditingRetrospectiveId(retrospective.id);
+    setRetrospectiveDraft({
+      goalReflection: retrospective.goalReflection,
+      representativeArtifact: retrospective.representativeArtifact,
+      transferableSkills: retrospective.transferableSkills,
+      nextApplication: retrospective.nextApplication,
+    });
+  }
+
+  function saveRetrospectiveDraft() {
+    try {
+      updateState((current) => updateStageRetrospective(current, editingRetrospectiveId, retrospectiveDraft));
+      setEditingRetrospectiveId("");
+      setStorageNotice("阶段回顾已保存。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法保存阶段回顾");
+      setStorageNoticeIsError(true);
+    }
   }
 
   function exportLearningData() {
@@ -1002,6 +1044,48 @@ export function App() {
           </>
         ) : <p className="empty-notes">从当前阶段的教学讲解、理解回答、实践成果与评估反馈生成一份可编辑笔记。</p>}
       </section>
+
+      {retrospectiveStages.length > 0 && (
+        <section className="panel retrospective-panel" aria-labelledby="retrospective-title">
+          <div className="retrospective-heading">
+            <div><span className="agent-label">阶段证据整合</span><h2 id="retrospective-title">阶段结束回顾</h2></div>
+            <p>把阶段目标、代表成果与可迁移能力整理成下一阶段可继续使用的记录。</p>
+          </div>
+          <div className="retrospective-list">
+            {retrospectiveStages.map((stage) => {
+              const retrospective = (plan.retrospectives ?? []).find((item) => item.stageId === stage.id);
+              if (!retrospective) return (
+                <article className="retrospective-empty" key={stage.id}>
+                  <div><small>已完成 · 第 {stage.startWeek}{stage.endWeek > stage.startWeek ? `–${stage.endWeek}` : ""} 周</small><h3>{stage.title}</h3><p>{stage.outcome}</p></div>
+                  <button className="secondary-action" onClick={() => createRetrospective(stage.id)}>生成阶段回顾</button>
+                </article>
+              );
+              const editing = editingRetrospectiveId === retrospective.id;
+              return (
+                <article key={stage.id}>
+                  <div className="retrospective-title"><div><small>{stage.title} · 来源第 {retrospective.sourceDays.join("、")} 天</small><h3>{stage.title}阶段回顾</h3></div>{!editing && <button className="text-button sync-button" onClick={() => beginEditingRetrospective(retrospective)}>编辑回顾</button>}</div>
+                  {editing ? (
+                    <div className="retrospective-form">
+                      <label>阶段目标回顾<textarea rows={3} value={retrospectiveDraft.goalReflection} onChange={(event) => setRetrospectiveDraft({ ...retrospectiveDraft, goalReflection: event.target.value })} /></label>
+                      <label>代表成果<textarea rows={3} value={retrospectiveDraft.representativeArtifact} onChange={(event) => setRetrospectiveDraft({ ...retrospectiveDraft, representativeArtifact: event.target.value })} /></label>
+                      <label>可迁移能力<textarea rows={3} value={retrospectiveDraft.transferableSkills} onChange={(event) => setRetrospectiveDraft({ ...retrospectiveDraft, transferableSkills: event.target.value })} /></label>
+                      <label>下一阶段应用<textarea rows={3} value={retrospectiveDraft.nextApplication} onChange={(event) => setRetrospectiveDraft({ ...retrospectiveDraft, nextApplication: event.target.value })} /></label>
+                      <div className="note-actions"><button className="secondary-action" onClick={() => setEditingRetrospectiveId("")}>取消</button><button className="primary-dialog-action" onClick={saveRetrospectiveDraft}>保存阶段回顾</button></div>
+                    </div>
+                  ) : (
+                    <dl>
+                      <div><dt>阶段目标回顾</dt><dd>{retrospective.goalReflection}</dd></div>
+                      <div><dt>代表成果</dt><dd>{retrospective.representativeArtifact}</dd></div>
+                      <div><dt>可迁移能力</dt><dd>{retrospective.transferableSkills}</dd></div>
+                      <div><dt>下一阶段应用</dt><dd>{retrospective.nextApplication}</dd></div>
+                    </dl>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <div className="dashboard-grid">
         <section className="panel today-panel">

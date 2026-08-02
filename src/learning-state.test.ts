@@ -9,6 +9,7 @@ import {
   deleteStageNote,
   detectLearningInterruption,
   dueReviewItems,
+  generateStageRetrospective,
   generateStageNote,
   getCurrentRecord,
   initializeLearningState,
@@ -30,6 +31,7 @@ import {
   stageNoteMarkdownFilename,
   toggleCurrentTask,
   updateStageNote,
+  updateStageRetrospective,
   weeklyLearningReview,
   weeklyLearningTrend,
 } from "./learning-state";
@@ -380,6 +382,48 @@ describe("multi-day learning state", () => {
     expect(state.plan.notes).toEqual([]);
     expect(state.days).toHaveLength(1);
     expect(() => deleteStageNote(state, note.id)).toThrow("学习笔记不存在");
+  });
+
+  it("generates an editable retrospective only after the stage is complete", () => {
+    const shortGoal = { ...goal, durationWeeks: 1 };
+    let state = initializeLearningState(generateLearningPlan(shortGoal));
+    expect(() => generateStageRetrospective(state, "stage-1")).toThrow("完成这个阶段后");
+
+    for (let day = 1; day <= 7; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 3) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, "完成了带超时与恢复测试的 Agent 工具调用", {
+          rubric: [
+            { dimension: "understanding", score: 4, evidence: "能解释模型与宿主的执行边界", feedback: "继续" },
+            { dimension: "application", score: 4, evidence: "能把超时策略应用到真实工具", feedback: "继续" },
+            { dimension: "evidence", score: 3, evidence: "保留了失败恢复测试结果", feedback: "增加并发案例" },
+            { dimension: "reflection", score: 2, evidence: "复盘较短", feedback: "补充取舍" },
+          ],
+          totalScore: 13, masteryLevel: "ready", misconceptions: [], nextAction: "把恢复策略迁移到下一阶段项目",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: day === 7 ? "继续验证迁移效果" : "" });
+    }
+
+    state = generateStageRetrospective(state, "stage-1", new Date("2026-08-01T12:00:00.000Z"));
+    expect(state.plan.retrospectives?.[0]).toMatchObject({
+      id: "retrospective-stage-1", stageId: "stage-1", sourceDays: [1, 2, 3, 4, 5, 6, 7],
+      representativeArtifact: expect.stringContaining("带超时与恢复测试"),
+      transferableSkills: expect.stringContaining("执行边界"),
+      nextApplication: "把恢复策略迁移到下一阶段项目",
+    });
+    expect(() => generateStageRetrospective(state, "stage-1")).toThrow("已经有阶段回顾");
+
+    state = updateStageRetrospective(state, "retrospective-stage-1", {
+      goalReflection: "我已能独立完成阶段目标。",
+      representativeArtifact: "工具调用演示与自动化测试。",
+      transferableSkills: "定义边界、验证失败路径。",
+      nextApplication: "用于下一阶段的 RAG 工具链。",
+    }, new Date("2026-08-01T13:00:00.000Z"));
+    expect(state.plan.retrospectives?.[0]).toMatchObject({ goalReflection: "我已能独立完成阶段目标。", updatedAt: "2026-08-01T13:00:00.000Z" });
+    expect(parseLearningState(JSON.stringify(state)).status).toBe("valid");
+    expect(serializeLearningProgressMarkdown(state)).toContain("- 可迁移能力：定义边界、验证失败路径。");
   });
 
   it("uses persisted evaluation feedback to focus the next day", () => {

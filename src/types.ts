@@ -23,6 +23,17 @@ export interface StageLearningNote {
   updatedAt: string;
 }
 
+export interface StageRetrospective {
+  id: string;
+  stageId: string;
+  goalReflection: string;
+  representativeArtifact: string;
+  transferableSkills: string;
+  nextApplication: string;
+  sourceDays: number[];
+  updatedAt: string;
+}
+
 export interface DailyTask {
   id: string;
   type: "diagnose" | "learn" | "practice" | "reflect";
@@ -39,6 +50,7 @@ export interface LearningPlan {
   stages: LearningStage[];
   today: DailyTask[];
   notes?: StageLearningNote[];
+  retrospectives?: StageRetrospective[];
 }
 
 export type TaskDifficulty = "too-easy" | "just-right" | "too-hard";
