@@ -302,7 +302,8 @@ describe("learning data controls", () => {
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.retrospectives[0].transferableSkills).toBe("拆解问题并验证最小成果");
   });
 
-  it("shows a linked recall prompt when one misconception recurs across stages", () => {
+  it("turns a linked misconception into a scored active-recall task", async () => {
+    const user = userEvent.setup();
     let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 2 }));
     for (let day = 1; day <= 8; day += 1) {
       for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
@@ -321,6 +322,16 @@ describe("learning data controls", () => {
       state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") return Response.json({ error: "Authentication is not configured" }, { status: 503 });
+      if (url.pathname === "/api/review-assessments") return Response.json({
+        answer: "重试再次执行，恢复从检查点继续。", score: 4, recall: "easy",
+        evidence: "比较了两个阶段的恢复路径", feedback: "再验证一个失败分支。",
+      }, { status: 201 });
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
 
     render(<App />);
 
@@ -328,6 +339,18 @@ describe("learning data controls", () => {
     expect(within(section).getByText("混淆重试与恢复")).toBeTruthy();
     expect(within(section).getByText("建立基础 · 第 1 天 ↔ 构建知识增强应用 · 第 8 天")).toBeTruthy();
     expect(within(section).getByText(/分别给出正确判断与一个可验证例子/)).toBeTruthy();
+    await user.click(within(section).getByRole("button", { name: "加入今天的主动回忆" }));
+    expect((within(section).getByRole("button", { name: "已加入今日任务" }) as HTMLButtonElement).disabled).toBe(true);
+
+    const taskTitle = screen.getByText("跨阶段主动回忆：混淆重试与恢复");
+    const taskBlock = taskTitle.closest("article")!;
+    await user.type(within(taskBlock).getByLabelText("闭卷主动回忆答案"), "重试再次执行，恢复从检查点继续。");
+    await user.click(within(taskBlock).getByRole("button", { name: /提交答案并自动安排复习/ }));
+
+    expect(await within(taskBlock).findByText("主动回忆 4/4 · 轻松想起")).toBeTruthy();
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    const linkedTask = saved.days[8].tasks.find((task: { title: string }) => task.title.startsWith("跨阶段主动回忆"));
+    expect(saved.days[8].artifacts[linkedTask.id].reviewPerformance.sourceDays).toEqual([1, 8]);
   });
 
   it("keeps data on cancellation and removes every local version after confirmation", async () => {

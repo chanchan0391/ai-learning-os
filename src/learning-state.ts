@@ -62,6 +62,16 @@ export interface CrossStageMisconceptionInsight {
   reviewPrompt: string;
 }
 
+export function crossStageReviewTaskId(day: number, misconception: string): string {
+  const normalized = normalizedMisconception(misconception);
+  let hash = 2166136261;
+  for (const character of normalized) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16777619);
+  }
+  return `day-${day}-cross-stage-${(hash >>> 0).toString(36)}`;
+}
+
 export interface LearningCalendarDay {
   date: string;
   dayOfMonth: number;
@@ -543,6 +553,24 @@ export function crossStageMisconceptionInsights(state: LearningState): CrossStag
     const rightLatest = Math.max(...right.occurrences.flatMap((item) => item.sourceDays));
     return rightLatest - leftLatest || left.misconception.localeCompare(right.misconception, "zh-CN");
   });
+}
+
+export function addCrossStageReviewTask(state: LearningState, misconception: string): LearningState {
+  const insight = crossStageMisconceptionInsights(state)
+    .find((item) => normalizedMisconception(item.misconception) === normalizedMisconception(misconception));
+  if (!insight) throw new Error("跨阶段重复误解不存在");
+  const taskId = crossStageReviewTaskId(state.currentDay, insight.misconception);
+  const record = getCurrentRecord(state);
+  if (record.tasks.some((task) => task.id === taskId)) return state;
+  const task: DailyTask = {
+    id: taskId,
+    type: "diagnose",
+    title: `跨阶段主动回忆：${insight.misconception}`,
+    description: insight.reviewPrompt,
+    minutes: Math.max(5, Math.round(state.plan.goal.dailyMinutes * 0.1)),
+    completed: false,
+  };
+  return updateCurrentRecord(state, (current) => ({ ...current, tasks: [...current.tasks, task] }));
 }
 
 export function learningProgressMarkdownFilename(now = new Date()): string {
@@ -1030,18 +1058,65 @@ export function saveReviewPerformance(state: LearningState, taskId: string, reca
 }
 
 export function saveReviewAssessment(state: LearningState, taskId: string, assessment: ReviewAssessment): LearningState {
+  return saveReviewAssessmentForSourceDays(
+    state,
+    taskId,
+    dueReviewItems(state, state.currentDay).map((item) => item.sourceDay),
+    assessment,
+  );
+}
+
+export function crossStageReviewItems(insight: CrossStageMisconceptionInsight): DueReviewItem[] {
+  return insight.occurrences.flatMap((occurrence) => occurrence.sourceDays.map((sourceDay) => ({
+    sourceDay,
+    misconceptions: [insight.misconception],
+    nextAction: occurrence.nextActions.join("；") || "给出正确判断与一个可验证例子",
+  })));
+}
+
+export function saveCrossStageReviewAssessment(
+  state: LearningState,
+  taskId: string,
+  misconception: string,
+  assessment: ReviewAssessment,
+): LearningState {
+  const insight = crossStageMisconceptionInsights(state)
+    .find((item) => normalizedMisconception(item.misconception) === normalizedMisconception(misconception));
+  const expectedTaskId = insight ? crossStageReviewTaskId(state.currentDay, insight.misconception) : "";
+  if (!insight || taskId !== expectedTaskId) throw new Error("当前任务不是跨阶段主动回忆");
+  return saveReviewAssessmentForSourceDays(
+    state,
+    taskId,
+    crossStageReviewItems(insight).map((item) => item.sourceDay),
+    assessment,
+  );
+}
+
+function saveReviewAssessmentForSourceDays(
+  state: LearningState,
+  taskId: string,
+  sourceDays: number[],
+  assessment: ReviewAssessment,
+): LearningState {
   if (!assessment.answer.trim() || !Number.isInteger(assessment.score) || assessment.score < 0 || assessment.score > 4
     || !assessment.evidence.trim() || !assessment.feedback.trim()) throw new Error("复习判分结果无效");
   const expectedRecall: ReviewRecall = assessment.score <= 1 ? "forgot" : assessment.score <= 3 ? "effortful" : "easy";
   if (assessment.recall !== expectedRecall) throw new Error("复习分数与回忆表现不一致");
-  const next = saveReviewPerformance(state, taskId, assessment.recall);
-  return updateCurrentRecord(next, (record) => ({
-    ...record,
+  const record = getCurrentRecord(state);
+  const task = record.tasks.find((item) => item.id === taskId);
+  if (!task || task.type !== "diagnose" || sourceDays.length === 0) throw new Error("当前任务不是待完成的主动回忆");
+  return updateCurrentRecord(state, (current) => ({
+    ...current,
+    tasks: current.tasks.map((item) => item.id === taskId ? { ...item, completed: true } : item),
     artifacts: {
-      ...record.artifacts,
+      ...current.artifacts,
       [taskId]: {
-        ...record.artifacts[taskId],
-        reviewPerformance: { ...record.artifacts[taskId].reviewPerformance!, assessment: { ...assessment, answer: assessment.answer.trim() } },
+        ...current.artifacts[taskId],
+        reviewPerformance: {
+          sourceDays: [...new Set(sourceDays)].sort((left, right) => left - right),
+          recall: assessment.recall,
+          assessment: { ...assessment, answer: assessment.answer.trim() },
+        },
       },
     },
   }));

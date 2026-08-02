@@ -1,10 +1,13 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  addCrossStageReviewTask,
   appendStageNoteEvidence,
   completeTeachingTask,
   completeCurrentDay,
   completedDayCount,
   crossStageMisconceptionInsights,
+  crossStageReviewItems,
+  crossStageReviewTaskId,
   createStageNote,
   deleteStageNote,
   detectLearningInterruption,
@@ -19,6 +22,7 @@ import {
   learningStreak,
   parseLearningStateExport,
   saveEvaluation,
+  saveCrossStageReviewAssessment,
   saveReviewAssessment,
   saveTeachingSession,
   saveUnderstandingResponse,
@@ -265,7 +269,8 @@ export function App() {
     if (!learningState || !plan) return;
     const answer = reviewDrafts[task.id] ?? "";
     if (!answer.trim()) return setAgentError("请先写下闭卷主动回忆答案");
-    const items = dueReviewItems(learningState, learningState.currentDay);
+    const linkedInsight = repeatedMisconceptions.find((item) => crossStageReviewTaskId(learningState.currentDay, item.misconception) === task.id);
+    const items = linkedInsight ? crossStageReviewItems(linkedInsight) : dueReviewItems(learningState, learningState.currentDay);
     setBusyTaskId(task.id);
     setAgentError("");
     try {
@@ -276,7 +281,9 @@ export function App() {
       });
       const body = await response.json() as ReviewAssessment | { error: string };
       if (!response.ok) throw new Error("error" in body ? body.error : "主动回忆判分失败");
-      saveState(saveReviewAssessment(learningState, task.id, body as ReviewAssessment));
+      saveState(linkedInsight
+        ? saveCrossStageReviewAssessment(learningState, task.id, linkedInsight.misconception, body as ReviewAssessment)
+        : saveReviewAssessment(learningState, task.id, body as ReviewAssessment));
     } catch (error) {
       setAgentError(error instanceof Error ? error.message : "主动回忆判分失败");
     } finally {
@@ -1013,6 +1020,15 @@ export function App() {
                   <strong>{item.misconception}</strong>
                   <p className="misconception-evidence">{item.occurrences.map((occurrence) => `${occurrence.stageTitle} · 第 ${occurrence.sourceDays.join("、")} 天`).join(" ↔ ")}</p>
                   <p>{item.reviewPrompt}</p>
+                  <button
+                    className="secondary-action misconception-action"
+                    disabled={currentRecord.tasks.some((task) => task.id === crossStageReviewTaskId(learningState.currentDay, item.misconception))}
+                    onClick={() => updateState((current) => addCrossStageReviewTask(current, item.misconception))}
+                  >
+                    {currentRecord.tasks.some((task) => task.id === crossStageReviewTaskId(learningState.currentDay, item.misconception))
+                      ? "已加入今日任务"
+                      : "加入今天的主动回忆"}
+                  </button>
                 </div>
               </li>
             ))}
@@ -1143,7 +1159,12 @@ export function App() {
           <div className="task-list">
             {currentRecord.tasks.map((task, index) => {
               const artifact = currentRecord.artifacts[task.id];
-              const reviewItems = task.type === "diagnose" ? dueReviewItems(learningState, learningState.currentDay) : [];
+              const linkedInsight = repeatedMisconceptions.find((item) => crossStageReviewTaskId(learningState.currentDay, item.misconception) === task.id);
+              const reviewItems = linkedInsight
+                ? crossStageReviewItems(linkedInsight)
+                : task.id === `day-${learningState.currentDay}-diagnose`
+                  ? dueReviewItems(learningState, learningState.currentDay)
+                  : [];
               const isAdaptiveReview = reviewItems.length > 0;
               const agentGuided = task.type === "learn" || task.type === "practice" || isAdaptiveReview;
               const submission = submissionDrafts[task.id] ?? artifact?.submission ?? "";

@@ -140,6 +140,7 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .misconception-links strong { font-size: 14px; }
 .misconception-links p { margin: 7px 0 0; color: #56635c; font-size: 12px; line-height: 1.6; }
 .misconception-links p.misconception-evidence { color: #a24f32; font-size: 10px; font-weight: 700; }
+.misconception-action { margin-top: 11px; }
 .review-assessment { margin: 0 18px 18px 52px; padding: 13px 15px; color: #315144; background: #eef5f0; border-radius: 10px; }
 .review-assessment strong { font-size: 12px; }
 .review-assessment p { margin: 5px 0; font-size: 11px; line-height: 1.5; }

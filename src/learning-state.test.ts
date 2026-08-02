@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  addCrossStageReviewTask,
   appendStageNoteEvidence,
   completeTeachingTask,
   completeCurrentDay,
@@ -7,6 +8,7 @@ import {
   createStageNote,
   createLearningStateExport,
   crossStageMisconceptionInsights,
+  crossStageReviewTaskId,
   deleteStageNote,
   detectLearningInterruption,
   dueReviewItems,
@@ -21,6 +23,7 @@ import {
   parseLearningState,
   parseLearningStateExport,
   saveEvaluation,
+  saveCrossStageReviewAssessment,
   saveReviewPerformance,
   saveReviewAssessment,
   saveTeachingSession,
@@ -660,6 +663,35 @@ describe("multi-day learning state", () => {
     }]);
     expect(serializeLearningProgressMarkdown(state)).toContain("## 跨阶段重复误解");
     expect(serializeLearningProgressMarkdown(state)).toContain("建立基础（第 1 天）；构建知识增强应用（第 8 天）");
+
+    state = addCrossStageReviewTask(state, " 混淆重试与恢复。 ");
+    const taskId = crossStageReviewTaskId(9, "混淆重试与恢复");
+    expect(getCurrentRecord(state).tasks.at(-1)).toMatchObject({
+      id: taskId,
+      type: "diagnose",
+      completed: false,
+      title: "跨阶段主动回忆：混淆重试与恢复",
+    });
+    expect(addCrossStageReviewTask(state, "混淆重试与恢复")).toEqual(state);
+
+    state = saveCrossStageReviewAssessment(state, taskId, "混淆重试与恢复", {
+      answer: "  重试再次执行，恢复从检查点继续。  ",
+      score: 4,
+      recall: "easy",
+      evidence: "比较了两个阶段的恢复路径",
+      feedback: "再验证一个失败分支",
+    });
+    expect(getCurrentRecord(state).artifacts[taskId].reviewPerformance).toEqual({
+      sourceDays: [1, 8],
+      recall: "easy",
+      assessment: {
+        answer: "重试再次执行，恢复从检查点继续。",
+        score: 4,
+        recall: "easy",
+        evidence: "比较了两个阶段的恢复路径",
+        feedback: "再验证一个失败分支",
+      },
+    });
   });
 
   it("preserves prior history while advancing consecutive days", () => {
