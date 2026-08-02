@@ -4,6 +4,7 @@ import {
   activeGoalPortfolioOverview,
   crossGoalWeeklyReview,
   crossGoalWeeklyReviewMarkdownFilename,
+  portfolioDailyAgenda,
   portfolioBudgetStatus,
   addCrossStageReviewTask,
   appendStageNoteEvidence,
@@ -148,6 +149,7 @@ export function App() {
   const activePortfolio = useMemo(() => activeGoalPortfolioOverview(activeGoals), [activeGoals]);
   const portfolioWeeklyReview = useMemo(() => crossGoalWeeklyReview(activeGoals), [activeGoals]);
   const budgetStatus = useMemo(() => dailyBudgetMinutes === null ? null : portfolioBudgetStatus(activePortfolio, dailyBudgetMinutes), [activePortfolio, dailyBudgetMinutes]);
+  const dailyAgenda = useMemo(() => portfolioDailyAgenda(activeGoals, dailyBudgetMinutes), [activeGoals, dailyBudgetMinutes]);
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
   const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
@@ -587,6 +589,14 @@ export function App() {
     setStorageNoticeIsError(false);
   }
 
+  function openAgendaTask(planId: string, taskId: string) {
+    if (plan?.id !== planId) switchActiveGoal(planId);
+    window.setTimeout(() => {
+      const target = document.getElementById(`task-${taskId}`);
+      if (target && typeof target.scrollIntoView === "function") target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }
+
   async function selectImportFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -902,6 +912,26 @@ export function App() {
     </div>
   );
 
+  const portfolioDailyAgendaPanel = activeGoals.length > 1 && (
+    <section className="portfolio-daily-agenda" aria-labelledby="portfolio-daily-agenda-title">
+      <div>
+        <strong id="portfolio-daily-agenda-title">今日跨目标清单</strong>
+        <span>{dailyAgenda.budgetMinutes === null ? "尚未设置预算，展示全部剩余任务" : `按 ${dailyAgenda.budgetMinutes} 分钟预算安排`}</span>
+      </div>
+      <p>{dailyAgenda.plannedMinutes} 分钟已安排{dailyAgenda.deferredMinutes > 0 ? ` · ${dailyAgenda.deferredMinutes} 分钟留待后续` : " · 已覆盖全部剩余任务"}</p>
+      {dailyAgenda.items.length > 0 ? (
+        <ol>
+          {dailyAgenda.items.map((item) => (
+            <li key={`${item.planId}-${item.taskId}`}>
+              <div><small>{item.subject} · {item.minutes} 分钟</small><strong>{item.title}</strong></div>
+              <button className="text-button" type="button" onClick={() => openAgendaTask(item.planId, item.taskId)}>{item.planId === plan?.id ? "定位任务" : "打开任务"}</button>
+            </li>
+          ))}
+        </ol>
+      ) : <p>当前预算不足以容纳任一完整任务；请增加预算或直接打开一个目标完成最小步骤。</p>}
+    </section>
+  );
+
   const accountControls = authState.status === "signed-in" ? (
     <div className="account-controls" aria-label="账号与同步">
       <span className="sync-status">已登录</span>
@@ -1079,6 +1109,7 @@ export function App() {
               <p className="goal-portfolio-summary">{activePortfolio.activeGoals} 个目标 · 今日 {activePortfolio.completedTasks}/{activePortfolio.totalTasks} 项 · 剩余 {activePortfolio.remainingMinutes} 分钟 · {activePortfolio.goalsNeedingAttention} 个需关注</p>
             </div>
             {portfolioBudgetControl}
+            {portfolioDailyAgendaPanel}
             {portfolioWeeklyReviewPanel}
             <div className="active-goal-list">
               {activeGoals.map((state) => {
@@ -1177,6 +1208,7 @@ export function App() {
           <button className="secondary-action" onClick={beginParallelGoal}>新建并行目标</button>
         </div>
         {portfolioBudgetControl}
+        {portfolioDailyAgendaPanel}
         {portfolioWeeklyReviewPanel}
         <div className="active-goal-list">
           {activeGoals.map((state) => {
@@ -1472,7 +1504,7 @@ export function App() {
               const agentGuided = task.type === "learn" || task.type === "practice" || isAdaptiveReview;
               const submission = submissionDrafts[task.id] ?? artifact?.submission ?? "";
               return (
-                <article className={`task-block ${task.completed ? "done" : ""}`} key={task.id}>
+                <article id={`task-${task.id}`} className={`task-block ${task.completed ? "done" : ""}`} key={task.id}>
                   <button className="task" onClick={() => toggleTask(task.id)} disabled={agentGuided && !task.completed}>
                     <span className="check">{task.completed ? "✓" : index + 1}</span>
                     <span className="task-copy"><strong>{task.title}</strong><small>{task.description}</small></span>

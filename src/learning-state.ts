@@ -748,6 +748,23 @@ export interface PortfolioBudgetStatus {
   status: "over-budget" | "within-budget";
 }
 
+export interface PortfolioDailyAgendaItem {
+  planId: string;
+  subject: string;
+  taskId: string;
+  title: string;
+  minutes: number;
+  riskLevel: ActiveGoalOverview["riskLevel"];
+}
+
+export interface PortfolioDailyAgenda {
+  budgetMinutes: number | null;
+  scheduledMinutes: number;
+  plannedMinutes: number;
+  deferredMinutes: number;
+  items: PortfolioDailyAgendaItem[];
+}
+
 export interface CrossGoalWeeklyItem {
   planId: string;
   subject: string;
@@ -850,6 +867,56 @@ export function portfolioBudgetStatus(overview: ActiveGoalPortfolioOverview, bud
     overloadedBy,
     availableMinutes: Math.max(0, budgetMinutes - overview.scheduledMinutes),
     status: overloadedBy > 0 ? "over-budget" : "within-budget",
+  };
+}
+
+/** Builds an atomic, risk-first agenda while rotating between goals at each task position. */
+export function portfolioDailyAgenda(states: LearningState[], budgetMinutes: number | null, now = new Date()): PortfolioDailyAgenda {
+  if (budgetMinutes !== null && (!Number.isInteger(budgetMinutes) || budgetMinutes < 0)) {
+    throw new Error("跨目标每日预算必须是非负整数");
+  }
+  const riskPriority: Record<ActiveGoalOverview["riskLevel"], number> = { attention: 0, review: 1, steady: 2 };
+  const queues = states.map((state) => ({
+    planId: state.plan.id,
+    subject: state.plan.goal.subject,
+    riskLevel: activeGoalOverview(state, now).riskLevel,
+    createdAt: state.plan.createdAt,
+    tasks: getCurrentRecord(state).tasks.filter((task) => !task.completed),
+  })).sort((left, right) => riskPriority[left.riskLevel] - riskPriority[right.riskLevel]
+    || left.createdAt.localeCompare(right.createdAt)
+    || left.planId.localeCompare(right.planId));
+  const scheduledMinutes = queues.reduce((total, queue) => total + queue.tasks.reduce((sum, task) => sum + task.minutes, 0), 0);
+  const items: PortfolioDailyAgendaItem[] = [];
+  let plannedMinutes = 0;
+  const maxDepth = Math.max(0, ...queues.map((queue) => queue.tasks.length));
+  const blockedPlans = new Set<string>();
+
+  for (let taskIndex = 0; taskIndex < maxDepth; taskIndex += 1) {
+    for (const queue of queues) {
+      const task = queue.tasks[taskIndex];
+      if (!task || blockedPlans.has(queue.planId)) continue;
+      if (budgetMinutes !== null && plannedMinutes + task.minutes > budgetMinutes) {
+        blockedPlans.add(queue.planId);
+        continue;
+      }
+      items.push({
+        planId: queue.planId,
+        subject: queue.subject,
+        taskId: task.id,
+        title: task.title,
+        minutes: task.minutes,
+        riskLevel: queue.riskLevel,
+      });
+      plannedMinutes += task.minutes;
+    }
+  }
+
+  return {
+    budgetMinutes,
+    scheduledMinutes,
+    plannedMinutes,
+    deferredMinutes: scheduledMinutes - plannedMinutes,
+    items,
   };
 }
 

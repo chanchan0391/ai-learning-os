@@ -109,6 +109,25 @@ describe("learning data controls", () => {
     expect(localStorage.getItem(DAILY_BUDGET_KEY)).toBeNull();
   });
 
+  it("turns the cross-goal budget into an actionable daily agenda", async () => {
+    const user = userEvent.setup();
+    const first = initializeLearningState(generateLearningPlan(goal));
+    const second = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统", dailyMinutes: 30 }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(first));
+    localStorage.setItem(ACTIVE_STATES_KEY, JSON.stringify({ selectedPlanId: first.plan.id, states: [first, second] }));
+    localStorage.setItem(DAILY_BUDGET_KEY, "30");
+    render(<App />);
+
+    const agenda = screen.getByRole("region", { name: "今日跨目标清单" });
+    expect(within(agenda).getByText("按 30 分钟预算安排")).toBeTruthy();
+    expect(within(agenda).getByText(/分钟已安排 · .*分钟留待后续/)).toBeTruthy();
+    expect(within(agenda).getAllByRole("listitem").length).toBeGreaterThan(0);
+    await user.click(within(agenda).getAllByRole("button", { name: "打开任务" })[0]);
+
+    expect(screen.getByRole("heading", { name: "分布式系统", level: 1 })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).selectedPlanId).toBe(second.plan.id);
+  });
+
   it("opens the goal prioritized by the cross-goal weekly review", async () => {
     const user = userEvent.setup();
     let first = initializeLearningState(generateLearningPlan(goal, new Date("2026-08-02T08:00:00.000Z")));

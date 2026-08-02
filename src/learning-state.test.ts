@@ -3,6 +3,7 @@ import {
   activeGoalOverview,
   activeGoalPortfolioOverview,
   portfolioBudgetStatus,
+  portfolioDailyAgenda,
   addCrossStageReviewTask,
   appendStageNoteEvidence,
   completeTeachingTask,
@@ -123,6 +124,27 @@ describe("multi-day learning state", () => {
       availableMinutes: 15,
       status: "within-budget",
     });
+  });
+
+  it("builds a budgeted cross-goal agenda that prioritizes risk and keeps tasks atomic", () => {
+    const steady = initializeLearningState(generateLearningPlan(goal), new Date("2026-08-01T10:00:00.000Z"));
+    const interrupted = initializeLearningState(
+      generateLearningPlan({ ...goal, subject: "分布式系统", dailyMinutes: 30 }, new Date("2026-07-28T10:00:00.000Z")),
+      new Date("2026-07-28T10:00:00.000Z"),
+    );
+
+    const agenda = portfolioDailyAgenda([steady, interrupted], 45, new Date("2026-08-02T10:00:00.000Z"));
+
+    expect(agenda).toMatchObject({ budgetMinutes: 45, scheduledMinutes: 90, plannedMinutes: 41, deferredMinutes: 49 });
+    expect(agenda.items.map((item) => [item.subject, item.minutes, item.riskLevel])).toEqual([
+      ["分布式系统", 4, "attention"],
+      ["AI Agent 工程", 7, "steady"],
+      ["分布式系统", 10, "attention"],
+      ["AI Agent 工程", 20, "steady"],
+    ]);
+    expect(agenda.items.every((item) => item.minutes > 0)).toBe(true);
+    expect(portfolioDailyAgenda([steady], null).plannedMinutes).toBe(60);
+    expect(() => portfolioDailyAgenda([steady], -1)).toThrow("跨目标每日预算必须是非负整数");
   });
 
   it("compares weekly allocation, outcomes, and risk across active goals", () => {
