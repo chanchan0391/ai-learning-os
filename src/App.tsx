@@ -28,6 +28,7 @@ import {
   toggleCurrentTask,
   updateStageNote,
   weeklyLearningReview,
+  weeklyLearningTrend,
 } from "./learning-state";
 import { BrowserLearningStateRepository } from "./learning-storage";
 import { completionRate, validateGoal } from "./planner";
@@ -126,6 +127,7 @@ export function App() {
   const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
   const reviewSchedule = useMemo(() => learningState ? scheduledReviewItems(learningState) : [], [learningState]);
   const weeklyReview = useMemo(() => learningState ? weeklyLearningReview(learningState) : null, [learningState]);
+  const weeklyTrend = useMemo(() => learningState ? weeklyLearningTrend(learningState) : null, [learningState]);
   const calendar = useMemo(() => learningState ? learningCalendarMonth(learningState, calendarMonth) : null, [calendarMonth, learningState]);
   const selectedCalendarDay = calendar?.weeks.flat().find((day) => day.date === selectedCalendarDate);
   const firstCalendarMonth = learningState?.days[0]?.date.slice(0, 7) ?? calendarMonth;
@@ -868,6 +870,23 @@ export function App() {
             <div><strong>{weeklyReview.difficultDays}</strong><span>偏难日</span></div>
             <div><strong>{weeklyReview.successfulReviews}</strong><span>轻松回忆</span></div>
           </div>
+          {weeklyTrend && (
+            <div className={`weekly-trend ${weeklyTrend.status}`}>
+              <div>
+                <strong>{weeklyTrend.status === "insufficient-data" ? "周期趋势正在形成" : `与前 ${weeklyTrend.windowSize} 个完成日相比`}</strong>
+                <span>{weeklyTrend.summary}</span>
+              </div>
+              <ul aria-label="等长周期变化">
+                {weeklyTrend.status === "insufficient-data" ? <li>尚无可比窗口</li> : (
+                  <>
+                    <li>成果评分 {weeklyTrend.evaluationScoreDelta === null ? "证据不足" : `${weeklyTrend.evaluationScoreDelta > 0 ? "+" : ""}${weeklyTrend.evaluationScoreDelta}`}</li>
+                    <li>偏难日 {weeklyTrend.difficultDaysDelta > 0 ? "+" : ""}{weeklyTrend.difficultDaysDelta}</li>
+                    <li>轻松回忆 {weeklyTrend.successfulReviewsDelta > 0 ? "+" : ""}{weeklyTrend.successfulReviewsDelta}</li>
+                  </>
+                )}
+              </ul>
+            </div>
+          )}
           <p className="weekly-next-action"><strong>本周最小下一步</strong>{weeklyReview.nextAction}</p>
         </section>
       )}

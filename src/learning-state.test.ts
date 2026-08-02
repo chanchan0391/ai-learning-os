@@ -31,6 +31,7 @@ import {
   toggleCurrentTask,
   updateStageNote,
   weeklyLearningReview,
+  weeklyLearningTrend,
 } from "./learning-state";
 import { generateLearningPlan } from "./planner";
 
@@ -138,6 +139,8 @@ describe("multi-day learning state", () => {
     expect(markdown).toContain("# AI Agent 工程 学习进展");
     expect(markdown).toContain("## 最近 7 个完成日");
     expect(markdown).toContain("- 最小下一步：缩小范围");
+    expect(markdown).toContain("## 等长周期趋势");
+    expect(markdown).toContain("- 对比状态：证据不足");
     expect(markdown).toContain("## 阶段进展");
     expect(markdown).toContain("- 已完成：1/21 个学习日");
     expect(markdown).toContain("基础笔记（1 个来源日）");
@@ -224,6 +227,56 @@ describe("multi-day learning state", () => {
       averageEvaluationScore: null,
       headline: "完成第一天后，这里会形成你的周回顾。",
       nextAction: "完成今天的学习闭环。",
+    });
+  });
+
+  it("compares equal completed-day windows without persisting a second analytics state", () => {
+    let state = initializeLearningState(generateLearningPlan(goal));
+    const scores = [8, 8, 12, 12];
+    for (const [index, score] of scores.entries()) {
+      const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+      const dimensionScore = score / 4;
+      state = saveEvaluation(state, practice.id, `成果 ${index + 1}`, {
+        rubric: ["understanding", "application", "evidence", "reflection"].map((dimension) => ({
+          dimension: dimension as "understanding" | "application" | "evidence" | "reflection",
+          score: dimensionScore,
+          evidence: "可见证据",
+          feedback: "继续验证",
+        })),
+        totalScore: score,
+        masteryLevel: score <= 7 ? "needs-support" : score <= 12 ? "developing" : "ready",
+        misconceptions: [],
+        nextAction: "增加边界案例",
+      });
+      for (const task of getCurrentRecord(state).tasks.filter((task) => !task.completed)) {
+        state = toggleCurrentTask(state, task.id);
+      }
+      state = completeCurrentDay(
+        state,
+        { difficulty: index < 2 ? "too-hard" : "just-right", reflection: `复盘 ${index + 1}` },
+        new Date(`2026-08-0${index + 2}T10:00:00.000Z`),
+      );
+    }
+
+    expect(weeklyLearningTrend(state)).toEqual({
+      status: "improving",
+      windowSize: 2,
+      evaluationScoreDelta: 4,
+      difficultDaysDelta: -2,
+      successfulReviewsDelta: 0,
+      summary: "近期证据比上一阶段更稳，继续保持当前节奏。",
+    });
+    expect(state).not.toHaveProperty("weeklyTrend");
+  });
+
+  it("waits for two equal two-day windows before claiming a trend", () => {
+    expect(weeklyLearningTrend(initializeLearningState(generateLearningPlan(goal)))).toEqual({
+      status: "insufficient-data",
+      windowSize: 0,
+      evaluationScoreDelta: null,
+      difficultDaysDelta: 0,
+      successfulReviewsDelta: 0,
+      summary: "完成至少 4 个学习日后，这里会显示等长周期趋势。",
     });
   });
 

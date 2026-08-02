@@ -39,6 +39,15 @@ export interface WeeklyLearningReview {
   nextAction: string;
 }
 
+export interface WeeklyLearningTrend {
+  status: "insufficient-data" | "improving" | "steady" | "needs-attention";
+  windowSize: number;
+  evaluationScoreDelta: number | null;
+  difficultDaysDelta: number;
+  successfulReviewsDelta: number;
+  summary: string;
+}
+
 export interface LearningCalendarDay {
   date: string;
   dayOfMonth: number;
@@ -393,12 +402,65 @@ export function weeklyLearningReview(state: LearningState): WeeklyLearningReview
   };
 }
 
+function roundedAverage(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10;
+}
+
+export function weeklyLearningTrend(state: LearningState): WeeklyLearningTrend {
+  const completed = state.days.filter((day) => day.status === "completed");
+  const windowSize = Math.min(7, Math.floor(completed.length / 2));
+  if (windowSize < 2) {
+    return {
+      status: "insufficient-data",
+      windowSize,
+      evaluationScoreDelta: null,
+      difficultDaysDelta: 0,
+      successfulReviewsDelta: 0,
+      summary: "完成至少 4 个学习日后，这里会显示等长周期趋势。",
+    };
+  }
+
+  const current = completed.slice(-windowSize);
+  const previous = completed.slice(-windowSize * 2, -windowSize);
+  const summarize = (records: DailyLearningRecord[]) => ({
+    averageEvaluationScore: roundedAverage(records.flatMap((day) => Object.values(day.artifacts)
+      .flatMap((artifact) => artifact.evaluation ? [artifact.evaluation.totalScore] : []))),
+    difficultDays: records.filter((day) => day.feedback?.difficulty === "too-hard").length,
+    successfulReviews: records.flatMap((day) => Object.values(day.artifacts)
+      .flatMap((artifact) => artifact.reviewPerformance ? [artifact.reviewPerformance] : []))
+      .filter((review) => review.recall === "easy").length,
+  });
+  const currentSummary = summarize(current);
+  const previousSummary = summarize(previous);
+  const evaluationScoreDelta = currentSummary.averageEvaluationScore === null || previousSummary.averageEvaluationScore === null
+    ? null
+    : Math.round((currentSummary.averageEvaluationScore - previousSummary.averageEvaluationScore) * 10) / 10;
+  const difficultDaysDelta = currentSummary.difficultDays - previousSummary.difficultDays;
+  const successfulReviewsDelta = currentSummary.successfulReviews - previousSummary.successfulReviews;
+  const signals = [
+    evaluationScoreDelta === null || Math.abs(evaluationScoreDelta) < 0.5 ? 0 : evaluationScoreDelta > 0 ? 1 : -1,
+    difficultDaysDelta === 0 ? 0 : difficultDaysDelta < 0 ? 1 : -1,
+    successfulReviewsDelta === 0 ? 0 : successfulReviewsDelta > 0 ? 1 : -1,
+  ];
+  const signalTotal = signals.reduce((sum, signal) => sum + signal, 0);
+  const status = signalTotal > 0 ? "improving" : signalTotal < 0 ? "needs-attention" : "steady";
+  const summary = status === "improving"
+    ? "近期证据比上一阶段更稳，继续保持当前节奏。"
+    : status === "needs-attention"
+      ? "近期证据有所转弱，优先执行周回顾的最小下一步。"
+      : "近期表现基本稳定，继续积累可验证成果。";
+
+  return { status, windowSize, evaluationScoreDelta, difficultDaysDelta, successfulReviewsDelta, summary };
+}
+
 export function learningProgressMarkdownFilename(now = new Date()): string {
   return `ai-learning-os-progress-${dateKey(now)}.md`;
 }
 
 export function serializeLearningProgressMarkdown(state: LearningState, now = new Date()): string {
   const review = weeklyLearningReview(state);
+  const trend = weeklyLearningTrend(state);
   const stages = state.plan.stages.map((stage) => {
     const records = state.days.filter((record) => {
       const week = Math.ceil(record.day / 7);
@@ -437,6 +499,17 @@ export function serializeLearningProgressMarkdown(state: LearningState, now = ne
     `- 偏难日：${review.difficultDays}`,
     `- 轻松回忆：${review.successfulReviews}`,
     `- 最小下一步：${review.nextAction}`,
+    "",
+    "## 等长周期趋势",
+    "",
+    trend.summary,
+    "",
+    trend.status === "insufficient-data"
+      ? "- 对比状态：证据不足"
+      : `- 对比窗口：最近 ${trend.windowSize} 个完成日 vs. 前 ${trend.windowSize} 个完成日`,
+    `- 成果评分变化：${trend.evaluationScoreDelta === null ? "证据不足" : `${trend.evaluationScoreDelta > 0 ? "+" : ""}${trend.evaluationScoreDelta}`}`,
+    `- 偏难日变化：${trend.status === "insufficient-data" ? "证据不足" : `${trend.difficultDaysDelta > 0 ? "+" : ""}${trend.difficultDaysDelta}`}`,
+    `- 轻松回忆变化：${trend.status === "insufficient-data" ? "证据不足" : `${trend.successfulReviewsDelta > 0 ? "+" : ""}${trend.successfulReviewsDelta}`}`,
     "",
     "## 阶段进展",
     "",

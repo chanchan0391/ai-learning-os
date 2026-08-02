@@ -76,6 +76,28 @@ describe("learning data controls", () => {
     expect(within(review).getByText("60")).toBeTruthy();
     expect(within(review).getByText("8/16")).toBeTruthy();
     expect(within(review).getByText("独立解释关键机制")).toBeTruthy();
+    expect(within(review).getByText("周期趋势正在形成")).toBeTruthy();
+    expect(within(review).getByText("完成至少 4 个学习日后，这里会显示等长周期趋势。")).toBeTruthy();
+  });
+
+  it("shows an improving equal-window trend after four completed learning days", () => {
+    let state = initializeLearningState(generateLearningPlan(goal));
+    for (let index = 0; index < 4; index += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      state = completeCurrentDay(
+        state,
+        { difficulty: index < 2 ? "too-hard" : "just-right", reflection: `复盘 ${index + 1}` },
+        new Date(`2026-08-0${index + 2}T10:00:00.000Z`),
+      );
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+    render(<App />);
+
+    const review = screen.getByRole("region", { name: "学习周回顾" });
+    expect(within(review).getByText("与前 2 个完成日相比")).toBeTruthy();
+    expect(within(review).getByText("近期证据比上一阶段更稳，继续保持当前节奏。")).toBeTruthy();
+    expect(within(review).getByText("偏难日 -2")).toBeTruthy();
   });
 
   it("downloads the weekly review and stage progress as Markdown", async () => {
