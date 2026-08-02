@@ -721,6 +721,86 @@ export function detectLearningInterruption(state: LearningState, now = new Date(
   };
 }
 
+export interface ActiveGoalOverview {
+  completedTasks: number;
+  totalTasks: number;
+  remainingMinutes: number;
+  riskLevel: "steady" | "review" | "attention";
+  riskLabel: string;
+  recentProgress: string;
+}
+
+export interface ActiveGoalPortfolioOverview {
+  activeGoals: number;
+  completedTasks: number;
+  totalTasks: number;
+  remainingMinutes: number;
+  goalsNeedingAttention: number;
+}
+
+/** Derives the compact, evidence-based summary used by the cross-goal home. */
+export function activeGoalOverview(state: LearningState, now = new Date()): ActiveGoalOverview {
+  const current = getCurrentRecord(state);
+  const completedTasks = current.tasks.filter((task) => task.completed).length;
+  const remainingMinutes = current.tasks.reduce((sum, task) => sum + (task.completed ? 0 : task.minutes), 0);
+  const interruption = detectLearningInterruption(state, now);
+  const reviewsDue = dueReviewItems(state, state.currentDay).length;
+  const latestCompleted = [...state.days].reverse().find((record) => record.status === "completed");
+
+  let riskLevel: ActiveGoalOverview["riskLevel"] = "steady";
+  let riskLabel = "当前节奏稳定";
+  if (interruption) {
+    riskLevel = "attention";
+    riskLabel = interruption.reason === "inactivity"
+      ? `已中断 ${interruption.inactiveDays} 天`
+      : interruption.reason === "repeated-difficulty"
+        ? "连续两天反馈偏难"
+        : `中断 ${interruption.inactiveDays} 天且连续偏难`;
+  } else if (reviewsDue > 0) {
+    riskLevel = "review";
+    riskLabel = `${reviewsDue} 项薄弱点复习到期`;
+  } else if (latestCompleted?.feedback?.difficulty === "too-hard") {
+    riskLevel = "review";
+    riskLabel = "最近一天反馈偏难";
+  }
+
+  if (!latestCompleted) {
+    return {
+      completedTasks,
+      totalTasks: current.tasks.length,
+      remainingMinutes,
+      riskLevel,
+      riskLabel,
+      recentProgress: "尚未完成首个学习日",
+    };
+  }
+
+  const evaluations = Object.values(latestCompleted.artifacts)
+    .flatMap((artifact) => artifact.evaluation ? [artifact.evaluation] : []);
+  const averageScore = evaluations.length > 0
+    ? Math.round(evaluations.reduce((sum, evaluation) => sum + evaluation.totalScore, 0) / evaluations.length * 10) / 10
+    : null;
+  return {
+    completedTasks,
+    totalTasks: current.tasks.length,
+    remainingMinutes,
+    riskLevel,
+    riskLabel,
+    recentProgress: `最近完成第 ${latestCompleted.day} 天${averageScore === null ? "" : ` · 成果 ${averageScore}/16`}`,
+  };
+}
+
+export function activeGoalPortfolioOverview(states: LearningState[], now = new Date()): ActiveGoalPortfolioOverview {
+  const overviews = states.map((state) => activeGoalOverview(state, now));
+  return {
+    activeGoals: states.length,
+    completedTasks: overviews.reduce((sum, overview) => sum + overview.completedTasks, 0),
+    totalTasks: overviews.reduce((sum, overview) => sum + overview.totalTasks, 0),
+    remainingMinutes: overviews.reduce((sum, overview) => sum + overview.remainingMinutes, 0),
+    goalsNeedingAttention: overviews.filter((overview) => overview.riskLevel !== "steady").length,
+  };
+}
+
 export function toggleCurrentTask(state: LearningState, taskId: string): LearningState {
   if (getCurrentRecord(state).status === "completed") return state;
   return {

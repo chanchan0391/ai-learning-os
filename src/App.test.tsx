@@ -62,6 +62,11 @@ describe("learning data controls", () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: goal.subject, level: 1 })).toBeTruthy();
+    expect(screen.getByText("2 个目标 · 今日 0/8 项 · 剩余 120 分钟 · 0 个需关注")).toBeTruthy();
+    const firstSummary = screen.getByLabelText(`${goal.subject}目标摘要`);
+    expect(within(firstSummary).getByText("0/4 项 · 剩余 60 分钟", { exact: false })).toBeTruthy();
+    expect(within(firstSummary).getByText("当前节奏稳定")).toBeTruthy();
+    expect(within(firstSummary).getByText("尚未完成首个学习日")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "切换" }));
 
     expect(screen.getByRole("heading", { name: "分布式系统", level: 1 })).toBeTruthy();

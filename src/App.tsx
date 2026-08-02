@@ -1,5 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  activeGoalOverview,
+  activeGoalPortfolioOverview,
   addCrossStageReviewTask,
   appendStageNoteEvidence,
   completeTeachingTask,
@@ -137,6 +139,7 @@ export function App() {
     { shouldRetry: (error) => !(error instanceof SyncConflictError) },
   ));
   const plan = learningState?.plan ?? null;
+  const activePortfolio = useMemo(() => activeGoalPortfolioOverview(activeGoals), [activeGoals]);
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
   const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
@@ -983,18 +986,26 @@ export function App() {
         </section>
         {activeGoals.length > 0 && (
           <section className="panel active-goals" aria-labelledby="active-goals-title">
-            <div><p className="eyebrow">并行学习</p><h2 id="active-goals-title">进行中的目标</h2></div>
+            <div>
+              <p className="eyebrow">并行学习</p><h2 id="active-goals-title">进行中的目标</h2>
+              <p className="goal-portfolio-summary">{activePortfolio.activeGoals} 个目标 · 今日 {activePortfolio.completedTasks}/{activePortfolio.totalTasks} 项 · 剩余 {activePortfolio.remainingMinutes} 分钟 · {activePortfolio.goalsNeedingAttention} 个需关注</p>
+            </div>
             <div className="active-goal-list">
-              {activeGoals.map((state) => (
-                <article key={state.plan.id}>
+              {activeGoals.map((state) => {
+                const overview = activeGoalOverview(state);
+                return <article key={state.plan.id}>
                   <div>
                     <strong>{state.plan.goal.subject}</strong>
                     <span>{state.plan.goal.targetOutcome}</span>
-                    <small>第 {state.currentDay} 天 · 已完成 {completedDayCount(state)} 天</small>
+                    <div className="goal-overview" aria-label={`${state.plan.goal.subject}目标摘要`}>
+                      <small><b>今日</b>{overview.completedTasks}/{overview.totalTasks} 项 · 剩余 {overview.remainingMinutes} 分钟</small>
+                      <small className={`goal-risk ${overview.riskLevel}`}><b>风险</b>{overview.riskLabel}</small>
+                      <small><b>进展</b>{overview.recentProgress}</small>
+                    </div>
                   </div>
                   <button className="secondary-action" onClick={() => switchActiveGoal(state.plan.id)}>打开目标</button>
-                </article>
-              ))}
+                </article>;
+              })}
             </div>
           </section>
         )}
@@ -1069,22 +1080,30 @@ export function App() {
       )}
       <section className="panel active-goals dashboard-goals" aria-labelledby="dashboard-goals-title">
         <div className="active-goals-heading">
-          <div><p className="eyebrow">并行学习</p><h2 id="dashboard-goals-title">进行中的目标</h2></div>
+          <div>
+            <p className="eyebrow">并行学习</p><h2 id="dashboard-goals-title">进行中的目标</h2>
+            <p className="goal-portfolio-summary">{activePortfolio.activeGoals} 个目标 · 今日 {activePortfolio.completedTasks}/{activePortfolio.totalTasks} 项 · 剩余 {activePortfolio.remainingMinutes} 分钟 · {activePortfolio.goalsNeedingAttention} 个需关注</p>
+          </div>
           <button className="secondary-action" onClick={beginParallelGoal}>新建并行目标</button>
         </div>
         <div className="active-goal-list">
-          {activeGoals.map((state) => (
-            <article className={state.plan.id === plan.id ? "selected" : ""} key={state.plan.id}>
+          {activeGoals.map((state) => {
+            const overview = activeGoalOverview(state);
+            return <article className={state.plan.id === plan.id ? "selected" : ""} key={state.plan.id}>
               <div>
                 <strong>{state.plan.goal.subject}</strong>
                 <span>{state.plan.goal.targetOutcome}</span>
-                <small>第 {state.currentDay} 天 · 已完成 {completedDayCount(state)} 天</small>
+                <div className="goal-overview" aria-label={`${state.plan.goal.subject}目标摘要`}>
+                  <small><b>今日</b>{overview.completedTasks}/{overview.totalTasks} 项 · 剩余 {overview.remainingMinutes} 分钟</small>
+                  <small className={`goal-risk ${overview.riskLevel}`}><b>风险</b>{overview.riskLabel}</small>
+                  <small><b>进展</b>{overview.recentProgress}</small>
+                </div>
               </div>
               {state.plan.id === plan.id
                 ? <span className="current-goal-label">当前目标</span>
                 : <button className="secondary-action" onClick={() => switchActiveGoal(state.plan.id)}>切换</button>}
-            </article>
-          ))}
+            </article>;
+          })}
         </div>
         {authState.status === "signed-in" && activeGoals.length > 1 && <p className="archive-boundary">全部进行中目标都会自动同步；切换目标不会中断其他目标的云端更新。</p>}
       </section>

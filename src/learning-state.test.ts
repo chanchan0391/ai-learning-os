@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeGoalOverview,
+  activeGoalPortfolioOverview,
   addCrossStageReviewTask,
   appendStageNoteEvidence,
   completeTeachingTask,
@@ -57,6 +59,46 @@ function completedState() {
 }
 
 describe("multi-day learning state", () => {
+  it("summarizes today's work, learning risk, and recent evidence for a cross-goal home", () => {
+    let state = completedState();
+    state = saveEvaluation(state, getCurrentRecord(state).tasks.find((task) => task.type === "practice")!.id, "成果", {
+      rubric: [
+        { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "evidence", score: 2, evidence: "证据", feedback: "反馈" },
+        { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+      ],
+      totalScore: 8, masteryLevel: "developing", misconceptions: [], nextAction: "补充边界测试",
+    });
+    state = completeCurrentDay(state, { difficulty: "too-hard", reflection: "需要缩小范围" }, new Date("2026-07-30T18:00:00.000Z"));
+    state = toggleCurrentTask(state, getCurrentRecord(state).tasks[0].id);
+
+    expect(activeGoalOverview(state, new Date("2026-07-31T10:00:00.000Z"))).toEqual({
+      completedTasks: 1,
+      totalTasks: 4,
+      remainingMinutes: 54,
+      riskLevel: "review",
+      riskLabel: "1 项薄弱点复习到期",
+      recentProgress: "最近完成第 1 天 · 成果 8/16",
+    });
+  });
+
+  it("aggregates cross-goal workload and attention signals", () => {
+    const steady = initializeLearningState(generateLearningPlan(goal), new Date("2026-07-31T10:00:00.000Z"));
+    const interrupted = initializeLearningState(
+      generateLearningPlan({ ...goal, subject: "分布式系统", dailyMinutes: 30 }),
+      new Date("2026-07-27T10:00:00.000Z"),
+    );
+
+    expect(activeGoalPortfolioOverview([steady, interrupted], new Date("2026-08-01T10:00:00.000Z"))).toEqual({
+      activeGoals: 2,
+      completedTasks: 0,
+      totalTasks: 8,
+      remainingMinutes: 90,
+      goalsNeedingAttention: 1,
+    });
+  });
+
   it("detects missed learning days without treating a one-day gap as an interruption", () => {
     const plan = generateLearningPlan(goal);
     const state = initializeLearningState(plan, new Date("2026-07-28T10:00:00.000Z"));
