@@ -302,6 +302,34 @@ describe("learning data controls", () => {
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.retrospectives[0].transferableSkills).toBe("拆解问题并验证最小成果");
   });
 
+  it("shows a linked recall prompt when one misconception recurs across stages", () => {
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 2 }));
+    for (let day = 1; day <= 8; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 1 || day === 8) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, "成果", {
+          rubric: [
+            { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+            { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+            { dimension: "evidence", score: 2, evidence: "证据", feedback: "反馈" },
+            { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+          ],
+          totalScore: 8, masteryLevel: "developing", misconceptions: ["混淆重试与恢复"], nextAction: "画出恢复路径",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+    render(<App />);
+
+    const section = screen.getByRole("region", { name: "跨阶段重复误解" });
+    expect(within(section).getByText("混淆重试与恢复")).toBeTruthy();
+    expect(within(section).getByText("建立基础 · 第 1 天 ↔ 构建知识增强应用 · 第 8 天")).toBeTruthy();
+    expect(within(section).getByText(/分别给出正确判断与一个可验证例子/)).toBeTruthy();
+  });
+
   it("keeps data on cancellation and removes every local version after confirmation", async () => {
     const user = userEvent.setup();
     localStorage.setItem("ai-learning-os-state-v2", "legacy-state");

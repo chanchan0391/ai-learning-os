@@ -134,6 +134,12 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .review-schedule li > span.due-now { color: #fff; background: #237a5b; }
 .review-schedule li strong { font-size: 13px; }
 .review-schedule li p { margin: 4px 0 0; color: #657169; font-size: 12px; line-height: 1.55; }
+.misconception-links { margin-bottom: 22px; padding: 22px 28px; border-color: #d7cbbb; background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(249,243,232,.82)); }
+.misconception-links ol { display: grid; gap: 10px; margin: 18px 0 0; padding: 0; list-style: none; }
+.misconception-links li { padding: 15px 17px; border-left: 3px solid #c9633f; border-radius: 4px 12px 12px 4px; background: rgba(255,255,255,.62); }
+.misconception-links strong { font-size: 14px; }
+.misconception-links p { margin: 7px 0 0; color: #56635c; font-size: 12px; line-height: 1.6; }
+.misconception-links p.misconception-evidence { color: #a24f32; font-size: 10px; font-weight: 700; }
 .review-assessment { margin: 0 18px 18px 52px; padding: 13px 15px; color: #315144; background: #eef5f0; border-radius: 10px; }
 .review-assessment strong { font-size: 12px; }
 .review-assessment p { margin: 5px 0; font-size: 11px; line-height: 1.5; }

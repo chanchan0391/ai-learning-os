@@ -4,6 +4,7 @@ import {
   completeTeachingTask,
   completeCurrentDay,
   completedDayCount,
+  crossStageMisconceptionInsights,
   createStageNote,
   deleteStageNote,
   detectLearningInterruption,
@@ -132,6 +133,7 @@ export function App() {
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
   const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
   const reviewSchedule = useMemo(() => learningState ? scheduledReviewItems(learningState) : [], [learningState]);
+  const repeatedMisconceptions = useMemo(() => learningState ? crossStageMisconceptionInsights(learningState) : [], [learningState]);
   const weeklyReview = useMemo(() => learningState ? weeklyLearningReview(learningState) : null, [learningState]);
   const weeklyTrend = useMemo(() => learningState ? weeklyLearningTrend(learningState) : null, [learningState]);
   const calendar = useMemo(() => learningState ? learningCalendarMonth(learningState, calendarMonth) : null, [calendarMonth, learningState]);
@@ -997,6 +999,26 @@ export function App() {
           </ol>
         ) : <p className="empty-notes">未来 14 天暂无待复习薄弱点；新的评估反馈会自动进入这里。</p>}
       </section>
+
+      {repeatedMisconceptions.length > 0 && (
+        <section className="panel misconception-links" aria-labelledby="misconception-links-title">
+          <div className="review-schedule-heading">
+            <div><span className="agent-label">Evaluator × Review Agent</span><h2 id="misconception-links-title">跨阶段重复误解</h2></div>
+            <small>{repeatedMisconceptions.length} 条关联</small>
+          </div>
+          <ol>
+            {repeatedMisconceptions.map((item) => (
+              <li key={item.misconception}>
+                <div>
+                  <strong>{item.misconception}</strong>
+                  <p className="misconception-evidence">{item.occurrences.map((occurrence) => `${occurrence.stageTitle} · 第 ${occurrence.sourceDays.join("、")} 天`).join(" ↔ ")}</p>
+                  <p>{item.reviewPrompt}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
 
       <section className="panel notes-panel" aria-labelledby="notes-title">
         <div className="notes-heading">

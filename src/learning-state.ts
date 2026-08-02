@@ -49,6 +49,19 @@ export interface WeeklyLearningTrend {
   summary: string;
 }
 
+export interface CrossStageMisconceptionOccurrence {
+  stageId: string;
+  stageTitle: string;
+  sourceDays: number[];
+  nextActions: string[];
+}
+
+export interface CrossStageMisconceptionInsight {
+  misconception: string;
+  occurrences: CrossStageMisconceptionOccurrence[];
+  reviewPrompt: string;
+}
+
 export interface LearningCalendarDay {
   date: string;
   dayOfMonth: number;
@@ -472,6 +485,66 @@ export function weeklyLearningTrend(state: LearningState): WeeklyLearningTrend {
   return { status, windowSize, evaluationScoreDelta, difficultDaysDelta, successfulReviewsDelta, summary };
 }
 
+function normalizedMisconception(value: string): string {
+  return value.trim().toLocaleLowerCase("zh-CN").replace(/[\p{P}\p{S}\s]+/gu, "");
+}
+
+export function crossStageMisconceptionInsights(state: LearningState): CrossStageMisconceptionInsight[] {
+  const evidence = new Map<string, {
+    label: string;
+    stages: Map<string, { title: string; days: Set<number>; nextActions: Set<string> }>;
+  }>();
+
+  for (const record of state.days) {
+    const week = Math.ceil(record.day / 7);
+    const stage = state.plan.stages.find((item) => week >= item.startWeek && week <= item.endWeek);
+    if (!stage) continue;
+    for (const artifact of Object.values(record.artifacts)) {
+      if (!artifact.evaluation) continue;
+      for (const rawMisconception of artifact.evaluation.misconceptions) {
+        const label = rawMisconception.trim();
+        const key = normalizedMisconception(label);
+        if (!key) continue;
+        const grouped = evidence.get(key) ?? { label, stages: new Map() };
+        const occurrence = grouped.stages.get(stage.id) ?? {
+          title: stage.title,
+          days: new Set<number>(),
+          nextActions: new Set<string>(),
+        };
+        occurrence.days.add(record.day);
+        if (artifact.evaluation.nextAction.trim()) occurrence.nextActions.add(artifact.evaluation.nextAction.trim());
+        grouped.stages.set(stage.id, occurrence);
+        evidence.set(key, grouped);
+      }
+    }
+  }
+
+  return [...evidence.values()].flatMap((grouped) => {
+    if (grouped.stages.size < 2) return [];
+    const occurrences = state.plan.stages.flatMap((stage) => {
+      const occurrence = grouped.stages.get(stage.id);
+      return occurrence ? [{
+        stageId: stage.id,
+        stageTitle: occurrence.title,
+        sourceDays: [...occurrence.days].sort((left, right) => left - right),
+        nextActions: [...occurrence.nextActions],
+      }] : [];
+    });
+    const stageNames = occurrences.map((item) => `「${item.stageTitle}」`).join("、");
+    return [{
+      misconception: grouped.label,
+      occurrences,
+      reviewPrompt: `不查资料，比较${stageNames}中的相关案例：解释“${grouped.label}”为什么不成立，并分别给出正确判断与一个可验证例子。`,
+    }];
+  }).sort((left, right) => {
+    const stageDelta = right.occurrences.length - left.occurrences.length;
+    if (stageDelta !== 0) return stageDelta;
+    const leftLatest = Math.max(...left.occurrences.flatMap((item) => item.sourceDays));
+    const rightLatest = Math.max(...right.occurrences.flatMap((item) => item.sourceDays));
+    return rightLatest - leftLatest || left.misconception.localeCompare(right.misconception, "zh-CN");
+  });
+}
+
 export function learningProgressMarkdownFilename(now = new Date()): string {
   return `ai-learning-os-progress-${dateKey(now)}.md`;
 }
@@ -479,6 +552,7 @@ export function learningProgressMarkdownFilename(now = new Date()): string {
 export function serializeLearningProgressMarkdown(state: LearningState, now = new Date()): string {
   const review = weeklyLearningReview(state);
   const trend = weeklyLearningTrend(state);
+  const repeatedMisconceptions = crossStageMisconceptionInsights(state);
   const stages = state.plan.stages.map((stage) => {
     const records = state.days.filter((record) => {
       const week = Math.ceil(record.day / 7);
@@ -536,6 +610,17 @@ export function serializeLearningProgressMarkdown(state: LearningState, now = ne
     `- 偏难日变化：${trend.status === "insufficient-data" ? "证据不足" : `${trend.difficultDaysDelta > 0 ? "+" : ""}${trend.difficultDaysDelta}`}`,
     `- 轻松回忆变化：${trend.status === "insufficient-data" ? "证据不足" : `${trend.successfulReviewsDelta > 0 ? "+" : ""}${trend.successfulReviewsDelta}`}`,
     "",
+    "## 跨阶段重复误解",
+    "",
+    ...(repeatedMisconceptions.length > 0
+      ? repeatedMisconceptions.flatMap((item) => [
+        `### ${item.misconception}`,
+        "",
+        `- 关联证据：${item.occurrences.map((occurrence) => `${occurrence.stageTitle}（第 ${occurrence.sourceDays.join("、")} 天）`).join("；")}`,
+        `- 主动回忆提示：${item.reviewPrompt}`,
+        "",
+      ])
+      : ["尚未发现跨阶段重复误解。", ""]),
     "## 阶段进展",
     "",
     stages.join("\n\n"),

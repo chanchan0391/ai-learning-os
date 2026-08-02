@@ -6,6 +6,7 @@ import {
   completedDayCount,
   createStageNote,
   createLearningStateExport,
+  crossStageMisconceptionInsights,
   deleteStageNote,
   detectLearningInterruption,
   dueReviewItems,
@@ -625,6 +626,40 @@ describe("multi-day learning state", () => {
       nextAction: "画出恢复路径",
     }]);
     expect(() => scheduledReviewItems(state, -1)).toThrow("复习预览天数必须是非负整数");
+  });
+
+  it("links a normalized misconception only after it recurs across distinct stages", () => {
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 2 }));
+    for (let day = 1; day <= 8; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 1 || day === 8) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, `第 ${day} 天成果`, {
+          rubric: [
+            { dimension: "understanding", score: 2, evidence: "证据", feedback: "反馈" },
+            { dimension: "application", score: 2, evidence: "证据", feedback: "反馈" },
+            { dimension: "evidence", score: 2, evidence: "证据", feedback: "反馈" },
+            { dimension: "reflection", score: 2, evidence: "证据", feedback: "反馈" },
+          ],
+          totalScore: 8,
+          masteryLevel: "developing",
+          misconceptions: [day === 1 ? "混淆重试与恢复" : " 混淆重试与恢复。 "],
+          nextAction: day === 1 ? "画出失败路径" : "验证恢复检查点",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    }
+
+    expect(crossStageMisconceptionInsights(state)).toEqual([{
+      misconception: "混淆重试与恢复",
+      occurrences: [
+        { stageId: "stage-1", stageTitle: "建立基础", sourceDays: [1], nextActions: ["画出失败路径"] },
+        { stageId: "stage-2", stageTitle: "构建知识增强应用", sourceDays: [8], nextActions: ["验证恢复检查点"] },
+      ],
+      reviewPrompt: "不查资料，比较「建立基础」、「构建知识增强应用」中的相关案例：解释“混淆重试与恢复”为什么不成立，并分别给出正确判断与一个可验证例子。",
+    }]);
+    expect(serializeLearningProgressMarkdown(state)).toContain("## 跨阶段重复误解");
+    expect(serializeLearningProgressMarkdown(state)).toContain("建立基础（第 1 天）；构建知识增强应用（第 8 天）");
   });
 
   it("preserves prior history while advancing consecutive days", () => {
