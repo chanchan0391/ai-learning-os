@@ -9,6 +9,7 @@ import {
   CURRENT_LEARNING_STATE_KEY,
   LEGACY_LEARNING_PLAN_KEY,
   PREVIOUS_LEARNING_STATE_KEY,
+  PORTFOLIO_DAILY_BUDGET_KEY,
 } from "./learning-storage";
 import { generateLearningPlan } from "./planner";
 
@@ -115,13 +116,26 @@ describe("browser learning-state repository", () => {
 
   it("removes every supported local version", () => {
     const repository = new BrowserLearningStateRepository(localStorage);
-    for (const key of [CURRENT_LEARNING_STATE_KEY, PREVIOUS_LEARNING_STATE_KEY, LEGACY_LEARNING_PLAN_KEY, ARCHIVED_LEARNING_STATES_KEY, ACTIVE_LEARNING_STATES_KEY]) {
+    for (const key of [CURRENT_LEARNING_STATE_KEY, PREVIOUS_LEARNING_STATE_KEY, LEGACY_LEARNING_PLAN_KEY, ARCHIVED_LEARNING_STATES_KEY, ACTIVE_LEARNING_STATES_KEY, PORTFOLIO_DAILY_BUDGET_KEY]) {
       localStorage.setItem(key, "data");
     }
 
     repository.clear();
 
     expect(localStorage.length).toBe(0);
+  });
+
+  it("persists and validates the local cross-goal daily budget", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+
+    repository.saveDailyBudget(90);
+    expect(repository.loadDailyBudget()).toBe(90);
+    expect(localStorage.getItem(PORTFOLIO_DAILY_BUDGET_KEY)).toBe("90");
+    expect(() => repository.saveDailyBudget(0)).toThrow("15–1440");
+
+    localStorage.setItem(PORTFOLIO_DAILY_BUDGET_KEY, "invalid");
+    expect(repository.loadDailyBudget()).toBeNull();
+    expect(localStorage.getItem(PORTFOLIO_DAILY_BUDGET_KEY)).toBeNull();
   });
 
   it("archives a completed goal as a full snapshot and can restore it", () => {

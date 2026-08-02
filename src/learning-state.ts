@@ -724,6 +724,7 @@ export function detectLearningInterruption(state: LearningState, now = new Date(
 export interface ActiveGoalOverview {
   completedTasks: number;
   totalTasks: number;
+  scheduledMinutes: number;
   remainingMinutes: number;
   riskLevel: "steady" | "review" | "attention";
   riskLabel: string;
@@ -734,14 +735,24 @@ export interface ActiveGoalPortfolioOverview {
   activeGoals: number;
   completedTasks: number;
   totalTasks: number;
+  scheduledMinutes: number;
   remainingMinutes: number;
   goalsNeedingAttention: number;
+}
+
+export interface PortfolioBudgetStatus {
+  budgetMinutes: number;
+  scheduledMinutes: number;
+  overloadedBy: number;
+  availableMinutes: number;
+  status: "over-budget" | "within-budget";
 }
 
 /** Derives the compact, evidence-based summary used by the cross-goal home. */
 export function activeGoalOverview(state: LearningState, now = new Date()): ActiveGoalOverview {
   const current = getCurrentRecord(state);
   const completedTasks = current.tasks.filter((task) => task.completed).length;
+  const scheduledMinutes = current.tasks.reduce((sum, task) => sum + task.minutes, 0);
   const remainingMinutes = current.tasks.reduce((sum, task) => sum + (task.completed ? 0 : task.minutes), 0);
   const interruption = detectLearningInterruption(state, now);
   const reviewsDue = dueReviewItems(state, state.currentDay).length;
@@ -768,6 +779,7 @@ export function activeGoalOverview(state: LearningState, now = new Date()): Acti
     return {
       completedTasks,
       totalTasks: current.tasks.length,
+      scheduledMinutes,
       remainingMinutes,
       riskLevel,
       riskLabel,
@@ -783,6 +795,7 @@ export function activeGoalOverview(state: LearningState, now = new Date()): Acti
   return {
     completedTasks,
     totalTasks: current.tasks.length,
+    scheduledMinutes,
     remainingMinutes,
     riskLevel,
     riskLabel,
@@ -796,8 +809,21 @@ export function activeGoalPortfolioOverview(states: LearningState[], now = new D
     activeGoals: states.length,
     completedTasks: overviews.reduce((sum, overview) => sum + overview.completedTasks, 0),
     totalTasks: overviews.reduce((sum, overview) => sum + overview.totalTasks, 0),
+    scheduledMinutes: overviews.reduce((sum, overview) => sum + overview.scheduledMinutes, 0),
     remainingMinutes: overviews.reduce((sum, overview) => sum + overview.remainingMinutes, 0),
     goalsNeedingAttention: overviews.filter((overview) => overview.riskLevel !== "steady").length,
+  };
+}
+
+/** Compares the full scheduled workload with the learner's cross-goal daily cap. */
+export function portfolioBudgetStatus(overview: ActiveGoalPortfolioOverview, budgetMinutes: number): PortfolioBudgetStatus {
+  const overloadedBy = Math.max(0, overview.scheduledMinutes - budgetMinutes);
+  return {
+    budgetMinutes,
+    scheduledMinutes: overview.scheduledMinutes,
+    overloadedBy,
+    availableMinutes: Math.max(0, budgetMinutes - overview.scheduledMinutes),
+    status: overloadedBy > 0 ? "over-budget" : "within-budget",
   };
 }
 

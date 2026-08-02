@@ -19,6 +19,7 @@ import { generateLearningPlan } from "./planner";
 const STORAGE_KEY = "ai-learning-os-state-v3";
 const ARCHIVE_KEY = "ai-learning-os-archived-states-v1";
 const ACTIVE_STATES_KEY = "ai-learning-os-active-states-v1";
+const DAILY_BUDGET_KEY = "ai-learning-os-portfolio-daily-budget-v1";
 const goal = {
   subject: "AI Agent 工程",
   currentLevel: "Java 高级工程师",
@@ -84,6 +85,25 @@ describe("learning data controls", () => {
     expect(screen.getByRole("heading", { name: "进行中的目标" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "打开目标" })).toBeTruthy();
     expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).states).toHaveLength(1);
+  });
+
+  it("persists a cross-goal daily budget and warns when scheduled work exceeds it", async () => {
+    const user = userEvent.setup();
+    const first = initializeLearningState(generateLearningPlan(goal));
+    const second = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统", dailyMinutes: 45 }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(first));
+    localStorage.setItem(ACTIVE_STATES_KEY, JSON.stringify({ selectedPlanId: first.plan.id, states: [first, second] }));
+    render(<App />);
+
+    await user.clear(screen.getByRole("spinbutton", { name: "跨目标每日总时间预算" }));
+    await user.type(screen.getByRole("spinbutton", { name: "跨目标每日总时间预算" }), "90");
+    await user.click(screen.getByRole("button", { name: "保存预算" }));
+
+    expect(screen.getByText("今日计划 105 分钟，超出预算 15 分钟。优先保留需关注目标和最小学习闭环。")).toBeTruthy();
+    expect(localStorage.getItem(DAILY_BUDGET_KEY)).toBe("90");
+
+    await user.click(screen.getByRole("button", { name: "清除" }));
+    expect(localStorage.getItem(DAILY_BUDGET_KEY)).toBeNull();
   });
 
   it("archives a completed goal and returns to goal creation without losing its history", async () => {
@@ -416,6 +436,7 @@ describe("learning data controls", () => {
     const user = userEvent.setup();
     localStorage.setItem("ai-learning-os-state-v2", "legacy-state");
     localStorage.setItem("ai-learning-os-plan-v1", "legacy-plan");
+    localStorage.setItem(DAILY_BUDGET_KEY, "90");
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "删除本地数据" }));
@@ -432,6 +453,7 @@ describe("learning data controls", () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
     expect(localStorage.getItem("ai-learning-os-state-v2")).toBeNull();
     expect(localStorage.getItem("ai-learning-os-plan-v1")).toBeNull();
+    expect(localStorage.getItem(DAILY_BUDGET_KEY)).toBeNull();
   });
 
   it("downloads the current state as a dated JSON file", async () => {

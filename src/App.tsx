@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import {
   activeGoalOverview,
   activeGoalPortfolioOverview,
+  portfolioBudgetStatus,
   addCrossStageReviewTask,
   appendStageNoteEvidence,
   completeTeachingTask,
@@ -85,6 +86,8 @@ export function App() {
   const [initialLoad] = useState(() => learningStateRepository.load());
   const [learningState, setLearningState] = useState<LearningState | null>(initialLoad.state);
   const [activeGoals, setActiveGoals] = useState<LearningState[]>(() => learningStateRepository.loadActive());
+  const [dailyBudgetMinutes, setDailyBudgetMinutes] = useState<number | null>(() => learningStateRepository.loadDailyBudget());
+  const [dailyBudgetDraft, setDailyBudgetDraft] = useState(() => String(learningStateRepository.loadDailyBudget() ?? ""));
   const [archivedGoals, setArchivedGoals] = useState<ArchivedLearningState[]>(() => learningStateRepository.loadArchived());
   const [goal, setGoal] = useState<LearningGoal>(INITIAL_GOAL);
   const [errors, setErrors] = useState<string[]>([]);
@@ -140,6 +143,7 @@ export function App() {
   ));
   const plan = learningState?.plan ?? null;
   const activePortfolio = useMemo(() => activeGoalPortfolioOverview(activeGoals), [activeGoals]);
+  const budgetStatus = useMemo(() => dailyBudgetMinutes === null ? null : portfolioBudgetStatus(activePortfolio, dailyBudgetMinutes), [activePortfolio, dailyBudgetMinutes]);
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
   const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
@@ -193,7 +197,11 @@ export function App() {
     learningStateRef.current = next;
     setLearningState(next);
     if (next) learningStateRepository.save(next);
-    else learningStateRepository.clear();
+    else {
+      learningStateRepository.clear();
+      setDailyBudgetMinutes(null);
+      setDailyBudgetDraft("");
+    }
     setActiveGoals(learningStateRepository.loadActive());
     if (enqueueSync && next && authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
   }
@@ -239,6 +247,29 @@ export function App() {
     learningStateRepository.deselectActive();
     resetGoalWorkspace(null);
     setStorageNotice("现有目标已安全保留。创建后可在多个目标之间切换。");
+    setStorageNoticeIsError(false);
+  }
+
+  function saveDailyBudget(event: FormEvent) {
+    event.preventDefault();
+    const minutes = Number(dailyBudgetDraft);
+    if (!Number.isInteger(minutes) || minutes < 15 || minutes > 1440) {
+      setStorageNotice("每日总时间预算请输入 15–1440 分钟的整数。");
+      setStorageNoticeIsError(true);
+      return;
+    }
+    learningStateRepository.saveDailyBudget(minutes);
+    setDailyBudgetMinutes(minutes);
+    setDailyBudgetDraft(String(minutes));
+    setStorageNotice(`跨目标每日总时间预算已设为 ${minutes} 分钟。`);
+    setStorageNoticeIsError(false);
+  }
+
+  function clearDailyBudget() {
+    learningStateRepository.saveDailyBudget(null);
+    setDailyBudgetMinutes(null);
+    setDailyBudgetDraft("");
+    setStorageNotice("已清除跨目标每日总时间预算。");
     setStorageNoticeIsError(false);
   }
 
@@ -814,6 +845,23 @@ export function App() {
     </>
   );
 
+  const portfolioBudgetControl = (
+    <div className={`portfolio-budget ${budgetStatus?.status ?? "unset"}`}>
+      <form onSubmit={saveDailyBudget}>
+        <label>每日总时间预算
+          <span className="input-unit"><input aria-label="跨目标每日总时间预算" type="number" min="15" max="1440" step="5" placeholder="例如 90" value={dailyBudgetDraft} onChange={(event) => setDailyBudgetDraft(event.target.value)} /><span>分钟</span></span>
+        </label>
+        <button className="secondary-action" type="submit">保存预算</button>
+        {dailyBudgetMinutes !== null && <button className="text-button" type="button" onClick={clearDailyBudget}>清除</button>}
+      </form>
+      {budgetStatus ? (
+        <p role="status">{budgetStatus.status === "over-budget"
+          ? `今日计划 ${budgetStatus.scheduledMinutes} 分钟，超出预算 ${budgetStatus.overloadedBy} 分钟。优先保留需关注目标和最小学习闭环。`
+          : `今日计划 ${budgetStatus.scheduledMinutes} 分钟，预算内还可安排 ${budgetStatus.availableMinutes} 分钟。`}</p>
+      ) : <p>设置所有进行中目标共享的每日上限，系统会按完整计划工作量提示超载。</p>}
+    </div>
+  );
+
   const accountControls = authState.status === "signed-in" ? (
     <div className="account-controls" aria-label="账号与同步">
       <span className="sync-status">已登录</span>
@@ -990,6 +1038,7 @@ export function App() {
               <p className="eyebrow">并行学习</p><h2 id="active-goals-title">进行中的目标</h2>
               <p className="goal-portfolio-summary">{activePortfolio.activeGoals} 个目标 · 今日 {activePortfolio.completedTasks}/{activePortfolio.totalTasks} 项 · 剩余 {activePortfolio.remainingMinutes} 分钟 · {activePortfolio.goalsNeedingAttention} 个需关注</p>
             </div>
+            {portfolioBudgetControl}
             <div className="active-goal-list">
               {activeGoals.map((state) => {
                 const overview = activeGoalOverview(state);
@@ -1086,6 +1135,7 @@ export function App() {
           </div>
           <button className="secondary-action" onClick={beginParallelGoal}>新建并行目标</button>
         </div>
+        {portfolioBudgetControl}
         <div className="active-goal-list">
           {activeGoals.map((state) => {
             const overview = activeGoalOverview(state);

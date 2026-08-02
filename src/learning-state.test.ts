@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeGoalOverview,
   activeGoalPortfolioOverview,
+  portfolioBudgetStatus,
   addCrossStageReviewTask,
   appendStageNoteEvidence,
   completeTeachingTask,
@@ -76,6 +77,7 @@ describe("multi-day learning state", () => {
     expect(activeGoalOverview(state, new Date("2026-07-31T10:00:00.000Z"))).toEqual({
       completedTasks: 1,
       totalTasks: 4,
+      scheduledMinutes: 60,
       remainingMinutes: 54,
       riskLevel: "review",
       riskLabel: "1 项薄弱点复习到期",
@@ -94,8 +96,29 @@ describe("multi-day learning state", () => {
       activeGoals: 2,
       completedTasks: 0,
       totalTasks: 8,
+      scheduledMinutes: 90,
       remainingMinutes: 90,
       goalsNeedingAttention: 1,
+    });
+  });
+
+  it("flags a portfolio that exceeds its daily time budget", () => {
+    const overview = activeGoalPortfolioOverview([
+      initializeLearningState(generateLearningPlan(goal)),
+      initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统", dailyMinutes: 45 })),
+    ]);
+
+    expect(portfolioBudgetStatus(overview, 90)).toEqual({
+      budgetMinutes: 90,
+      scheduledMinutes: 105,
+      overloadedBy: 15,
+      availableMinutes: 0,
+      status: "over-budget",
+    });
+    expect(portfolioBudgetStatus(overview, 120)).toMatchObject({
+      overloadedBy: 0,
+      availableMinutes: 15,
+      status: "within-budget",
     });
   });
 

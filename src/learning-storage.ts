@@ -6,6 +6,7 @@ export const PREVIOUS_LEARNING_STATE_KEY = "ai-learning-os-state-v2";
 export const LEGACY_LEARNING_PLAN_KEY = "ai-learning-os-plan-v1";
 export const ARCHIVED_LEARNING_STATES_KEY = "ai-learning-os-archived-states-v1";
 export const ACTIVE_LEARNING_STATES_KEY = "ai-learning-os-active-states-v1";
+export const PORTFOLIO_DAILY_BUDGET_KEY = "ai-learning-os-portfolio-daily-budget-v1";
 
 const ALL_LEARNING_STORAGE_KEYS = [
   CURRENT_LEARNING_STATE_KEY,
@@ -13,6 +14,7 @@ const ALL_LEARNING_STORAGE_KEYS = [
   LEGACY_LEARNING_PLAN_KEY,
   ARCHIVED_LEARNING_STATES_KEY,
   ACTIVE_LEARNING_STATES_KEY,
+  PORTFOLIO_DAILY_BUDGET_KEY,
 ] as const;
 
 const CURRENT_AND_LEGACY_KEYS = [
@@ -33,6 +35,8 @@ export interface LearningStateRepository {
   selectActive(planId: string): LearningState;
   deselectActive(): void;
   loadArchived(): ArchivedLearningState[];
+  loadDailyBudget(): number | null;
+  saveDailyBudget(minutes: number | null): void;
   mergeArchived(entries: ArchivedLearningState[]): ArchivedLearningState[];
   save(state: LearningState): void;
   archiveCompleted(state: LearningState, now?: Date): ArchivedLearningState[];
@@ -146,6 +150,32 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
       this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
       return [];
     }
+  }
+
+  loadDailyBudget(): number | null {
+    try {
+      const raw = this.storage.getItem(PORTFOLIO_DAILY_BUDGET_KEY);
+      if (raw === null) return null;
+      const minutes = Number(raw);
+      if (!Number.isInteger(minutes) || minutes < 15 || minutes > 1440) {
+        this.storage.removeItem(PORTFOLIO_DAILY_BUDGET_KEY);
+        return null;
+      }
+      return minutes;
+    } catch {
+      return null;
+    }
+  }
+
+  saveDailyBudget(minutes: number | null): void {
+    if (minutes === null) {
+      this.storage.removeItem(PORTFOLIO_DAILY_BUDGET_KEY);
+      return;
+    }
+    if (!Number.isInteger(minutes) || minutes < 15 || minutes > 1440) {
+      throw new RangeError("每日总时间预算必须是 15–1440 分钟的整数");
+    }
+    this.storage.setItem(PORTFOLIO_DAILY_BUDGET_KEY, String(minutes));
   }
 
   mergeArchived(entries: ArchivedLearningState[]): ArchivedLearningState[] {
