@@ -27,6 +27,7 @@ export interface ArchivedLearningState {
 export interface LearningStateRepository {
   load(now?: Date): ParsedLearningState;
   loadArchived(): ArchivedLearningState[];
+  mergeArchived(entries: ArchivedLearningState[]): ArchivedLearningState[];
   save(state: LearningState): void;
   archiveCompleted(state: LearningState, now?: Date): ArchivedLearningState[];
   restoreArchived(planId: string): LearningState;
@@ -82,6 +83,15 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
       this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
       return [];
     }
+  }
+
+  mergeArchived(entries: ArchivedLearningState[]): ArchivedLearningState[] {
+    const existing = this.loadArchived();
+    const existingIds = new Set(existing.map((entry) => entry.state.plan.id));
+    const additions = entries.filter((entry) => !existingIds.has(entry.state.plan.id));
+    const merged = [...existing, ...additions].sort((left, right) => right.archivedAt.localeCompare(left.archivedAt));
+    if (additions.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(merged));
+    return merged;
   }
 
   archiveCompleted(state: LearningState, now = new Date()): ArchivedLearningState[] {

@@ -140,6 +140,63 @@ describe("browser sync client", () => {
     expect(result).toEqual({ state: null, uploaded: 0, downloaded: 0 });
   });
 
+  it("downloads archived cloud snapshots without exposing their sync marker locally", async () => {
+    const state = learningState();
+    const archivedAt = "2026-08-02T12:00:00.000Z";
+    const server = fakeServer([
+      {
+        entityType: "learning-plan", entityId: state.plan.id, revision: 2, updatedAt: archivedAt,
+        value: { ...state.plan, archivedAt },
+      },
+      {
+        entityType: "daily-record", entityId: `${state.plan.id}:day-1`, revision: 1, updatedAt: archivedAt,
+        value: { planId: state.plan.id, record: state.days[0] },
+      },
+    ]);
+
+    const result = await new BrowserSyncClient(localStorage, server.request).downloadArchived([]);
+
+    expect(result.downloaded).toBe(2);
+    expect(result.entries).toEqual([{ archivedAt, state }]);
+    expect(result.entries[0].state.plan.archivedAt).toBeUndefined();
+  });
+
+  it("skips archived snapshots already stored locally or active on this device", async () => {
+    const state = learningState();
+    const archivedAt = "2026-08-02T12:00:00.000Z";
+    const server = fakeServer([{
+      entityType: "learning-plan", entityId: state.plan.id, revision: 2, updatedAt: archivedAt,
+      value: { ...state.plan, archivedAt },
+    }]);
+    const client = new BrowserSyncClient(localStorage, server.request);
+
+    await expect(client.downloadArchived([state.plan.id])).resolves.toEqual({ entries: [], downloaded: 0 });
+    await expect(client.downloadArchived([], state.plan.id)).resolves.toEqual({ entries: [], downloaded: 0 });
+  });
+
+  it("explicitly restores an archived cloud plan without a false divergence conflict", async () => {
+    const state = learningState();
+    const archivedAt = "2026-08-02T12:00:00.000Z";
+    const server = fakeServer([
+      {
+        entityType: "learning-plan", entityId: state.plan.id, revision: 2, updatedAt: archivedAt,
+        value: { ...state.plan, archivedAt },
+      },
+      {
+        entityType: "daily-record", entityId: `${state.plan.id}:day-1`, revision: 1, updatedAt: archivedAt,
+        value: { planId: state.plan.id, record: state.days[0] },
+      },
+    ]);
+    const client = new BrowserSyncClient(localStorage, server.request);
+    client.markArchiveRestored(state.plan.id);
+
+    const result = await client.sync(state);
+
+    expect(result.uploaded).toBe(1);
+    expect(server.entities.get(`learning-plan:${state.plan.id}`)?.revision).toBe(3);
+    expect((server.entities.get(`learning-plan:${state.plan.id}`)?.value as { archivedAt?: string }).archivedAt).toBeUndefined();
+  });
+
   it("conditionally uploads a local change after the first successful sync", async () => {
     const server = fakeServer();
     const client = new BrowserSyncClient(localStorage, server.request);

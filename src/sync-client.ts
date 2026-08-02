@@ -3,6 +3,7 @@ import type { ArchivedLearningState } from "./learning-storage";
 import type { DailyLearningRecord, LearningPlan, LearningState } from "./types";
 
 export const SYNC_METADATA_KEY = "ai-learning-os-sync-v1";
+const RESTORED_ARCHIVE_PLAN_KEY = "ai-learning-os-restored-archive-v1";
 
 interface SyncEntity<T = unknown> {
   entityType: "learning-plan" | "daily-record";
@@ -40,6 +41,11 @@ export interface ActiveDevice {
 export interface SyncResult {
   state: LearningState | null;
   uploaded: number;
+  downloaded: number;
+}
+
+export interface ArchivedSyncResult {
+  entries: ArchivedLearningState[];
   downloaded: number;
 }
 
@@ -155,6 +161,11 @@ export class BrowserSyncClient {
 
   clearMetadata(): void {
     this.storage.removeItem(SYNC_METADATA_KEY);
+    this.storage.removeItem(RESTORED_ARCHIVE_PLAN_KEY);
+  }
+
+  markArchiveRestored(planId: string): void {
+    this.storage.setItem(RESTORED_ARCHIVE_PLAN_KEY, planId);
   }
 
   async sync(localState: LearningState | null): Promise<SyncResult> {
@@ -185,17 +196,27 @@ export class BrowserSyncClient {
     }
 
     const previous = this.loadMetadata(localState.plan.id);
-    this.assertNoDivergedEntities(localState, remoteEntities, previous);
+    const restoringArchived = this.storage.getItem(RESTORED_ARCHIVE_PLAN_KEY) === localState.plan.id
+      && Boolean((matchingRemotePlan?.value as LearningPlan | undefined)?.archivedAt)
+      && !localState.plan.archivedAt;
+    this.assertNoDivergedEntities(localState, remoteEntities, previous, restoringArchived);
     const nextMetadata: SyncMetadata = { version: 1, planId: localState.plan.id, entities: { ...previous.entities } };
     let nextState = structuredClone(localState);
     let uploaded = 0;
     let downloaded = 0;
 
-    const planResult = await this.reconcile(
-      { entityType: "learning-plan", entityId: localState.plan.id, value: nextState.plan },
-      matchingRemotePlan,
-      previous.entities[metadataKey({ entityType: "learning-plan", entityId: localState.plan.id })],
-    );
+    const localPlanEntity = { entityType: "learning-plan" as const, entityId: localState.plan.id, value: nextState.plan };
+    const planResult = restoringArchived && matchingRemotePlan
+      ? {
+          entity: await this.write(localPlanEntity, matchingRemotePlan.revision),
+          metadata: { revision: matchingRemotePlan.revision + 1, fingerprint: fingerprint(localPlanEntity.value) },
+          direction: "upload" as const,
+        }
+      : await this.reconcile(
+          localPlanEntity,
+          matchingRemotePlan,
+          previous.entities[metadataKey(localPlanEntity)],
+        );
     nextMetadata.entities[metadataKey(planResult.entity)] = planResult.metadata;
     if (planResult.direction === "upload") uploaded += 1;
     if (planResult.direction === "download") {
@@ -235,6 +256,9 @@ export class BrowserSyncClient {
     nextState.currentDay = nextState.days.find((day) => day.status === "active")?.day ?? nextState.days.at(-1)?.day ?? 1;
     nextState = this.validateState(nextState);
     this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify(nextMetadata));
+    if (this.storage.getItem(RESTORED_ARCHIVE_PLAN_KEY) === localState.plan.id) {
+      this.storage.removeItem(RESTORED_ARCHIVE_PLAN_KEY);
+    }
     return { state: nextState, uploaded, downloaded };
   }
 
@@ -248,6 +272,31 @@ export class BrowserSyncClient {
       ...structuredClone(entry.state),
       plan: { ...structuredClone(entry.state.plan), archivedAt: entry.archivedAt },
     });
+  }
+
+  async downloadArchived(existingPlanIds: Iterable<string>, activePlanId?: string): Promise<ArchivedSyncResult> {
+    const response = await this.request("/api/sync/changes", { credentials: "same-origin" });
+    const body = await response.json() as { changes?: SyncEntity[]; error?: string };
+    if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端归档"));
+
+    const excluded = new Set(existingPlanIds);
+    if (activePlanId) excluded.add(activePlanId);
+    const entries: ArchivedLearningState[] = [];
+    let downloaded = 0;
+    for (const planEntity of body.changes
+      .filter((entity) => entity.entityType === "learning-plan" && Boolean((entity.value as LearningPlan).archivedAt))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))) {
+      if (excluded.has(planEntity.entityId)) continue;
+      const remoteState = this.stateFromRemote(body.changes, planEntity.entityId);
+      const archivedAt = remoteState.plan.archivedAt;
+      if (!archivedAt) continue;
+      const { archivedAt: _archivedAt, ...activePlan } = remoteState.plan;
+      const state = this.validateState({ ...remoteState, plan: activePlan });
+      entries.push({ archivedAt, state });
+      excluded.add(planEntity.entityId);
+      downloaded += 1 + state.days.length;
+    }
+    return { entries, downloaded };
   }
 
   async resolveConflict(preview: SyncConflictPreview, choice: "local" | "remote"): Promise<SyncResult> {
@@ -277,9 +326,10 @@ export class BrowserSyncClient {
     return { ...result, uploaded: result.uploaded + 1 };
   }
 
-  private assertNoDivergedEntities(localState: LearningState, remoteEntities: SyncEntity[], previous: SyncMetadata): void {
+  private assertNoDivergedEntities(localState: LearningState, remoteEntities: SyncEntity[], previous: SyncMetadata, restoringArchived = false): void {
     const locals = this.localEntities(localState);
     for (const local of locals) {
+      if (restoringArchived && local.entityType === "learning-plan") continue;
       const remote = remoteEntities.find((entity) => entity.entityType === local.entityType && entity.entityId === local.entityId);
       if (!remote || fingerprint(local.value) === fingerprint(remote.value)) continue;
       const base = previous.entities[metadataKey(local)];

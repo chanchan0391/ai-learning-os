@@ -578,6 +578,10 @@ export function App() {
       const archived = learningStateRepository.loadArchived();
       archivedGoalsRef.current = archived;
       setArchivedGoals(archived);
+      if (authStateRef.current.status === "signed-in") {
+        syncClient.markArchiveRestored(planId);
+        autoSyncQueue.enqueue();
+      }
       setStorageNotice(`已恢复“${restored.plan.goal.subject}”的完整学习记录。`);
       setStorageNoticeIsError(false);
     } catch (error) {
@@ -601,9 +605,18 @@ export function App() {
         saveState(result.state, false);
         setGoal(result.state.plan.goal);
       }
+      const remoteArchives = await syncClient.downloadArchived(
+        archivedGoalsRef.current.map((entry) => entry.state.plan.id),
+        result.state?.plan.id,
+      );
+      if (remoteArchives.entries.length > 0) {
+        const merged = learningStateRepository.mergeArchived(remoteArchives.entries);
+        archivedGoalsRef.current = merged;
+        setArchivedGoals(merged);
+      }
       const changes = [
         result.uploaded + archivedUploaded > 0 ? `上传 ${result.uploaded + archivedUploaded} 项` : "",
-        result.downloaded + archivedDownloaded > 0 ? `下载 ${result.downloaded + archivedDownloaded} 项` : "",
+        result.downloaded + archivedDownloaded + remoteArchives.downloaded > 0 ? `下载 ${result.downloaded + archivedDownloaded + remoteArchives.downloaded} 项` : "",
       ].filter(Boolean).join("，");
       setStorageNotice(changes ? `同步完成：${changes}。` : "本地与云端进度已一致。");
       setStorageNoticeIsError(false);
@@ -919,7 +932,7 @@ export function App() {
                 </article>
               ))}
             </div>
-            <p className="archive-boundary">归档记录只保存在当前浏览器；跨设备多目标同步将在下一阶段接入。</p>
+            <p className="archive-boundary">登录账号后，归档会安全同步到其他设备；恢复归档会把它重新设为当前目标。</p>
           </section>
         )}
       </main>
@@ -934,7 +947,7 @@ export function App() {
           {accountControls}
           {importControl}
           <button className="text-button" onClick={exportLearningData}>导出学习记录</button>
-          {completedDayCount(learningState) === plan.goal.durationWeeks * 7 && (authState.status === "signed-out" || authState.status === "local-only") && (
+          {completedDayCount(learningState) === plan.goal.durationWeeks * 7 && (
             <button className="text-button" onClick={() => setArchiveConfirmationOpen(true)}>归档已完成目标</button>
           )}
           <button className="text-button danger-text" onClick={() => setDeleteConfirmationOpen(true)}>删除本地数据</button>
@@ -954,7 +967,7 @@ export function App() {
           <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="archive-dialog-title" aria-describedby="archive-dialog-description">
             <p className="eyebrow">完成目标 · 保留全部证据</p>
             <h2 id="archive-dialog-title">归档“{plan.goal.subject}”？</h2>
-            <p id="archive-dialog-description">完整计划、每日记录、成果和评估会保存在当前浏览器的归档中。归档后可立即创建新目标，也可以稍后恢复查看。</p>
+            <p id="archive-dialog-description">完整计划、每日记录、成果和评估会保存在归档中；登录账号时也会同步到其他设备。归档后可立即创建新目标，也可以稍后恢复查看。</p>
             <div className="dialog-actions">
               <button className="secondary-action" autoFocus onClick={() => setArchiveConfirmationOpen(false)}>取消</button>
               <button className="primary-dialog-action" onClick={archiveCompletedGoal}>确认归档</button>

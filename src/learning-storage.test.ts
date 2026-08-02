@@ -105,4 +105,18 @@ describe("browser learning-state repository", () => {
     expect(() => repository.archiveCompleted(state)).toThrow("只有完成全部计划学习日后才能归档目标");
     expect(repository.loadArchived()).toEqual([]);
   });
+
+  it("merges newly downloaded archives without replacing an existing local snapshot", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const local = { archivedAt: "2026-08-08T10:00:00.000Z", state: initializeLearningState(generateLearningPlan(goal)) };
+    const remoteDuplicate = { archivedAt: "2026-08-09T10:00:00.000Z", state: { ...structuredClone(local.state), currentDay: 1 } };
+    const remoteNew = {
+      archivedAt: "2026-08-10T10:00:00.000Z",
+      state: initializeLearningState(generateLearningPlan({ ...goal, subject: "事件驱动架构" }, new Date("2026-08-02T10:00:00.000Z"))),
+    };
+
+    expect(repository.mergeArchived([local])).toEqual([local]);
+    expect(repository.mergeArchived([remoteDuplicate, remoteNew])).toEqual([remoteNew, local]);
+    expect(repository.loadArchived()).toEqual([remoteNew, local]);
+  });
 });
