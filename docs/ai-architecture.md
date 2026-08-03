@@ -78,6 +78,12 @@ OpenAI Provider 对每次尝试设置 30 秒超时，并对网络错误、408、
 
 同一次 Agent 调用只向领域层返回一次最终结果，重试过程不会写入学习状态；OpenAI 请求继续使用 `store: false`。浏览器断开连接时，本地 API 会沿 `AbortSignal` 取消正在执行的 Agent 调用，避免无调用方的模型工作继续消耗资源。超时最终映射为 504，主动取消映射为 499，其他厂商错误保留安全状态码和可选请求 ID。此策略遵循官方的[错误处理建议](https://developers.openai.com/api/docs/guides/error-codes)与[客户端请求 ID 指南](https://developers.openai.com/api/reference/overview#supplying-your-own-request-id-with-x-client-request-id)。
 
+### 成本与容量保护
+
+所有会触发模型工作的 Agent HTTP 入口都在读取请求正文和调用 Provider 前进入限流。当前每客户端每 60 秒最多创建 10 个计划、30 个教学会话、30 个成果评估、30 个复习评估和 20 个恢复计划；启用 PostgreSQL 后配额由所有实例原子共享。拒绝事件只记录动作、路径、状态和限流原因，不记录学习目标、回答、成果正文或模型凭据。
+
+`/api/health` 的 60 秒滚动容量快照按 `ai-plan`、`ai-teaching`、`ai-evaluation`、`ai-review` 和 `ai-recovery` 分组，供 dev 验收和后续集中告警使用。这组分钟级配额是滥用与突发成本的第一层保护，不等同于商业配额或硬预算；生产环境仍需按认证账号和订阅状态实施长期用量账本、并发限制与每日金额熔断，并由可信网关施加独立的全局保护。
+
 ## 配置与安全
 
 本地实时模型通过 `.env.local` 配置：

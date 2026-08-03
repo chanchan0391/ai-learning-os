@@ -59,6 +59,11 @@ interface ProtectedRoute {
 }
 
 function protectedRoute(method: string | undefined, pathname: string): ProtectedRoute | null {
+  if (method === "POST" && pathname === "/api/plans") return { action: "ai.plan.create", rateLimitScope: "ai-plan", policy: { limit: 10, windowMs: 60_000 } };
+  if (method === "POST" && pathname === "/api/teaching-sessions") return { action: "ai.teaching.create", rateLimitScope: "ai-teaching", policy: { limit: 30, windowMs: 60_000 } };
+  if (method === "POST" && pathname === "/api/evaluations") return { action: "ai.evaluation.create", rateLimitScope: "ai-evaluation", policy: { limit: 30, windowMs: 60_000 } };
+  if (method === "POST" && pathname === "/api/review-assessments") return { action: "ai.review.create", rateLimitScope: "ai-review", policy: { limit: 30, windowMs: 60_000 } };
+  if (method === "POST" && pathname === "/api/recovery-plans") return { action: "ai.recovery.create", rateLimitScope: "ai-recovery", policy: { limit: 20, windowMs: 60_000 } };
   if (pathname === "/api/auth/login") return { action: "auth.login", rateLimitScope: "auth-login", policy: { limit: 20, windowMs: 60_000 } };
   if (pathname === "/api/auth/callback") return { action: "auth.callback", rateLimitScope: "auth-callback", policy: { limit: 20, windowMs: 60_000 } };
   if (pathname === "/api/auth/session/refresh") return { action: "auth.session.refresh", rateLimitScope: "auth-session", policy: { limit: 60, windowMs: 60_000 } };

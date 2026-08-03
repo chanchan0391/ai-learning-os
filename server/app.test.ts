@@ -318,4 +318,57 @@ describe("AI Learning OS API", () => {
     });
     expect(JSON.stringify(event)).not.toMatch(/secret|private|returnTo|cookie/i);
   });
+
+  it("rate limits Agent work before model calls and reports the cost-control scope", async () => {
+    let modelCalls = 0;
+    let consumed: { scope: string; limit: number } | undefined;
+    let resolveAudit!: (event: SecurityAuditEvent) => void;
+    const audited = new Promise<SecurityAuditEvent>((resolve) => { resolveAudit = resolve; });
+    const provider: ModelProvider = {
+      id: "metered-model",
+      isAiEnabled: true,
+      generateStructured: async () => {
+        modelCalls += 1;
+        throw new Error("Model must not be called after quota rejection");
+      },
+    };
+    const baseUrl = await startApi(provider, {
+      rateLimiter: {
+        consume: (scope, _key, policy) => {
+          consumed = { scope, limit: policy.limit };
+          return { allowed: false, limit: policy.limit, remaining: 0, resetAt: Date.now() + 5_000 };
+        },
+      },
+      auditSink: { record: resolveAudit },
+    });
+
+    const response = await fetch(`${baseUrl}/api/plans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...goal, currentLevel: "private learner context" }),
+    });
+    const event = await audited;
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("ratelimit-limit")).toBe("10");
+    expect(consumed).toEqual({ scope: "ai-plan", limit: 10 });
+    expect(modelCalls).toBe(0);
+    expect(event).toMatchObject({
+      action: "ai.plan.create",
+      method: "POST",
+      path: "/api/plans",
+      status: 429,
+      reason: "rate-limit-exceeded",
+    });
+    expect(JSON.stringify(event)).not.toContain("private learner context");
+
+    await expect(fetch(`${baseUrl}/api/health`).then((health) => health.json())).resolves.toMatchObject({
+      capacity: {
+        requests: 1,
+        rejected: 1,
+        rateLimited: 1,
+        byScope: { "ai-plan": { requests: 1, rejected: 1, rateLimited: 1 } },
+      },
+    });
+  });
 });
