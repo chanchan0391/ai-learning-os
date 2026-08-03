@@ -231,4 +231,31 @@ describe("browser learning-state repository", () => {
     expect(repository.loadArchived()).toEqual(archived);
     expect(repository.loadDailyBudget()).toBe(75);
   });
+
+  it("merges only missing portfolio goals while preserving local versions, selection, and budget", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const localActive = initializeLearningState(generateLearningPlan(goal));
+    const importedDuplicate = toggleCurrentTask(localActive, getCurrentRecord(localActive).tasks[0].id);
+    const importedActive = initializeLearningState(generateLearningPlan(
+      { ...goal, subject: "事件驱动架构" }, new Date("2026-08-02T10:00:00.000Z"),
+    ));
+    let importedArchived = initializeLearningState(generateLearningPlan(
+      { ...goal, subject: "数据库内核", durationWeeks: 1 }, new Date("2026-08-03T10:00:00.000Z"),
+    ));
+    for (let day = 0; day < 7; day += 1) {
+      for (const task of getCurrentRecord(importedArchived).tasks) importedArchived = toggleCurrentTask(importedArchived, task.id);
+      importedArchived = completeCurrentDay(importedArchived, { difficulty: "just-right", reflection: "完成" });
+    }
+    repository.save(localActive);
+    repository.saveDailyBudget(60);
+
+    expect(repository.mergePortfolioMissing(
+      [importedDuplicate, importedActive],
+      [{ archivedAt: "2026-08-03T12:00:00.000Z", state: importedArchived }],
+    )).toEqual({ activeAdded: 1, archivedAdded: 1, skipped: 1 });
+    expect(repository.load().state).toEqual(localActive);
+    expect(repository.loadActive()).toEqual([localActive, importedActive]);
+    expect(repository.loadArchived()).toEqual([{ archivedAt: "2026-08-03T12:00:00.000Z", state: importedArchived }]);
+    expect(repository.loadDailyBudget()).toBe(60);
+  });
 });

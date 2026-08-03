@@ -761,13 +761,33 @@ describe("learning data controls", () => {
     );
 
     expect(screen.getByRole("alertdialog", { name: "恢复全部学习数据？" })).toBeTruthy();
-    expect(screen.getByText(/替换当前浏览器的全部学习数据/)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "确认恢复" }));
+    expect(screen.getByText(/也可用文件内容全部替换/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "全部替换" }));
 
     expect(screen.getByRole("heading", { name: "分布式系统" })).toBeTruthy();
     expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).states).toHaveLength(1);
     expect(localStorage.getItem(DAILY_BUDGET_KEY)).toBe("90");
     expect(screen.getByText(/已恢复全部学习数据/)).toBeTruthy();
+  });
+
+  it("merges missing goals from a portfolio backup without replacing local progress or budget", async () => {
+    const user = userEvent.setup();
+    const imported = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统" }));
+    const local = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as ReturnType<typeof initializeLearningState>;
+    localStorage.setItem(DAILY_BUDGET_KEY, "45");
+    const serialized = serializePortfolioLearningStateExport([local, imported], [], imported.plan.id, 90);
+    render(<App />);
+
+    await user.upload(
+      screen.getByLabelText("选择学习记录文件"),
+      new File([serialized], "all-learning-data.json", { type: "application/json" }),
+    );
+    await user.click(screen.getByRole("button", { name: "仅合并新目标" }));
+
+    expect(screen.getByRole("heading", { name: goal.subject, level: 1 })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).states).toHaveLength(2);
+    expect(localStorage.getItem(DAILY_BUDGET_KEY)).toBe("45");
+    expect(screen.getByText(/已合并 1 个进行中目标/).textContent).toContain("保留 1 个本地同 ID 版本");
   });
 
   it("rejects an invalid learning-record file without changing local progress", async () => {

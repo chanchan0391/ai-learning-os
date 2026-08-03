@@ -28,6 +28,12 @@ export interface ArchivedLearningState {
   state: LearningState;
 }
 
+export interface PortfolioMergeResult {
+  activeAdded: number;
+  archivedAdded: number;
+  skipped: number;
+}
+
 export interface LearningStateRepository {
   load(now?: Date): ParsedLearningState;
   loadActive(): LearningState[];
@@ -38,6 +44,7 @@ export interface LearningStateRepository {
   loadDailyBudget(): number | null;
   saveDailyBudget(minutes: number | null): void;
   mergeArchived(entries: ArchivedLearningState[]): ArchivedLearningState[];
+  mergePortfolioMissing(states: LearningState[], archived: ArchivedLearningState[]): PortfolioMergeResult;
   replacePortfolio(states: LearningState[], archived: ArchivedLearningState[], selectedPlanId: string | null, dailyBudgetMinutes: number | null): void;
   save(state: LearningState): void;
   archiveCompleted(state: LearningState, now?: Date): ArchivedLearningState[];
@@ -186,6 +193,33 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
     const merged = [...existing, ...additions].sort((left, right) => right.archivedAt.localeCompare(left.archivedAt));
     if (additions.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(merged));
     return merged;
+  }
+
+  mergePortfolioMissing(states: LearningState[], archived: ArchivedLearningState[]): PortfolioMergeResult {
+    const localActive = this.loadActive();
+    const localArchived = this.loadArchived();
+    const knownIds = new Set([
+      ...localActive.map((state) => state.plan.id),
+      ...localArchived.map((entry) => entry.state.plan.id),
+    ]);
+    const activeAdditions = states.filter((state) => {
+      if (knownIds.has(state.plan.id)) return false;
+      knownIds.add(state.plan.id);
+      return true;
+    });
+    const archivedAdditions = archived.filter((entry) => {
+      if (knownIds.has(entry.state.plan.id)) return false;
+      knownIds.add(entry.state.plan.id);
+      return true;
+    });
+
+    if (activeAdditions.length > 0) this.replaceActive([...localActive, ...activeAdditions]);
+    if (archivedAdditions.length > 0) this.mergeArchived(archivedAdditions);
+    return {
+      activeAdded: activeAdditions.length,
+      archivedAdded: archivedAdditions.length,
+      skipped: states.length + archived.length - activeAdditions.length - archivedAdditions.length,
+    };
   }
 
   replacePortfolio(

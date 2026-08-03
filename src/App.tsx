@@ -776,6 +776,24 @@ export function App() {
     setStorageNoticeIsError(false);
   }
 
+  function mergePortfolioLearningData() {
+    if (pendingImport?.kind !== "portfolio") return;
+    const result = learningStateRepository.mergePortfolioMissing(
+      pendingImport.data.activeStates,
+      pendingImport.data.archivedStates,
+    );
+    setActiveGoals(learningStateRepository.loadActive());
+    archivedGoalsRef.current = learningStateRepository.loadArchived();
+    setArchivedGoals(archivedGoalsRef.current);
+    setPendingImport(null);
+    const added = result.activeAdded + result.archivedAdded;
+    setStorageNotice(added > 0
+      ? `已合并 ${result.activeAdded} 个进行中目标和 ${result.archivedAdded} 个归档目标；保留 ${result.skipped} 个本地同 ID 版本。`
+      : `没有可合并的新目标；已保留 ${result.skipped} 个本地同 ID 版本。`);
+    setStorageNoticeIsError(false);
+    if (added > 0 && authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
+  }
+
   function deleteLearningData() {
     saveState(null, false);
     archivedGoalsRef.current = [];
@@ -1100,11 +1118,12 @@ export function App() {
           ? "恢复全部学习数据？"
           : `恢复“${pendingImport.data.state.plan.goal.subject}”？`}</h2>
         <p id="import-dialog-description">{pendingImport.kind === "portfolio"
-          ? `将用文件中的 ${pendingImport.data.activeStates.length} 个进行中目标、${pendingImport.data.archivedStates.length} 个归档目标和时间预算替换当前浏览器的全部学习数据。导出时间：${new Date(pendingImport.data.exportedAt).toLocaleString("zh-CN")}。`
+          ? `文件包含 ${pendingImport.data.activeStates.length} 个进行中目标和 ${pendingImport.data.archivedStates.length} 个归档目标。可只合并本地不存在的目标，保留同 ID 本地版本、当前选择和时间预算；也可用文件内容全部替换。导出时间：${new Date(pendingImport.data.exportedAt).toLocaleString("zh-CN")}。`
           : `将恢复到第 ${pendingImport.data.state.currentDay} 天；同一目标的本地版本会被替换，其他进行中目标会保留。导出时间：${new Date(pendingImport.data.exportedAt).toLocaleString("zh-CN")}。`}</p>
         <div className="dialog-actions">
           <button className="secondary-action" autoFocus onClick={() => setPendingImport(null)}>取消</button>
-          <button className="primary-dialog-action" onClick={importLearningData}>确认恢复</button>
+          {pendingImport.kind === "portfolio" && <button className="secondary-action" onClick={mergePortfolioLearningData}>仅合并新目标</button>}
+          <button className="primary-dialog-action" onClick={importLearningData}>{pendingImport.kind === "portfolio" ? "全部替换" : "确认恢复"}</button>
         </div>
       </section>
     </div>
