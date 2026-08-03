@@ -22,6 +22,7 @@ import {
   generateStageRetrospective,
   generateStageNote,
   getCurrentRecord,
+  goalMasteryReport,
   initializeLearningState,
   isLearningPlanComplete,
   learningStateExportFilename,
@@ -739,6 +740,42 @@ describe("multi-day learning state", () => {
     const invalid = structuredClone(state);
     delete invalid.days[8].artifacts["day-9-stage-mastery-stage-1"].stageMasteryRemediation;
     expect(parseLearningState(JSON.stringify(invalid)).status).toBe("recovered");
+  });
+
+  it("separates schedule completion from goal-level mastery and prioritizes missing evidence", () => {
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 2 }));
+    for (let day = 1; day <= 14; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 10) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, "完整的迁移成果", {
+          rubric: [
+            { dimension: "understanding", score: 4, evidence: "解释完整", feedback: "继续" },
+            { dimension: "application", score: 4, evidence: "应用完整", feedback: "继续" },
+            { dimension: "evidence", score: 4, evidence: "证据完整", feedback: "继续" },
+            { dimension: "reflection", score: 4, evidence: "复盘完整", feedback: "继续" },
+          ],
+          totalScore: 16, masteryLevel: "ready", misconceptions: [], nextAction: "继续迁移",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    }
+
+    expect(isLearningPlanComplete(state)).toBe(true);
+    expect(goalMasteryReport(state)).toEqual({
+      status: "insufficient-evidence",
+      totalStages: 2,
+      completedStages: 2,
+      readyStages: 1,
+      headline: "计划日程已完成，但至少一个阶段仍缺少经过评估的成果证据。",
+      priorityStageId: "stage-1",
+      priorityStageTitle: "建立基础",
+      nextAction: "补充一份可验证的实践成果并获取四维评估。",
+    });
+    const markdown = serializeLearningProgressMarkdown(state);
+    expect(markdown).toContain("## 目标掌握度");
+    expect(markdown).toContain("- 已达标阶段：1/2");
+    expect(markdown).toContain("- 优先阶段：建立基础");
   });
 
   it("uses persisted evaluation feedback to focus the next day", () => {

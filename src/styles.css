@@ -224,6 +224,14 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .retrospective-heading h2 { margin: 5px 0 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 23px; font-weight: 500; }
 .retrospective-heading > p { max-width: 520px; margin: 0; color: #657169; font-size: 12px; line-height: 1.6; }
 .retrospective-list { display: grid; gap: 12px; margin-top: 18px; }
+.goal-mastery { display: grid; gap: 7px; margin-top: 18px; padding: 14px 16px; background: #f2f5f1; border: 1px solid #d9dfd9; border-left: 4px solid #9aa69f; border-radius: 10px; }
+.goal-mastery.ready { border-left-color: #237a5b; }
+.goal-mastery.developing, .goal-mastery.insufficient-evidence { border-left-color: #c9633f; }
+.goal-mastery > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.goal-mastery strong { color: #33463b; font-size: 12px; }
+.goal-mastery span, .goal-mastery p { margin: 0; color: #617069; font-size: 11px; line-height: 1.55; }
+.goal-mastery p { display: flex; gap: 6px; }
+.goal-mastery p b { flex: 0 0 auto; color: #526058; }
 .retrospective-list > article { padding: 18px; background: #fafaf7; border: 1px solid #d9dfd9; border-radius: 13px; }
 .retrospective-empty, .retrospective-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .retrospective-empty h3, .retrospective-title h3 { margin: 4px 0 0; font-size: 15px; }

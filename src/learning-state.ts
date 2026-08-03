@@ -82,6 +82,17 @@ export interface StageMasteryReport {
   latestRemediation?: StageMasteryRemediationComparison;
 }
 
+export interface GoalMasteryReport {
+  status: "in-progress" | "insufficient-evidence" | "developing" | "ready";
+  totalStages: number;
+  completedStages: number;
+  readyStages: number;
+  headline: string;
+  priorityStageId?: string;
+  priorityStageTitle?: string;
+  nextAction?: string;
+}
+
 export interface StageMasteryRemediationComparison {
   taskId: string;
   remediationDay: number;
@@ -645,6 +656,7 @@ export function learningProgressMarkdownFilename(now = new Date()): string {
 export function serializeLearningProgressMarkdown(state: LearningState, now = new Date()): string {
   const review = weeklyLearningReview(state);
   const trend = weeklyLearningTrend(state);
+  const goalMastery = goalMasteryReport(state);
   const repeatedMisconceptions = crossStageMisconceptionInsights(state);
   const stages = state.plan.stages.map((stage) => {
     const records = state.days.filter((record) => {
@@ -711,6 +723,17 @@ export function serializeLearningProgressMarkdown(state: LearningState, now = ne
     `- 成果评分变化：${trend.evaluationScoreDelta === null ? "证据不足" : `${trend.evaluationScoreDelta > 0 ? "+" : ""}${trend.evaluationScoreDelta}`}`,
     `- 偏难日变化：${trend.status === "insufficient-data" ? "证据不足" : `${trend.difficultDaysDelta > 0 ? "+" : ""}${trend.difficultDaysDelta}`}`,
     `- 轻松回忆变化：${trend.status === "insufficient-data" ? "证据不足" : `${trend.successfulReviewsDelta > 0 ? "+" : ""}${trend.successfulReviewsDelta}`}`,
+    "",
+    "## 目标掌握度",
+    "",
+    goalMastery.headline,
+    "",
+    `- 已完成阶段：${goalMastery.completedStages}/${goalMastery.totalStages}`,
+    `- 已达标阶段：${goalMastery.readyStages}/${goalMastery.totalStages}`,
+    ...(goalMastery.priorityStageTitle ? [
+      `- 优先阶段：${goalMastery.priorityStageTitle}`,
+      `- 最小下一步：${goalMastery.nextAction}`,
+    ] : []),
     "",
     "## 跨阶段重复误解",
     "",
@@ -1329,6 +1352,50 @@ export function stageMasteryReport(state: LearningState, stageId: string): Stage
           after: dimension.averageScore,
         })),
       },
+    } : {}),
+  };
+}
+
+/** Rolls completed stage checkpoints into one conservative, action-oriented goal summary. */
+export function goalMasteryReport(state: LearningState): GoalMasteryReport {
+  const completed = state.plan.stages.flatMap((stage) =>
+    state.days.some((record) => record.day === stage.endWeek * 7 && record.status === "completed")
+      ? [{ stage, report: stageMasteryReport(state, stage.id) }]
+      : []);
+  const readyStages = completed.filter((item) => item.report.status === "ready").length;
+  const unfinishedStageCount = state.plan.stages.length - completed.length;
+  const priority = completed
+    .filter((item) => item.report.status !== "ready")
+    .sort((left, right) => {
+      const rank = (status: StageMasteryReport["status"]) => status === "insufficient-evidence" ? 0 : 1;
+      return rank(left.report.status) - rank(right.report.status)
+        || (left.report.averageTotalScore ?? -1) - (right.report.averageTotalScore ?? -1)
+        || left.stage.startWeek - right.stage.startWeek;
+    })[0];
+  const status: GoalMasteryReport["status"] = unfinishedStageCount > 0
+    ? "in-progress"
+    : completed.some((item) => item.report.status === "insufficient-evidence")
+      ? "insufficient-evidence"
+      : readyStages === state.plan.stages.length
+        ? "ready"
+        : "developing";
+  const headline = status === "ready"
+    ? "全部阶段已有足够证据，计划完成与掌握度达标一致。"
+    : status === "in-progress"
+      ? `计划仍在进行；已完成 ${completed.length} 个阶段，其中 ${readyStages} 个达到掌握标准。`
+      : status === "insufficient-evidence"
+        ? "计划日程已完成，但至少一个阶段仍缺少经过评估的成果证据。"
+        : "计划日程已完成，但仍有阶段需要补强掌握证据。";
+  return {
+    status,
+    totalStages: state.plan.stages.length,
+    completedStages: completed.length,
+    readyStages,
+    headline,
+    ...(priority ? {
+      priorityStageId: priority.stage.id,
+      priorityStageTitle: priority.stage.title,
+      nextAction: priority.report.nextAction,
     } : {}),
   };
 }

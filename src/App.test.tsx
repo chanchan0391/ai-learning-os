@@ -428,6 +428,8 @@ describe("learning data controls", () => {
     render(<App />);
 
     const section = screen.getByRole("region", { name: "阶段结束回顾" });
+    expect(within(section).getByRole("status", { name: "目标掌握度" }).textContent).toContain("计划日程已完成，但至少一个阶段仍缺少");
+    expect(within(section).getByRole("status", { name: "目标掌握度" }).textContent).toContain("当前优先建立基础");
     expect(within(section).getByRole("status", { name: "阶段掌握度" }).textContent).toContain("证据不足");
     expect(within(section).getByText("补充一份可验证的实践成果并获取四维评估。")).toBeTruthy();
     expect(within(section).queryByRole("button", { name: "加入今天的补强实践" })).toBeNull();

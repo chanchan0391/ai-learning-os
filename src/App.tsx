@@ -21,6 +21,7 @@ import {
   generateStageRetrospective,
   generateStageNote,
   getCurrentRecord,
+  goalMasteryReport,
   initializeLearningState,
   isLearningPlanComplete,
   learningStateExportFilename,
@@ -214,6 +215,7 @@ export function App() {
   const retrospectiveStages = plan?.stages.filter((stage) =>
     learningState?.days.some((record) => record.day === stage.endWeek * 7 && record.status === "completed")
     || plan.retrospectives?.some((item) => item.stageId === stage.id)) ?? [];
+  const goalMastery = useMemo(() => learningState ? goalMasteryReport(learningState) : null, [learningState]);
 
   useEffect(() => {
     let active = true;
@@ -1464,6 +1466,13 @@ export function App() {
             <div><span className="agent-label">阶段证据整合</span><h2 id="retrospective-title">阶段结束回顾</h2></div>
             <p>把阶段目标、代表成果与可迁移能力整理成下一阶段可继续使用的记录。</p>
           </div>
+          {goalMastery && (
+            <div className={`goal-mastery ${goalMastery.status}`} role="status" aria-label="目标掌握度">
+              <div><strong>{goalMastery.status === "ready" ? "目标证据已达标" : goalMastery.status === "in-progress" ? "目标仍在推进" : "目标仍需补强"}</strong><span>{goalMastery.headline}</span></div>
+              <p>阶段完成 {goalMastery.completedStages}/{goalMastery.totalStages} · 证据达标 {goalMastery.readyStages}/{goalMastery.totalStages}</p>
+              {goalMastery.priorityStageTitle && <p><b>当前优先</b>{goalMastery.priorityStageTitle} · {goalMastery.nextAction}</p>}
+            </div>
+          )}
           <div className="retrospective-list">
             {retrospectiveStages.map((stage) => {
               const retrospective = (plan.retrospectives ?? []).find((item) => item.stageId === stage.id);
