@@ -23,6 +23,7 @@ import {
   generateStageNote,
   getCurrentRecord,
   goalMasteryReport,
+  goalCompletionMarkdownFilename,
   initializeLearningState,
   isLearningPlanComplete,
   learningStateExportFilename,
@@ -42,6 +43,7 @@ import {
   stageMasteryTaskId,
   startStageMasteryFollowUp,
   serializeLearningStateExport,
+  serializeGoalCompletionMarkdown,
   serializeCrossGoalWeeklyReviewMarkdown,
   serializeLearningProgressMarkdown,
   serializeStageNoteMarkdown,
@@ -776,6 +778,50 @@ describe("multi-day learning state", () => {
     expect(markdown).toContain("## 目标掌握度");
     expect(markdown).toContain("- 已达标阶段：1/2");
     expect(markdown).toContain("- 优先阶段：建立基础");
+  });
+
+  it("exports a completed goal evidence report with stage-level audit details", () => {
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let day = 1; day <= 7; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 3) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, "可验证成果", {
+          rubric: [
+            { dimension: "understanding", score: 3, evidence: "解释完整", feedback: "继续" },
+            { dimension: "application", score: 3, evidence: "完成应用", feedback: "继续" },
+            { dimension: "evidence", score: 3, evidence: "保留结果", feedback: "继续" },
+            { dimension: "reflection", score: 3, evidence: "说明取舍", feedback: "继续" },
+          ],
+          totalScore: 12, masteryLevel: "developing", misconceptions: [], nextAction: "增加一个边界案例",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "完成" });
+    }
+    state.plan.retrospectives = [{
+      id: "retro-stage-1",
+      stageId: "stage-1",
+      goalReflection: "完成了基础闭环",
+      representativeArtifact: "可验证成果",
+      transferableSkills: "拆解与验证",
+      nextApplication: "迁移到真实项目",
+      sourceDays: [3],
+      updatedAt: "2026-08-03T12:00:00.000Z",
+    }];
+    const now = new Date("2026-08-03T15:00:00.000Z");
+    const markdown = serializeGoalCompletionMarkdown(state, now);
+
+    expect(goalCompletionMarkdownFilename(state, now)).toBe("AI-Agent-工程-goal-evidence-2026-08-03.md");
+    expect(markdown).toContain("# AI Agent 工程 目标证据报告");
+    expect(markdown).toContain("计划完成，全部阶段证据达标");
+    expect(markdown).toContain("- 四维证据：理解 3/4（1 份）；应用 3/4（1 份）；证据 3/4（1 份）；反思 3/4（1 份）");
+    expect(markdown).toContain("- 代表成果：可验证成果");
+    expect(markdown).toContain("- 可迁移能力：拆解与验证");
+  });
+
+  it("does not create a completion report before the planned schedule is complete", () => {
+    const state = initializeLearningState(generateLearningPlan(goal));
+    expect(() => serializeGoalCompletionMarkdown(state)).toThrow("学习计划尚未完成");
   });
 
   it("uses persisted evaluation feedback to focus the next day", () => {

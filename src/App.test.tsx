@@ -444,6 +444,26 @@ describe("learning data controls", () => {
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.retrospectives[0].transferableSkills).toBe("拆解问题并验证最小成果");
   });
 
+  it("downloads a standalone goal evidence report after schedule completion", async () => {
+    const user = userEvent.setup();
+    const downloads: string[] = [];
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let day = 1; day <= 7; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "完成" });
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:goal-evidence") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) { downloads.push(this.download); });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "导出目标证据报告" }));
+
+    expect(downloads).toEqual([expect.stringMatching(/^AI-Agent-工程-goal-evidence-\d{4}-\d{2}-\d{2}\.md$/)]);
+    expect(screen.getByText("已导出目标证据报告 Markdown。")).toBeTruthy();
+  });
+
   it("turns a linked misconception into a scored active-recall task", async () => {
     const user = userEvent.setup();
     let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 2 }));

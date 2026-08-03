@@ -653,6 +653,71 @@ export function learningProgressMarkdownFilename(now = new Date()): string {
   return `ai-learning-os-progress-${dateKey(now)}.md`;
 }
 
+export function goalCompletionMarkdownFilename(state: LearningState, now = new Date()): string {
+  return `${safeFilenamePart(state.plan.goal.subject)}-goal-evidence-${dateKey(now)}.md`;
+}
+
+/** Creates a portable completion report from the same evidence used by mastery checks. */
+export function serializeGoalCompletionMarkdown(state: LearningState, now = new Date()): string {
+  if (!isLearningPlanComplete(state)) throw new Error("学习计划尚未完成");
+  const goalMastery = goalMasteryReport(state);
+  const statusLabel = goalMastery.status === "ready"
+    ? "计划完成，全部阶段证据达标"
+    : goalMastery.status === "insufficient-evidence"
+      ? "计划完成，仍有阶段证据不足"
+      : "计划完成，仍有阶段需要加强";
+  const stageSections = state.plan.stages.map((stage) => {
+    const mastery = stageMasteryReport(state, stage.id);
+    const retrospective = (state.plan.retrospectives ?? []).find((item) => item.stageId === stage.id);
+    const stageStatus = mastery.status === "ready" ? "证据达标" : mastery.status === "developing" ? "需要加强" : "证据不足";
+    return [
+      `## ${stage.title}`,
+      "",
+      `- 阶段目标：${stage.outcome}`,
+      `- 掌握结论：${stageStatus}`,
+      `- 完成学习日：${mastery.completedDays}`,
+      `- 成果评估：${mastery.evaluationCount} 次${mastery.averageTotalScore === null ? "" : `，平均 ${mastery.averageTotalScore}/16`}`,
+      `- 四维证据：${mastery.dimensions.map((item) => `${item.label} ${item.averageScore ?? "—"}/4（${item.evidenceCount} 份）`).join("；")}`,
+      `- 最小下一步：${mastery.nextAction}`,
+      ...(mastery.latestRemediation ? [
+        `- 最近补强：第 ${mastery.latestRemediation.remediationDay} 天，来源第 ${mastery.latestRemediation.sourceDay} 天的“${mastery.latestRemediation.sourceNextAction}”`,
+        `- 补强变化：平均成果 ${mastery.latestRemediation.averageTotalScoreBefore ?? "—"} → ${mastery.latestRemediation.averageTotalScoreAfter ?? "—"}/16`,
+      ] : []),
+      ...(retrospective ? [
+        "",
+        "### 阶段回顾",
+        "",
+        `- 目标回顾：${retrospective.goalReflection}`,
+        `- 代表成果：${retrospective.representativeArtifact}`,
+        `- 可迁移能力：${retrospective.transferableSkills}`,
+        `- 后续应用：${retrospective.nextApplication}`,
+        `- 来源学习日：${retrospective.sourceDays.join("、")}`,
+      ] : []),
+    ].join("\n");
+  });
+  return [
+    `# ${state.plan.goal.subject} 目标证据报告`,
+    "",
+    `> 目标结果：${state.plan.goal.targetOutcome}`,
+    `> 学习周期：${state.plan.goal.durationWeeks} 周，每日 ${state.plan.goal.dailyMinutes} 分钟`,
+    `> 计划创建：${state.plan.createdAt}`,
+    `> 报告导出：${now.toISOString()}`,
+    "",
+    "## 完成结论",
+    "",
+    statusLabel,
+    "",
+    `- 完成阶段：${goalMastery.completedStages}/${goalMastery.totalStages}`,
+    `- 证据达标阶段：${goalMastery.readyStages}/${goalMastery.totalStages}`,
+    ...(goalMastery.priorityStageTitle ? [
+      `- 当前优先阶段：${goalMastery.priorityStageTitle}`,
+      `- 当前最小下一步：${goalMastery.nextAction}`,
+    ] : []),
+    "",
+    ...stageSections.flatMap((section) => [section, ""]),
+  ].join("\n");
+}
+
 export function serializeLearningProgressMarkdown(state: LearningState, now = new Date()): string {
   const review = weeklyLearningReview(state);
   const trend = weeklyLearningTrend(state);

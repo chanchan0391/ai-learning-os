@@ -22,6 +22,7 @@ import {
   generateStageNote,
   getCurrentRecord,
   goalMasteryReport,
+  goalCompletionMarkdownFilename,
   initializeLearningState,
   isLearningPlanComplete,
   learningStateExportFilename,
@@ -36,6 +37,7 @@ import {
   saveUnderstandingResponse,
   scheduledReviewItems,
   serializeLearningStateExport,
+  serializeGoalCompletionMarkdown,
   serializeCrossGoalWeeklyReviewMarkdown,
   serializeLearningProgressMarkdown,
   serializeStageNoteMarkdown,
@@ -613,6 +615,22 @@ export function App() {
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
     setStorageNotice("已导出学习周回顾与阶段进展摘要。");
+    setStorageNoticeIsError(false);
+  }
+
+  function exportGoalCompletionReport() {
+    if (!learningState) return;
+    const now = new Date();
+    const blob = new Blob([serializeGoalCompletionMarkdown(learningState, now)], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = goalCompletionMarkdownFilename(learningState, now);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setStorageNotice("已导出目标证据报告 Markdown。");
     setStorageNoticeIsError(false);
   }
 
@@ -1471,6 +1489,7 @@ export function App() {
               <div><strong>{goalMastery.status === "ready" ? "目标证据已达标" : goalMastery.status === "in-progress" ? "目标仍在推进" : "目标仍需补强"}</strong><span>{goalMastery.headline}</span></div>
               <p>阶段完成 {goalMastery.completedStages}/{goalMastery.totalStages} · 证据达标 {goalMastery.readyStages}/{goalMastery.totalStages}</p>
               {goalMastery.priorityStageTitle && <p><b>当前优先</b>{goalMastery.priorityStageTitle} · {goalMastery.nextAction}</p>}
+              {isLearningPlanComplete(learningState) && <button className="text-button mastery-action" onClick={exportGoalCompletionReport}>导出目标证据报告</button>}
               {goalMastery.priorityStageId && (currentRecord.status === "active" || isLearningPlanComplete(learningState)) && (() => {
                 const taskAdded = currentRecord.status === "active"
                   && currentRecord.tasks.some((task) => task.id === stageMasteryTaskId(learningState.currentDay, goalMastery.priorityStageId!));
