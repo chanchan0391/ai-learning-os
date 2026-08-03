@@ -5,6 +5,7 @@ import { DeterministicModelProvider } from "./ai/deterministic-provider";
 import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest } from "./ai/model-provider";
 import type { RequestLogEvent } from "./observability/request-observability";
 import type { SecurityAuditEvent } from "./security/request-security";
+import type { SyncStore } from "./sync/sync-store";
 
 const servers: ReturnType<typeof createApp>[] = [];
 afterEach(() => servers.splice(0).forEach((server) => server.close()));
@@ -25,8 +26,28 @@ describe("AI Learning OS API", () => {
     const baseUrl = await startApi();
     await expect(fetch(`${baseUrl}/api/health`).then((response) => response.json())).resolves.toMatchObject({
       status: "ok", provider: "deterministic-development", aiEnabled: false, syncEnabled: false,
+      dependencies: { database: "disabled" },
       capacity: { inFlight: 0, requests: 0, rejected: 0, failed: 0, rateLimited: 0, byScope: {} },
     });
+  });
+
+  it("reports degraded readiness without exposing database errors", async () => {
+    const events: RequestLogEvent[] = [];
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      syncStore: {} as SyncStore,
+      resolvePrincipal: async () => null,
+      readinessCheck: async () => { throw new Error("postgres://secret@private-host/learning"); },
+      requestLogSink: { record: (event) => { events.push(event); } },
+    });
+
+    const response = await fetch(`${baseUrl}/api/health`);
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "degraded",
+      syncEnabled: true,
+      dependencies: { database: "unavailable" },
+    });
+    expect(JSON.stringify(events)).not.toContain("private-host");
   });
 
   it("adds a correlation ID and records privacy-safe request metadata", async () => {

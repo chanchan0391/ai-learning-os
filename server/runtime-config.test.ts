@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readSyncRuntimeConfig } from "./runtime-config";
+import type { Pool } from "pg";
+import { createSyncRuntime, readSyncRuntimeConfig } from "./runtime-config";
 
 describe("sync runtime configuration", () => {
   it("keeps sync disabled when no database is configured", () => {
@@ -102,5 +103,22 @@ describe("sync runtime configuration", () => {
       OIDC_REDIRECT_URI: "https://learn.example/api/auth/callback",
       OIDC_TRANSACTION_SECRET: "a-secure-random-value-with-32-characters",
     })).toThrow(/exact HTTPS/);
+  });
+
+  it("wires PostgreSQL into the application readiness check", async () => {
+    const queries: unknown[] = [];
+    const pool = {
+      query: async (query: unknown) => { queries.push(query); return { rows: [{ "?column?": 1 }] }; },
+      end: async () => undefined,
+    } as unknown as Pool;
+    const runtime = createSyncRuntime({
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+    }, () => pool);
+
+    await runtime.appOptions.readinessCheck?.();
+
+    expect(queries).toEqual(["SELECT 1"]);
+    await runtime.close();
   });
 });

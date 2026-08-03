@@ -55,6 +55,7 @@ export interface AppOptions {
   capacityMonitor?: RequestCapacityMonitor;
   modelUsageLedger?: ModelUsageLedger;
   requestLogSink?: RequestLogSink;
+  readinessCheck?: () => Promise<void>;
 }
 
 interface ProtectedRoute {
@@ -241,11 +242,22 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         }
       }
       if (request.method === "GET" && request.url === "/api/health") {
-        return sendJson(response, 200, {
-          status: "ok",
+        let database: "disabled" | "ready" | "unavailable" = options.syncStore ? "ready" : "disabled";
+        if (options.readinessCheck) {
+          try {
+            await options.readinessCheck();
+          } catch (error) {
+            database = "unavailable";
+            console.error("Readiness check failed", error instanceof Error ? error.name : "UnknownError");
+          }
+        }
+        const ready = database !== "unavailable";
+        return sendJson(response, ready ? 200 : 503, {
+          status: ready ? "ok" : "degraded",
           provider: provider.id,
           aiEnabled: provider.isAiEnabled,
           syncEnabled: Boolean(options.syncStore && options.resolvePrincipal),
+          dependencies: { database },
           capacity: capacityMonitor.snapshot(),
           accountModelBudgetsEnabled: Boolean(options.modelUsageLedger),
         });

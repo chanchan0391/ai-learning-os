@@ -122,7 +122,10 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
 
 export function createSyncRuntime(
   env: NodeJS.ProcessEnv,
-  createPool: (connectionString: string) => Pool = (connectionString) => new pg.Pool({ connectionString }),
+  createPool: (connectionString: string) => Pool = (connectionString) => new pg.Pool({
+    connectionString,
+    connectionTimeoutMillis: 5_000,
+  }),
 ): SyncRuntime {
   const config = readSyncRuntimeConfig(env);
   if (!config) return { appOptions: {}, close: async () => undefined };
@@ -144,6 +147,24 @@ export function createSyncRuntime(
       requestLogSink: new JsonLineRequestLogSink(),
       capacityMonitor: new RollingRequestCapacityMonitor(),
       modelUsageLedger: config.modelUsagePolicy ? new PostgresModelUsageLedger(pool, config.modelUsagePolicy) : undefined,
+      readinessCheck: async () => {
+        let timeout: NodeJS.Timeout | undefined;
+        try {
+          await Promise.race([
+            pool.query("SELECT 1"),
+            new Promise<never>((_resolve, reject) => {
+              timeout = setTimeout(() => {
+                const error = new Error("Database readiness check timed out");
+                error.name = "ReadinessTimeoutError";
+                reject(error);
+              }, 5_000);
+              timeout.unref();
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      },
     },
     close: () => pool.end(),
   };
