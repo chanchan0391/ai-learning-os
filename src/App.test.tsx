@@ -513,6 +513,21 @@ describe("learning data controls", () => {
       state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") return Response.json({ error: "Authentication is not configured" }, { status: 503 });
+      if (url.pathname === "/api/evaluations") return Response.json({
+        rubric: [
+          { dimension: "understanding", score: 4, evidence: "解释失败边界", feedback: "继续" },
+          { dimension: "application", score: 4, evidence: "覆盖失败恢复", feedback: "继续" },
+          { dimension: "evidence", score: 4, evidence: "保留日志", feedback: "继续" },
+          { dimension: "reflection", score: 4, evidence: "说明取舍", feedback: "继续" },
+        ],
+        totalScore: 16, masteryLevel: "ready", misconceptions: [], nextAction: "迁移到下一阶段",
+      }, { status: 201 });
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
     render(<App />);
 
     const section = screen.getByRole("region", { name: "阶段结束回顾" });
@@ -520,9 +535,17 @@ describe("learning data controls", () => {
 
     expect((within(section).getByRole("button", { name: "已加入今日任务" }) as HTMLButtonElement).disabled).toBe(true);
     const taskTitle = screen.getByText("阶段补强实践：建立基础");
-    expect(within(taskTitle.closest("article")!).getByText(/验证失败恢复路径/)).toBeTruthy();
+    const taskBlock = taskTitle.closest("article")!;
+    expect(within(taskBlock).getByText(/验证失败恢复路径/)).toBeTruthy();
+    await user.type(within(taskBlock).getByLabelText("描述成果、关键步骤、验证证据和复盘"), "补充了失败恢复测试、日志和取舍复盘");
+    await user.click(within(taskBlock).getByRole("button", { name: /提交成果并获取反馈/ }));
+
+    expect(await within(section).findByText("补强后变化 · 来源第 3 天")).toBeTruthy();
+    expect(within(section).getByText("平均成果 9 → 12.5/16")).toBeTruthy();
+    expect(within(section).getByText("补强来源：验证失败恢复路径")).toBeTruthy();
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
     expect(saved.days.at(-1).tasks.filter((task: { id: string }) => task.id === "day-8-stage-mastery-stage-1")).toHaveLength(1);
+    expect(saved.days.at(-1).artifacts["day-8-stage-mastery-stage-1"].stageMasteryRemediation).toMatchObject({ stageId: "stage-1", sourceDay: 3 });
   });
 
   it("keeps data on cancellation and removes every local version after confirmation", async () => {

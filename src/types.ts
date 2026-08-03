@@ -68,6 +68,15 @@ export interface LearningTaskArtifact {
   submission?: string;
   evaluation?: EvaluationResult;
   reviewPerformance?: ReviewPerformance;
+  stageMasteryRemediation?: StageMasteryRemediationSource;
+}
+
+/** Links a follow-up practice back to the stage evidence gap that created it. */
+export interface StageMasteryRemediationSource {
+  stageId: string;
+  sourceDay: number;
+  sourceTaskId?: string;
+  sourceNextAction: string;
 }
 
 export type ReviewRecall = "forgot" | "effortful" | "easy";

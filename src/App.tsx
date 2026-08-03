@@ -105,6 +105,14 @@ function StageMasterySummary({
     <div className={`stage-mastery ${report.status}`} role="status" aria-label="阶段掌握度">
       <div><strong>{statusLabel}</strong><span>{report.headline}</span></div>
       <ul>{report.dimensions.map((item) => <li className={item.status} key={item.dimension}>{item.label} {item.averageScore === null ? "—" : `${item.averageScore}/4`}</li>)}</ul>
+      {report.latestRemediation && (
+        <div className="mastery-comparison">
+          <strong>补强后变化 · 来源第 {report.latestRemediation.sourceDay} 天</strong>
+          <span>平均成果 {report.latestRemediation.averageTotalScoreBefore ?? "—"} → {report.latestRemediation.averageTotalScoreAfter ?? "—"}/16</span>
+          <small>{report.latestRemediation.dimensionChanges.map((item) => `${item.label} ${item.before ?? "—"}→${item.after ?? "—"}`).join(" · ")}</small>
+          <small>补强来源：{report.latestRemediation.sourceNextAction}</small>
+        </div>
+      )}
       <p><b>最小下一步</b>{report.nextAction}</p>
       {report.status !== "ready" && canAddTask && (
         <button className="secondary-action mastery-action" disabled={taskAdded} onClick={onAddTask}>

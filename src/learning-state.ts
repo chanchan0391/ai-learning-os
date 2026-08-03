@@ -79,6 +79,25 @@ export interface StageMasteryReport {
   headline: string;
   nextAction: string;
   dimensions: StageMasteryDimension[];
+  latestRemediation?: StageMasteryRemediationComparison;
+}
+
+export interface StageMasteryRemediationComparison {
+  taskId: string;
+  remediationDay: number;
+  sourceDay: number;
+  sourceTaskId?: string;
+  sourceNextAction: string;
+  statusBefore: StageMasteryReport["status"];
+  statusAfter: StageMasteryReport["status"];
+  averageTotalScoreBefore: number | null;
+  averageTotalScoreAfter: number | null;
+  dimensionChanges: Array<{
+    dimension: StageMasteryDimension["dimension"];
+    label: string;
+    before: number | null;
+    after: number | null;
+  }>;
 }
 
 export function stageMasteryTaskId(day: number, stageId: string): string {
@@ -256,6 +275,12 @@ function isLearningTaskArtifact(value: unknown): value is LearningTaskArtifact {
     && (value.teachingSession === undefined || isTeachingSession(value.teachingSession))
     && (value.submission === undefined || typeof value.submission === "string")
     && (value.evaluation === undefined || isEvaluationResult(value.evaluation))
+    && (value.stageMasteryRemediation === undefined || (isRecord(value.stageMasteryRemediation)
+      && isNonEmptyString(value.stageMasteryRemediation.stageId)
+      && Number.isInteger(value.stageMasteryRemediation.sourceDay)
+      && Number(value.stageMasteryRemediation.sourceDay) > 0
+      && (value.stageMasteryRemediation.sourceTaskId === undefined || isNonEmptyString(value.stageMasteryRemediation.sourceTaskId))
+      && isNonEmptyString(value.stageMasteryRemediation.sourceNextAction)))
     && (value.reviewPerformance === undefined || (isRecord(value.reviewPerformance)
       && ["forgot", "effortful", "easy"].includes(String(value.reviewPerformance.recall))
       && Array.isArray(value.reviewPerformance.sourceDays)
@@ -288,6 +313,8 @@ export function isDailyRecord(value: unknown): value is DailyLearningRecord {
     && Object.entries(value.artifacts).every(([taskId, artifact]) => value.tasks instanceof Array
       && value.tasks.some((task) => isRecord(task) && task.id === taskId)
       && isLearningTaskArtifact(artifact)
+      && (artifact.stageMasteryRemediation === undefined
+        || artifact.stageMasteryRemediation.sourceDay < Number(value.day))
       && (artifact.reviewPerformance === undefined
         || artifact.reviewPerformance.sourceDays.every((sourceDay) => sourceDay < Number(value.day))));
   return Number.isInteger(value.day)
@@ -315,6 +342,15 @@ function isLearningState(value: unknown): value is LearningState {
     && days.every(isDailyRecord)
     && days.every((day) => isRecord(day) && Array.isArray(day.tasks)
       && day.tasks.reduce((sum, task) => sum + (isRecord(task) ? Number(task.minutes) : 0), 0) === plan.goal.dailyMinutes)
+    && days.every((day) => isRecord(day) && isRecord(day.artifacts)
+      && Object.values(day.artifacts).every((artifact) => !isLearningTaskArtifact(artifact) || artifact.stageMasteryRemediation === undefined
+        || (plan.stages.some((stage) => stage.id === artifact.stageMasteryRemediation?.stageId)
+          && artifact.stageMasteryRemediation.sourceDay <= plan.goal.durationWeeks * 7
+          && (artifact.stageMasteryRemediation.sourceTaskId === undefined
+            || days.some((sourceDay) => isRecord(sourceDay)
+              && sourceDay.day === artifact.stageMasteryRemediation?.sourceDay
+              && Array.isArray(sourceDay.tasks)
+              && sourceDay.tasks.some((task) => isRecord(task) && task.id === artifact.stageMasteryRemediation?.sourceTaskId))))))
     && days.every((day, index) => isRecord(day) && day.day === index + 1)
     && isRecord(days.at(-1))
     && days.at(-1)?.day === value.currentDay
@@ -631,6 +667,10 @@ export function serializeLearningProgressMarkdown(state: LearningState, now = ne
       ...(mastery ? [
         `- 阶段掌握度：${mastery.headline}${mastery.averageTotalScore === null ? "" : ` 平均成果 ${mastery.averageTotalScore}/16`}`,
         `- 掌握度下一步：${mastery.nextAction}`,
+        ...(mastery.latestRemediation ? [
+          `- 最近补强来源：第 ${mastery.latestRemediation.sourceDay} 天 · ${mastery.latestRemediation.sourceNextAction}`,
+          `- 补强后变化：平均成果 ${mastery.latestRemediation.averageTotalScoreBefore ?? "—"} → ${mastery.latestRemediation.averageTotalScoreAfter ?? "—"}/16；${mastery.latestRemediation.dimensionChanges.map((item) => `${item.label} ${item.before ?? "—"}→${item.after ?? "—"}`).join("；")}`,
+        ] : []),
       ] : []),
       ...(retrospective ? [
         `- 代表成果：${retrospective.representativeArtifact}`,
@@ -1209,47 +1249,82 @@ export function stageMasteryReport(state: LearningState, stageId: string): Stage
   if (!stage) throw new Error("学习阶段不存在");
   const records = completedStageRecords(state, stage);
   if (!records.some((record) => record.day === stage.endWeek * 7)) throw new Error("完成这个阶段后才能检查阶段掌握度");
-  const evaluations = records.flatMap((record) => Object.values(record.artifacts)
-    .flatMap((artifact) => artifact.evaluation ? [artifact.evaluation] : []));
+  const stageEvidence = records.flatMap((record) => Object.entries(record.artifacts)
+    .flatMap(([taskId, artifact]) => artifact.evaluation ? [{ day: record.day, taskId, evaluation: artifact.evaluation }] : []));
+  const remediationEvidence = state.days.flatMap((record) => Object.entries(record.artifacts)
+    .flatMap(([taskId, artifact]) => artifact.evaluation && artifact.stageMasteryRemediation?.stageId === stageId
+      ? [{ day: record.day, taskId, evaluation: artifact.evaluation, source: artifact.stageMasteryRemediation }]
+      : []))
+    .sort((left, right) => left.day - right.day || left.taskId.localeCompare(right.taskId));
   const labels: Record<StageMasteryDimension["dimension"], string> = {
     understanding: "理解",
     application: "应用",
     evidence: "证据",
     reflection: "反思",
   };
-  const dimensions = (Object.keys(labels) as StageMasteryDimension["dimension"][]).map((dimension) => {
-    const scores = evaluations.flatMap((evaluation) => evaluation.rubric
-      .filter((item) => item.dimension === dimension)
-      .map((item) => item.score));
-    const averageScore = roundedAverage(scores);
-    return {
-      dimension,
-      label: labels[dimension],
-      averageScore,
-      evidenceCount: scores.length,
-      status: averageScore === null ? "missing" as const : averageScore >= 3 ? "demonstrated" as const : "developing" as const,
-    };
-  });
-  const averageTotalScore = roundedAverage(evaluations.map((evaluation) => evaluation.totalScore));
-  const status: StageMasteryReport["status"] = evaluations.length === 0
-    ? "insufficient-evidence"
-    : dimensions.every((item) => item.status === "demonstrated") && (averageTotalScore ?? 0) >= 12
-      ? "ready"
-      : "developing";
-  const weakest = [...evaluations].sort((left, right) => left.totalScore - right.totalScore)[0];
+  const summarize = (evaluations: EvaluationResult[]) => {
+    const dimensions = (Object.keys(labels) as StageMasteryDimension["dimension"][]).map((dimension) => {
+      const scores = evaluations.flatMap((evaluation) => evaluation.rubric
+        .filter((item) => item.dimension === dimension)
+        .map((item) => item.score));
+      const averageScore = roundedAverage(scores);
+      return {
+        dimension,
+        label: labels[dimension],
+        averageScore,
+        evidenceCount: scores.length,
+        status: averageScore === null ? "missing" as const : averageScore >= 3 ? "demonstrated" as const : "developing" as const,
+      };
+    });
+    const averageTotalScore = roundedAverage(evaluations.map((evaluation) => evaluation.totalScore));
+    const status: StageMasteryReport["status"] = evaluations.length === 0
+      ? "insufficient-evidence"
+      : dimensions.every((item) => item.status === "demonstrated") && (averageTotalScore ?? 0) >= 12
+        ? "ready"
+        : "developing";
+    return { dimensions, averageTotalScore, status };
+  };
+  const allEvidence = [...stageEvidence, ...remediationEvidence];
+  const summary = summarize(allEvidence.map((item) => item.evaluation));
+  const weakest = [...allEvidence].sort((left, right) => left.evaluation.totalScore - right.evaluation.totalScore)[0]?.evaluation;
+  const latestRemediationEvidence = remediationEvidence.at(-1);
+  const beforeLatest = latestRemediationEvidence
+    ? summarize(allEvidence.filter((item) => item !== latestRemediationEvidence).map((item) => item.evaluation))
+    : null;
   return {
     stageId,
     completedDays: records.length,
-    evaluationCount: evaluations.length,
-    averageTotalScore,
-    status,
-    headline: status === "ready"
+    evaluationCount: allEvidence.length,
+    averageTotalScore: summary.averageTotalScore,
+    status: summary.status,
+    headline: summary.status === "ready"
       ? "现有成果证据支持进入下一阶段。"
-      : status === "developing"
+      : summary.status === "developing"
         ? "阶段已完成，但掌握证据仍需加强。"
         : "阶段已完成，但还没有经过评估的成果证据。",
-    nextAction: weakest?.nextAction.trim() || "补充一份可验证的实践成果并获取四维评估。",
-    dimensions,
+    nextAction: latestRemediationEvidence?.evaluation.nextAction.trim()
+      || weakest?.nextAction.trim()
+      || "补充一份可验证的实践成果并获取四维评估。",
+    dimensions: summary.dimensions,
+    ...(latestRemediationEvidence && beforeLatest ? {
+      latestRemediation: {
+        taskId: latestRemediationEvidence.taskId,
+        remediationDay: latestRemediationEvidence.day,
+        sourceDay: latestRemediationEvidence.source.sourceDay,
+        ...(latestRemediationEvidence.source.sourceTaskId ? { sourceTaskId: latestRemediationEvidence.source.sourceTaskId } : {}),
+        sourceNextAction: latestRemediationEvidence.source.sourceNextAction,
+        statusBefore: beforeLatest.status,
+        statusAfter: summary.status,
+        averageTotalScoreBefore: beforeLatest.averageTotalScore,
+        averageTotalScoreAfter: summary.averageTotalScore,
+        dimensionChanges: summary.dimensions.map((dimension) => ({
+          dimension: dimension.dimension,
+          label: dimension.label,
+          before: beforeLatest.dimensions.find((item) => item.dimension === dimension.dimension)?.averageScore ?? null,
+          after: dimension.averageScore,
+        })),
+      },
+    } : {}),
   };
 }
 
@@ -1271,7 +1346,49 @@ export function addStageMasteryTask(state: LearningState, stageId: string): Lear
     minutes: Math.max(10, Math.round(state.plan.goal.dailyMinutes * 0.2)),
     completed: false,
   };
-  return updateCurrentRecord(state, (current) => ({ ...current, tasks: [...current.tasks, task] }));
+  const sourceCandidates = state.days.flatMap((sourceRecord) => Object.entries(sourceRecord.artifacts)
+    .flatMap(([sourceTaskId, artifact]) => {
+      const sourceWeek = Math.ceil(sourceRecord.day / 7);
+      const belongsToStage = sourceWeek >= stage.startWeek && sourceWeek <= stage.endWeek;
+      return artifact.evaluation && (belongsToStage || artifact.stageMasteryRemediation?.stageId === stageId)
+        ? [{ sourceDay: sourceRecord.day, sourceTaskId, evaluation: artifact.evaluation }]
+        : [];
+    }));
+  const sourceEvidence = (report.latestRemediation
+    ? sourceCandidates.find((item) => item.sourceDay === report.latestRemediation?.remediationDay && item.sourceTaskId === report.latestRemediation.taskId)
+    : undefined)
+    ?? sourceCandidates.sort((left, right) => left.evaluation.totalScore - right.evaluation.totalScore || right.sourceDay - left.sourceDay)[0];
+  return updateCurrentRecord(state, (current) => {
+    let remainingMinutes = task.minutes;
+    const reductions = new Map<string, number>();
+    const candidates = [...current.tasks].sort((left, right) =>
+      Number(right.type === task.type) - Number(left.type === task.type) || right.minutes - left.minutes);
+    for (const candidate of candidates) {
+      const reduction = Math.min(remainingMinutes, Math.max(0, candidate.minutes - 1));
+      reductions.set(candidate.id, reduction);
+      remainingMinutes -= reduction;
+      if (remainingMinutes === 0) break;
+    }
+    if (remainingMinutes > 0) throw new Error("今天的时间预算不足以加入阶段补强任务");
+    return {
+      ...current,
+      tasks: [
+        ...current.tasks.map((item) => ({ ...item, minutes: item.minutes - (reductions.get(item.id) ?? 0) })),
+        task,
+      ],
+      artifacts: {
+        ...current.artifacts,
+        [taskId]: {
+          stageMasteryRemediation: {
+            stageId,
+            sourceDay: sourceEvidence?.sourceDay ?? stage.endWeek * 7,
+            ...(sourceEvidence ? { sourceTaskId: sourceEvidence.sourceTaskId } : {}),
+            sourceNextAction: report.nextAction,
+          },
+        },
+      },
+    };
+  });
 }
 
 export function generateStageRetrospective(state: LearningState, stageId: string, now = new Date()): LearningState {

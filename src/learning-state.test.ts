@@ -639,7 +639,46 @@ describe("multi-day learning state", () => {
       minutes: 12,
       completed: false,
     });
+    expect(getCurrentRecord(state).tasks.reduce((sum, task) => sum + task.minutes, 0)).toBe(60);
+    expect(getCurrentRecord(state).artifacts[taskId].stageMasteryRemediation).toEqual({
+      stageId: "stage-1",
+      sourceDay: 3,
+      sourceTaskId: "day-3-practice",
+      sourceNextAction: "验证失败恢复路径",
+    });
     expect(addStageMasteryTask(state, "stage-1")).toEqual(state);
+
+    state = saveEvaluation(state, taskId, "补充了失败恢复测试、日志和复盘", {
+      rubric: [
+        { dimension: "understanding", score: 4, evidence: "解释失败边界", feedback: "继续" },
+        { dimension: "application", score: 4, evidence: "覆盖失败恢复", feedback: "继续" },
+        { dimension: "evidence", score: 4, evidence: "保留日志", feedback: "继续" },
+        { dimension: "reflection", score: 4, evidence: "说明取舍", feedback: "继续" },
+      ],
+      totalScore: 16, masteryLevel: "ready", misconceptions: [], nextAction: "迁移到下一阶段",
+    });
+    expect(stageMasteryReport(state, "stage-1")).toMatchObject({
+      status: "ready",
+      evaluationCount: 2,
+      averageTotalScore: 12.5,
+      latestRemediation: {
+        taskId,
+        remediationDay: 8,
+        sourceDay: 3,
+        sourceTaskId: "day-3-practice",
+        sourceNextAction: "验证失败恢复路径",
+        statusBefore: "developing",
+        statusAfter: "ready",
+        averageTotalScoreBefore: 9,
+        averageTotalScoreAfter: 12.5,
+      },
+    });
+    expect(parseLearningState(JSON.stringify(state)).status).toBe("valid");
+    expect(serializeLearningProgressMarkdown(state)).toContain("- 最近补强来源：第 3 天 · 验证失败恢复路径");
+    expect(serializeLearningProgressMarkdown(state)).toContain("- 补强后变化：平均成果 9 → 12.5/16");
+    const invalidSource = structuredClone(state);
+    invalidSource.days[7].artifacts[taskId].stageMasteryRemediation!.stageId = "missing-stage";
+    expect(parseLearningState(JSON.stringify(invalidSource)).status).not.toBe("valid");
   });
 
   it("uses persisted evaluation feedback to focus the next day", () => {
