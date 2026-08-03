@@ -274,6 +274,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           return sendJson(response, 401, { error: "Authentication required" });
         }
         auditPrincipal = principal;
+        requireAllowedOrigin(request, options.allowedSyncOrigins);
         const decision = await options.modelUsageLedger.checkBudget(principal.userId);
         response.setHeader("ModelBudget-Remaining-Tokens", String(decision.remainingTokens));
         response.setHeader("ModelBudget-Remaining-Cost-Micros", String(decision.remainingCostMicros));

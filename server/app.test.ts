@@ -98,6 +98,7 @@ describe("AI Learning OS API", () => {
       },
     };
     const baseUrl = await startApi(provider, {
+      allowedSyncOrigins: ["https://learn.example"],
       resolvePrincipal: async (request) => request.headers.cookie === "session=valid" ? { userId: "user-1", deviceId: "device-1" } : null,
       modelUsageLedger: {
         checkBudget: async () => ({ allowed: true, exceeded: null, resetAt: Date.now() + 60_000, remainingTokens: 900, remainingCostMicros: 800, remainingGlobalCostMicros: 10_000 }),
@@ -109,7 +110,7 @@ describe("AI Learning OS API", () => {
     expect(anonymous.status).toBe(401);
     expect(providerCalls).toBe(0);
 
-    const response = await fetch(`${baseUrl}/api/plans`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: "session=valid" }, body: JSON.stringify(goal) });
+    const response = await fetch(`${baseUrl}/api/plans`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: "session=valid", Origin: "https://learn.example" }, body: JSON.stringify(goal) });
     expect(response.status).toBe(201);
     expect(response.headers.get("modelbudget-remaining-tokens")).toBe("900");
     expect(response.headers.get("modelbudget-remaining-global-cost-micros")).toBe("10000");
@@ -120,13 +121,14 @@ describe("AI Learning OS API", () => {
     let providerCalls = 0;
     const provider: ModelProvider = { id: "live-test", isAiEnabled: true, generateStructured: async () => { providerCalls += 1; throw new Error("must not run"); } };
     const baseUrl = await startApi(provider, {
+      allowedSyncOrigins: ["https://learn.example"],
       resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
       modelUsageLedger: {
         checkBudget: async () => ({ allowed: false, exceeded: "account", resetAt: Date.now() + 60_000, remainingTokens: 0, remainingCostMicros: 0 }),
         record: async () => undefined,
       },
     });
-    const response = await fetch(`${baseUrl}/api/plans`, { method: "POST", body: "not-json" });
+    const response = await fetch(`${baseUrl}/api/plans`, { method: "POST", headers: { Origin: "https://learn.example" }, body: "not-json" });
     expect(response.status).toBe(429);
     expect(providerCalls).toBe(0);
     await expect(response.json()).resolves.toEqual({ error: "Monthly model budget exceeded" });
@@ -134,16 +136,52 @@ describe("AI Learning OS API", () => {
 
   it("rejects a depleted global model budget before reading the request body", async () => {
     const baseUrl = await startApi(new DeterministicModelProvider(), {
+      allowedSyncOrigins: ["https://learn.example"],
       resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
       modelUsageLedger: {
         checkBudget: async () => ({ allowed: false, exceeded: "global", resetAt: Date.now() + 60_000, remainingTokens: 900, remainingCostMicros: 800, remainingGlobalCostMicros: 0 }),
         record: async () => undefined,
       },
     });
-    const response = await fetch(`${baseUrl}/api/plans`, { method: "POST", body: "not-json" });
+    const response = await fetch(`${baseUrl}/api/plans`, { method: "POST", headers: { Origin: "https://learn.example" }, body: "not-json" });
     expect(response.status).toBe(429);
     expect(response.headers.get("modelbudget-remaining-global-cost-micros")).toBe("0");
     await expect(response.json()).resolves.toEqual({ error: "Global monthly model budget exceeded" });
+  });
+
+  it("rejects cross-origin authenticated model calls before budget or model work", async () => {
+    let budgetChecks = 0;
+    let providerCalls = 0;
+    const provider: ModelProvider = {
+      id: "live-test",
+      isAiEnabled: true,
+      generateStructured: async () => {
+        providerCalls += 1;
+        throw new Error("must not run");
+      },
+    };
+    const baseUrl = await startApi(provider, {
+      allowedSyncOrigins: ["https://learn.example"],
+      resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
+      modelUsageLedger: {
+        checkBudget: async () => {
+          budgetChecks += 1;
+          return { allowed: true, exceeded: null, resetAt: Date.now() + 60_000, remainingTokens: 1_000, remainingCostMicros: 1_000 };
+        },
+        record: async () => undefined,
+      },
+    });
+
+    const response = await fetch(`${baseUrl}/api/plans`, {
+      method: "POST",
+      headers: { Cookie: "session=valid", Origin: "https://attacker.example" },
+      body: "not-json",
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "Request origin is not allowed" });
+    expect(budgetChecks).toBe(0);
+    expect(providerCalls).toBe(0);
   });
 
   it("creates a teaching session with active understanding checks", async () => {
