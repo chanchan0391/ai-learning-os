@@ -33,6 +33,7 @@ import {
   parsePortfolioLearningStateExport,
   parseLearningStateExport,
   portfolioLearningStateExportFilename,
+  portfolioPreRestoreBackupFilename,
   saveEvaluation,
   saveCrossStageReviewAssessment,
   saveReviewAssessment,
@@ -611,8 +612,7 @@ export function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
-  function exportAllLearningData() {
-    const now = new Date();
+  function downloadPortfolioSnapshot(filename: string, now: Date) {
     const blob = new Blob([serializePortfolioLearningStateExport(
       activeGoals,
       archivedGoals,
@@ -623,13 +623,25 @@ export function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = portfolioLearningStateExportFilename(now);
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function exportAllLearningData() {
+    const now = new Date();
+    downloadPortfolioSnapshot(portfolioLearningStateExportFilename(now), now);
     setStorageNotice(`已导出 ${activeGoals.length} 个进行中目标和 ${archivedGoals.length} 个归档目标。`);
     setStorageNoticeIsError(false);
+  }
+
+  function downloadPreRestoreBackup() {
+    if (activeGoals.length + archivedGoals.length === 0 && dailyBudgetMinutes === null) return false;
+    const now = new Date();
+    downloadPortfolioSnapshot(portfolioPreRestoreBackupFilename(now), now);
+    return true;
   }
 
   function exportLearningProgress() {
@@ -751,6 +763,7 @@ export function App() {
     if (!pendingImport) return;
     if (pendingImport.kind === "portfolio") {
       const data = pendingImport.data;
+      const backedUp = downloadPreRestoreBackup();
       learningStateRepository.replacePortfolio(
         data.activeStates, data.archivedStates, data.selectedPlanId, data.dailyBudgetMinutes,
       );
@@ -762,11 +775,14 @@ export function App() {
       setDailyBudgetMinutes(data.dailyBudgetMinutes);
       setDailyBudgetDraft(String(data.dailyBudgetMinutes ?? ""));
       setPendingImport(null);
-      setStorageNotice(`已恢复全部学习数据：${data.activeStates.length} 个进行中目标，${data.archivedStates.length} 个归档目标。`);
+      setStorageNotice(`${backedUp ? "已先下载恢复前备份；" : ""}已恢复全部学习数据：${data.activeStates.length} 个进行中目标，${data.archivedStates.length} 个归档目标。`);
       setStorageNoticeIsError(false);
       if (authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
       return;
     }
+    const replacesExistingGoal = [...activeGoals, ...archivedGoals.map((entry) => entry.state)]
+      .some((state) => state.plan.id === pendingImport.data.state.plan.id);
+    const backedUp = replacesExistingGoal && downloadPreRestoreBackup();
     saveState(pendingImport.data.state);
     setGoal(pendingImport.data.state.plan.goal);
     setSubmissionDrafts({});
@@ -775,7 +791,7 @@ export function App() {
     setAgentError("");
     setErrors([]);
     setPendingImport(null);
-    setStorageNotice(`已恢复“${pendingImport.data.state.plan.goal.subject}”的第 ${pendingImport.data.state.currentDay} 天进度。`);
+    setStorageNotice(`${backedUp ? "已先下载恢复前备份；" : ""}已恢复“${pendingImport.data.state.plan.goal.subject}”的第 ${pendingImport.data.state.currentDay} 天进度。`);
     setStorageNoticeIsError(false);
   }
 
@@ -1127,7 +1143,7 @@ export function App() {
           <p><strong>仅合并新目标：</strong>新增 {portfolioImportPreview.activeToAdd.length} 个进行中目标和 {portfolioImportPreview.archivedToAdd.length} 个归档目标；跳过 {portfolioImportPreview.skipped.length} 个本地同 ID 版本。</p>
           {(portfolioImportPreview.activeToAdd.length > 0 || portfolioImportPreview.archivedToAdd.length > 0) && <p>将新增：{[...portfolioImportPreview.activeToAdd, ...portfolioImportPreview.archivedToAdd].map((item) => item.subject).join("、")}。</p>}
           {portfolioImportPreview.skipped.length > 0 && <p>将保留本地版本：{portfolioImportPreview.skipped.map((item) => item.subject).join("、")}。</p>}
-          <p><strong>全部替换：</strong>将移除 {portfolioImportPreview.localActiveOnly.length} 个文件中没有的本地进行中目标和 {portfolioImportPreview.localArchivedOnly.length} 个本地归档目标；时间预算将{dailyBudgetMinutes === pendingImport.data.dailyBudgetMinutes ? "保持不变" : `从${dailyBudgetMinutes === null ? "未设置" : `${dailyBudgetMinutes} 分钟`}变为${pendingImport.data.dailyBudgetMinutes === null ? "未设置" : `${pendingImport.data.dailyBudgetMinutes} 分钟`}`}。</p>
+          <p><strong>全部替换：</strong>{activeGoals.length + archivedGoals.length > 0 || dailyBudgetMinutes !== null ? "将先下载当前组合的恢复前备份，再" : "将"}移除 {portfolioImportPreview.localActiveOnly.length} 个文件中没有的本地进行中目标和 {portfolioImportPreview.localArchivedOnly.length} 个本地归档目标；时间预算将{dailyBudgetMinutes === pendingImport.data.dailyBudgetMinutes ? "保持不变" : `从${dailyBudgetMinutes === null ? "未设置" : `${dailyBudgetMinutes} 分钟`}变为${pendingImport.data.dailyBudgetMinutes === null ? "未设置" : `${pendingImport.data.dailyBudgetMinutes} 分钟`}`}。</p>
         </div>}
         <div className="dialog-actions">
           <button className="secondary-action" autoFocus onClick={() => setPendingImport(null)}>取消</button>

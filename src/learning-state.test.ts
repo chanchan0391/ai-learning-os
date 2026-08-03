@@ -36,6 +36,7 @@ import {
   parseLearningStateExport,
   parsePortfolioLearningStateExport,
   portfolioLearningStateExportFilename,
+  portfolioPreRestoreBackupFilename,
   saveEvaluation,
   saveCrossStageReviewAssessment,
   saveReviewPerformance,
@@ -350,6 +351,7 @@ describe("multi-day learning state", () => {
 
     expect(parsePortfolioLearningStateExport(serialized)).toEqual({ status: "valid", data: payload });
     expect(portfolioLearningStateExportFilename(now)).toBe("ai-learning-os-all-learning-data-2026-08-03.json");
+    expect(portfolioPreRestoreBackupFilename(now)).toBe("ai-learning-os-before-restore-2026-08-03.json");
     expect(parsePortfolioLearningStateExport(JSON.stringify({ ...payload, activeStates: [active, active] })))
       .toMatchObject({ status: "invalid", error: "全部学习数据包含重复目标。" });
     expect(parsePortfolioLearningStateExport(JSON.stringify({ ...payload, dailyBudgetMinutes: 1 })))

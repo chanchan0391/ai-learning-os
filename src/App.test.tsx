@@ -751,6 +751,10 @@ describe("learning data controls", () => {
 
   it("validates and confirms a complete portfolio restore before replacing all local goals", async () => {
     const user = userEvent.setup();
+    const downloads: string[] = [];
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:pre-restore") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) { downloads.push(this.download); });
     const restored = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统" }));
     const serialized = serializePortfolioLearningStateExport([restored], [], restored.plan.id, 90);
     render(<App />);
@@ -763,14 +767,36 @@ describe("learning data controls", () => {
     expect(screen.getByRole("alertdialog", { name: "恢复全部学习数据？" })).toBeTruthy();
     expect(screen.getByText(/也可用文件内容全部替换/)).toBeTruthy();
     expect(screen.getByRole("region", { name: "组合恢复预览" }).textContent).toContain("新增 1 个进行中目标");
-    expect(screen.getByRole("region", { name: "组合恢复预览" }).textContent).toContain("将移除 1 个文件中没有的本地进行中目标");
+    expect(screen.getByRole("region", { name: "组合恢复预览" }).textContent).toContain("将先下载当前组合的恢复前备份，再移除 1 个文件中没有的本地进行中目标");
     expect(screen.getByRole("region", { name: "组合恢复预览" }).textContent).toContain("时间预算将从未设置变为90 分钟");
     await user.click(screen.getByRole("button", { name: "全部替换" }));
 
     expect(screen.getByRole("heading", { name: "分布式系统" })).toBeTruthy();
     expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).states).toHaveLength(1);
     expect(localStorage.getItem(DAILY_BUDGET_KEY)).toBe("90");
-    expect(screen.getByText(/已恢复全部学习数据/)).toBeTruthy();
+    expect(downloads).toEqual([expect.stringMatching(/^ai-learning-os-before-restore-\d{4}-\d{2}-\d{2}\.json$/)]);
+    expect(screen.getByText(/已先下载恢复前备份；已恢复全部学习数据/)).toBeTruthy();
+  });
+
+  it("downloads the current portfolio before replacing a same-ID goal", async () => {
+    const user = userEvent.setup();
+    const downloads: string[] = [];
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:pre-restore") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) { downloads.push(this.download); });
+    const local = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as ReturnType<typeof initializeLearningState>;
+    const replacement = toggleCurrentTask(local, getCurrentRecord(local).tasks[0].id);
+    render(<App />);
+
+    await user.upload(
+      screen.getByLabelText("选择学习记录文件"),
+      new File([serializeLearningStateExport(replacement)], "learning-data.json", { type: "application/json" }),
+    );
+    await user.click(screen.getByRole("button", { name: "确认恢复" }));
+
+    expect(downloads).toEqual([expect.stringMatching(/^ai-learning-os-before-restore-\d{4}-\d{2}-\d{2}\.json$/)]);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).days[0].tasks[0].completed).toBe(true);
+    expect(screen.getByRole("status").textContent).toContain("已先下载恢复前备份");
   });
 
   it("merges missing goals from a portfolio backup without replacing local progress or budget", async () => {

@@ -536,6 +536,10 @@ export function portfolioLearningStateExportFilename(now = new Date()): string {
   return `ai-learning-os-all-learning-data-${dateKey(now)}.json`;
 }
 
+export function portfolioPreRestoreBackupFilename(now = new Date()): string {
+  return `ai-learning-os-before-restore-${dateKey(now)}.json`;
+}
+
 function safeFilenamePart(value: string): string {
   const cleaned = value
     .trim()
