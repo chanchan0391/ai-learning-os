@@ -10,6 +10,7 @@ import {
   LEGACY_LEARNING_PLAN_KEY,
   PREVIOUS_LEARNING_STATE_KEY,
   PORTFOLIO_DAILY_BUDGET_KEY,
+  previewPortfolioMerge,
 } from "./learning-storage";
 import { generateLearningPlan } from "./planner";
 
@@ -257,5 +258,29 @@ describe("browser learning-state repository", () => {
     expect(repository.loadActive()).toEqual([localActive, importedActive]);
     expect(repository.loadArchived()).toEqual([{ archivedAt: "2026-08-03T12:00:00.000Z", state: importedArchived }]);
     expect(repository.loadDailyBudget()).toBe(60);
+  });
+
+  it("previews additions, skipped versions, and local goals removed by replacement", () => {
+    const localActive = initializeLearningState(generateLearningPlan(goal));
+    const importedDuplicate = toggleCurrentTask(localActive, getCurrentRecord(localActive).tasks[0].id);
+    const importedActive = initializeLearningState(generateLearningPlan(
+      { ...goal, subject: "事件驱动架构" }, new Date("2026-08-02T10:00:00.000Z"),
+    ));
+    const localArchivedState = initializeLearningState(generateLearningPlan(
+      { ...goal, subject: "数据库内核" }, new Date("2026-08-03T10:00:00.000Z"),
+    ));
+
+    expect(previewPortfolioMerge(
+      [localActive],
+      [{ archivedAt: "2026-08-03T12:00:00.000Z", state: localArchivedState }],
+      [importedDuplicate, importedActive],
+      [],
+    )).toEqual({
+      activeToAdd: [{ planId: importedActive.plan.id, subject: "事件驱动架构" }],
+      archivedToAdd: [],
+      skipped: [{ planId: localActive.plan.id, subject: "分布式系统" }],
+      localActiveOnly: [],
+      localArchivedOnly: [{ planId: localArchivedState.plan.id, subject: "数据库内核" }],
+    });
   });
 });

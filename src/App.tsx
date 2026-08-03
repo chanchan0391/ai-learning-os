@@ -55,7 +55,7 @@ import {
   weeklyLearningReview,
   weeklyLearningTrend,
 } from "./learning-state";
-import { BrowserLearningStateRepository, type ArchivedLearningState } from "./learning-storage";
+import { BrowserLearningStateRepository, previewPortfolioMerge, type ArchivedLearningState } from "./learning-storage";
 import { completionRate, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
@@ -199,6 +199,9 @@ export function App() {
   const portfolioWeeklyReview = useMemo(() => crossGoalWeeklyReview(activeGoals), [activeGoals]);
   const budgetStatus = useMemo(() => dailyBudgetMinutes === null ? null : portfolioBudgetStatus(activePortfolio, dailyBudgetMinutes), [activePortfolio, dailyBudgetMinutes]);
   const dailyAgenda = useMemo(() => portfolioDailyAgenda(activeGoals, dailyBudgetMinutes), [activeGoals, dailyBudgetMinutes]);
+  const portfolioImportPreview = useMemo(() => pendingImport?.kind === "portfolio"
+    ? previewPortfolioMerge(activeGoals, archivedGoals, pendingImport.data.activeStates, pendingImport.data.archivedStates)
+    : null, [activeGoals, archivedGoals, pendingImport]);
   const currentRecord = learningState ? getCurrentRecord(learningState) : null;
   const progress = useMemo(() => completionRate(currentRecord?.tasks ?? []), [currentRecord]);
   const interruption = useMemo(() => learningState ? detectLearningInterruption(learningState) : null, [learningState]);
@@ -1120,6 +1123,12 @@ export function App() {
         <p id="import-dialog-description">{pendingImport.kind === "portfolio"
           ? `文件包含 ${pendingImport.data.activeStates.length} 个进行中目标和 ${pendingImport.data.archivedStates.length} 个归档目标。可只合并本地不存在的目标，保留同 ID 本地版本、当前选择和时间预算；也可用文件内容全部替换。导出时间：${new Date(pendingImport.data.exportedAt).toLocaleString("zh-CN")}。`
           : `将恢复到第 ${pendingImport.data.state.currentDay} 天；同一目标的本地版本会被替换，其他进行中目标会保留。导出时间：${new Date(pendingImport.data.exportedAt).toLocaleString("zh-CN")}。`}</p>
+        {pendingImport.kind === "portfolio" && portfolioImportPreview && <div className="import-preview" role="region" aria-label="组合恢复预览">
+          <p><strong>仅合并新目标：</strong>新增 {portfolioImportPreview.activeToAdd.length} 个进行中目标和 {portfolioImportPreview.archivedToAdd.length} 个归档目标；跳过 {portfolioImportPreview.skipped.length} 个本地同 ID 版本。</p>
+          {(portfolioImportPreview.activeToAdd.length > 0 || portfolioImportPreview.archivedToAdd.length > 0) && <p>将新增：{[...portfolioImportPreview.activeToAdd, ...portfolioImportPreview.archivedToAdd].map((item) => item.subject).join("、")}。</p>}
+          {portfolioImportPreview.skipped.length > 0 && <p>将保留本地版本：{portfolioImportPreview.skipped.map((item) => item.subject).join("、")}。</p>}
+          <p><strong>全部替换：</strong>将移除 {portfolioImportPreview.localActiveOnly.length} 个文件中没有的本地进行中目标和 {portfolioImportPreview.localArchivedOnly.length} 个本地归档目标；时间预算将{dailyBudgetMinutes === pendingImport.data.dailyBudgetMinutes ? "保持不变" : `从${dailyBudgetMinutes === null ? "未设置" : `${dailyBudgetMinutes} 分钟`}变为${pendingImport.data.dailyBudgetMinutes === null ? "未设置" : `${pendingImport.data.dailyBudgetMinutes} 分钟`}`}。</p>
+        </div>}
         <div className="dialog-actions">
           <button className="secondary-action" autoFocus onClick={() => setPendingImport(null)}>取消</button>
           {pendingImport.kind === "portfolio" && <button className="secondary-action" onClick={mergePortfolioLearningData}>仅合并新目标</button>}

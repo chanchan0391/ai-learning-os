@@ -34,6 +34,51 @@ export interface PortfolioMergeResult {
   skipped: number;
 }
 
+export interface PortfolioGoalSummary {
+  planId: string;
+  subject: string;
+}
+
+export interface PortfolioMergePreview {
+  activeToAdd: PortfolioGoalSummary[];
+  archivedToAdd: PortfolioGoalSummary[];
+  skipped: PortfolioGoalSummary[];
+  localActiveOnly: PortfolioGoalSummary[];
+  localArchivedOnly: PortfolioGoalSummary[];
+}
+
+function summarizeState(state: LearningState): PortfolioGoalSummary {
+  return { planId: state.plan.id, subject: state.plan.goal.subject };
+}
+
+export function previewPortfolioMerge(
+  localActive: LearningState[],
+  localArchived: ArchivedLearningState[],
+  importedActive: LearningState[],
+  importedArchived: ArchivedLearningState[],
+): PortfolioMergePreview {
+  const localIds = new Set([
+    ...localActive.map((state) => state.plan.id),
+    ...localArchived.map((entry) => entry.state.plan.id),
+  ]);
+  const importedIds = new Set([
+    ...importedActive.map((state) => state.plan.id),
+    ...importedArchived.map((entry) => entry.state.plan.id),
+  ]);
+  const skipped = [
+    ...importedActive.filter((state) => localIds.has(state.plan.id)).map(summarizeState),
+    ...importedArchived.filter((entry) => localIds.has(entry.state.plan.id)).map((entry) => summarizeState(entry.state)),
+  ];
+
+  return {
+    activeToAdd: importedActive.filter((state) => !localIds.has(state.plan.id)).map(summarizeState),
+    archivedToAdd: importedArchived.filter((entry) => !localIds.has(entry.state.plan.id)).map((entry) => summarizeState(entry.state)),
+    skipped,
+    localActiveOnly: localActive.filter((state) => !importedIds.has(state.plan.id)).map(summarizeState),
+    localArchivedOnly: localArchived.filter((entry) => !importedIds.has(entry.state.plan.id)).map((entry) => summarizeState(entry.state)),
+  };
+}
+
 export interface LearningStateRepository {
   load(now?: Date): ParsedLearningState;
   loadActive(): LearningState[];

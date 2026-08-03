@@ -762,6 +762,9 @@ describe("learning data controls", () => {
 
     expect(screen.getByRole("alertdialog", { name: "恢复全部学习数据？" })).toBeTruthy();
     expect(screen.getByText(/也可用文件内容全部替换/)).toBeTruthy();
+    expect(screen.getByRole("region", { name: "组合恢复预览" }).textContent).toContain("新增 1 个进行中目标");
+    expect(screen.getByRole("region", { name: "组合恢复预览" }).textContent).toContain("将移除 1 个文件中没有的本地进行中目标");
+    expect(screen.getByRole("region", { name: "组合恢复预览" }).textContent).toContain("时间预算将从未设置变为90 分钟");
     await user.click(screen.getByRole("button", { name: "全部替换" }));
 
     expect(screen.getByRole("heading", { name: "分布式系统" })).toBeTruthy();
@@ -782,6 +785,11 @@ describe("learning data controls", () => {
       screen.getByLabelText("选择学习记录文件"),
       new File([serialized], "all-learning-data.json", { type: "application/json" }),
     );
+    const preview = screen.getByRole("region", { name: "组合恢复预览" });
+    expect(preview.textContent).toContain("新增 1 个进行中目标");
+    expect(preview.textContent).toContain("将新增：分布式系统");
+    expect(preview.textContent).toContain(`将保留本地版本：${goal.subject}`);
+    expect(preview.textContent).toContain("时间预算将从45 分钟变为90 分钟");
     await user.click(screen.getByRole("button", { name: "仅合并新目标" }));
 
     expect(screen.getByRole("heading", { name: goal.subject, level: 1 })).toBeTruthy();
