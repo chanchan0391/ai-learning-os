@@ -4,6 +4,7 @@ import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolv
 import { PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { StandardOidcClient, type OidcConfig } from "./auth/oidc-client";
 import { PostgresModelUsageLedger, type ModelUsagePolicy } from "./ai/model-usage";
+import { JsonLineRequestLogSink } from "./observability/request-observability";
 import { PostgresFixedWindowRateLimiter } from "./security/postgres-rate-limiter";
 import { JsonLineSecurityAuditSink, RollingRequestCapacityMonitor } from "./security/request-security";
 import { PostgresSyncStore } from "./sync/postgres-sync-store";
@@ -140,6 +141,7 @@ export function createSyncRuntime(
       oidcAuthenticator: config.oidc ? new StandardOidcClient(config.oidc) : undefined,
       rateLimiter: new PostgresFixedWindowRateLimiter(pool),
       auditSink: new JsonLineSecurityAuditSink(),
+      requestLogSink: new JsonLineRequestLogSink(),
       capacityMonitor: new RollingRequestCapacityMonitor(),
       modelUsageLedger: config.modelUsagePolicy ? new PostgresModelUsageLedger(pool, config.modelUsagePolicy) : undefined,
     },

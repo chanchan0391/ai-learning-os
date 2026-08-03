@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { EvaluationRequest, LearningGoal, RecoveryPlanRequest, ReviewAssessmentRequest, TeachingSessionRequest } from "../src/types";
 import { isDailyRecord, isLearningPlan } from "../src/learning-state";
@@ -13,6 +14,7 @@ import type { AuthenticatedPrincipalResolver } from "./auth/authenticated-princi
 import type { OidcAuthenticator } from "./auth/oidc-client";
 import type { AccountDataLifecycle, SessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { DEFAULT_SESSION_COOKIE_NAME, readSessionToken } from "./auth/postgres-session-resolver";
+import { requestOutcome, type RequestLogEvent, type RequestLogSink } from "./observability/request-observability";
 import {
   InMemoryFixedWindowRateLimiter,
   RollingRequestCapacityMonitor,
@@ -52,6 +54,7 @@ export interface AppOptions {
   auditSink?: SecurityAuditSink;
   capacityMonitor?: RequestCapacityMonitor;
   modelUsageLedger?: ModelUsageLedger;
+  requestLogSink?: RequestLogSink;
 }
 
 interface ProtectedRoute {
@@ -169,12 +172,34 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
   const rateLimiter = options.rateLimiter ?? new InMemoryFixedWindowRateLimiter();
   const capacityMonitor = options.capacityMonitor ?? new RollingRequestCapacityMonitor();
   return createServer(async (request, response) => {
+    const requestId = randomUUID();
+    const requestStartedAt = Date.now();
+    response.setHeader("X-Request-Id", requestId);
     const controller = new AbortController();
     request.once("aborted", () => controller.abort());
     response.once("close", () => {
       if (!response.writableEnded) controller.abort();
     });
     const url = new URL(request.url ?? "/", "http://localhost");
+    if (options.requestLogSink) {
+      response.once("finish", () => {
+        const event: RequestLogEvent = {
+          occurredAt: new Date().toISOString(),
+          requestId,
+          method: request.method ?? "UNKNOWN",
+          path: url.pathname,
+          status: response.statusCode,
+          outcome: requestOutcome(response.statusCode),
+          durationMs: Math.max(0, Date.now() - requestStartedAt),
+        };
+        try {
+          const recorded = options.requestLogSink!.record(event);
+          if (recorded && "catch" in recorded) void recorded.catch((error) => console.error("Request log sink failed", error));
+        } catch (error) {
+          console.error("Request log sink failed", error);
+        }
+      });
+    }
     const route = protectedRoute(request.method, url.pathname);
     let auditPrincipal: { userId: string; deviceId: string } | null = null;
     let auditReason: string | undefined;

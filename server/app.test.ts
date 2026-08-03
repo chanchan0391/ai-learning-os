@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { DeterministicModelProvider } from "./ai/deterministic-provider";
 import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest } from "./ai/model-provider";
+import type { RequestLogEvent } from "./observability/request-observability";
 import type { SecurityAuditEvent } from "./security/request-security";
 
 const servers: ReturnType<typeof createApp>[] = [];
@@ -26,6 +27,31 @@ describe("AI Learning OS API", () => {
       status: "ok", provider: "deterministic-development", aiEnabled: false, syncEnabled: false,
       capacity: { inFlight: 0, requests: 0, rejected: 0, failed: 0, rateLimited: 0, byScope: {} },
     });
+  });
+
+  it("adds a correlation ID and records privacy-safe request metadata", async () => {
+    const events: RequestLogEvent[] = [];
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      requestLogSink: { record: (event) => { events.push(event); } },
+    });
+    const response = await fetch(`${baseUrl}/api/plans?private=do-not-log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: "session=secret-token" },
+      body: JSON.stringify({ ...goal, currentLevel: "private learner context" }),
+    });
+    expect(response.status).toBe(404);
+    expect(response.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      requestId: response.headers.get("x-request-id"),
+      method: "POST",
+      path: "/api/plans",
+      status: 404,
+      outcome: "rejected",
+    });
+    expect(events[0].occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(events[0].durationMs).toBeGreaterThanOrEqual(0);
+    expect(JSON.stringify(events[0])).not.toMatch(/do-not-log|secret-token|private learner context|cookie/i);
   });
 
   it("creates a validated plan through the Agent boundary", async () => {
