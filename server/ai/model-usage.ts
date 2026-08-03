@@ -12,7 +12,7 @@ export interface ModelBudgetDecision {
 }
 
 export interface ModelUsageLedger {
-  checkBudget(userId: string): Promise<ModelBudgetDecision>;
+  checkBudget(userId: string, planKey?: string | null): Promise<ModelBudgetDecision>;
   record(entry: {
     userId: string;
     action: string;
@@ -27,9 +27,15 @@ export interface ModelUsageLedger {
 export interface ModelUsagePolicy {
   monthlyTokenLimit: number;
   monthlyCostLimitMicros: number;
+  planBudgets?: Record<string, AccountModelBudget>;
   globalMonthlyCostLimitMicros?: number;
   inputCostMicrosPerMillionTokens: number;
   outputCostMicrosPerMillionTokens: number;
+}
+
+export interface AccountModelBudget {
+  monthlyTokenLimit: number;
+  monthlyCostLimitMicros: number;
 }
 
 interface UsageContext {
@@ -57,6 +63,11 @@ export class PostgresModelUsageLedger implements ModelUsageLedger {
   ) {
     assertPositiveSafeInteger(policy.monthlyTokenLimit, "monthlyTokenLimit");
     assertPositiveSafeInteger(policy.monthlyCostLimitMicros, "monthlyCostLimitMicros");
+    for (const [planKey, budget] of Object.entries(policy.planBudgets ?? {})) {
+      if (!planKey.trim()) throw new Error("plan budget keys must not be empty");
+      assertPositiveSafeInteger(budget.monthlyTokenLimit, `${planKey}.monthlyTokenLimit`);
+      assertPositiveSafeInteger(budget.monthlyCostLimitMicros, `${planKey}.monthlyCostLimitMicros`);
+    }
     if (policy.globalMonthlyCostLimitMicros !== undefined) {
       assertPositiveSafeInteger(policy.globalMonthlyCostLimitMicros, "globalMonthlyCostLimitMicros");
     }
@@ -64,8 +75,12 @@ export class PostgresModelUsageLedger implements ModelUsageLedger {
     assertPositiveSafeInteger(policy.outputCostMicrosPerMillionTokens, "outputCostMicrosPerMillionTokens");
   }
 
-  async checkBudget(userId: string): Promise<ModelBudgetDecision> {
+  async checkBudget(userId: string, planKey?: string | null): Promise<ModelBudgetDecision> {
     const { start, end } = utcMonthRange(this.now());
+    const configuredPlanBudgets = this.policy.planBudgets;
+    const accountBudget = planKey && configuredPlanBudgets
+      ? configuredPlanBudgets[planKey]
+      : { monthlyTokenLimit: this.policy.monthlyTokenLimit, monthlyCostLimitMicros: this.policy.monthlyCostLimitMicros };
     const result = await this.pool.query<{ total_tokens: string; total_cost_micros: string }>(
       `SELECT COALESCE(SUM(input_tokens + output_tokens), 0)::text AS total_tokens,
               COALESCE(SUM(cost_micros), 0)::text AS total_cost_micros
@@ -75,8 +90,8 @@ export class PostgresModelUsageLedger implements ModelUsageLedger {
     );
     const totalTokens = Number(result.rows[0].total_tokens);
     const totalCostMicros = Number(result.rows[0].total_cost_micros);
-    const remainingTokens = Math.max(0, this.policy.monthlyTokenLimit - totalTokens);
-    const remainingCostMicros = Math.max(0, this.policy.monthlyCostLimitMicros - totalCostMicros);
+    const remainingTokens = Math.max(0, (accountBudget?.monthlyTokenLimit ?? 0) - totalTokens);
+    const remainingCostMicros = Math.max(0, (accountBudget?.monthlyCostLimitMicros ?? 0) - totalCostMicros);
     let remainingGlobalCostMicros: number | undefined;
     if (this.policy.globalMonthlyCostLimitMicros !== undefined) {
       const globalResult = await this.pool.query<{ total_cost_micros: string }>(

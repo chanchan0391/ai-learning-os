@@ -20,6 +20,10 @@ async function createLedger(now: () => number) {
   return { pool, ledger: new PostgresModelUsageLedger(pool, {
     monthlyTokenLimit: 1_000,
     monthlyCostLimitMicros: 1_000,
+    planBudgets: {
+      starter: { monthlyTokenLimit: 500, monthlyCostLimitMicros: 700 },
+      pro: { monthlyTokenLimit: 2_000, monthlyCostLimitMicros: 3_000 },
+    },
     globalMonthlyCostLimitMicros: 10_000,
     inputCostMicrosPerMillionTokens: 2_000_000,
     outputCostMicrosPerMillionTokens: 8_000_000,
@@ -60,6 +64,19 @@ describe("account model usage", () => {
       remainingTokens: 1_000,
       remainingCostMicros: 1_000,
       remainingGlobalCostMicros: 0,
+    });
+  });
+
+  it("selects account limits from the current subscription plan and denies unknown plans", async () => {
+    const { ledger } = await createLedger(() => Date.parse("2026-08-03T12:00:00.000Z"));
+    await expect(ledger.checkBudget("user-1", "starter")).resolves.toMatchObject({
+      allowed: true, remainingTokens: 500, remainingCostMicros: 700,
+    });
+    await expect(ledger.checkBudget("user-1", "pro")).resolves.toMatchObject({
+      allowed: true, remainingTokens: 2_000, remainingCostMicros: 3_000,
+    });
+    await expect(ledger.checkBudget("user-1", "unconfigured")).resolves.toMatchObject({
+      allowed: false, exceeded: "account", remainingTokens: 0, remainingCostMicros: 0,
     });
   });
 

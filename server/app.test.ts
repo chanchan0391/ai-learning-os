@@ -196,6 +196,7 @@ describe("AI Learning OS API", () => {
   it("enforces subscription denial, plan changes, and grace periods before budget and model work", async () => {
     let providerCalls = 0;
     let budgetChecks = 0;
+    const budgetPlans: Array<string | null | undefined> = [];
     let decision: SubscriptionEntitlementDecision = { allowed: false, state: "inactive", planKey: null, accessUntil: null };
     const provider: ModelProvider = {
       id: "live-test", isAiEnabled: true,
@@ -209,8 +210,9 @@ describe("AI Learning OS API", () => {
       resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
       subscriptionEntitlements: { checkEntitlement: async () => decision },
       modelUsageLedger: {
-        checkBudget: async () => {
+        checkBudget: async (_userId, planKey) => {
           budgetChecks += 1;
+          budgetPlans.push(planKey);
           return { allowed: true, exceeded: null, resetAt: Date.now() + 60_000, remainingTokens: 1_000, remainingCostMicros: 1_000 };
         },
         record: async () => undefined,
@@ -241,6 +243,7 @@ describe("AI Learning OS API", () => {
     expect(grace.status).toBe(201);
     expect(grace.headers.get("subscription-state")).toBe("grace");
     expect(budgetChecks).toBe(3);
+    expect(budgetPlans).toEqual(["starter", "pro", "pro"]);
     expect(providerCalls).toBe(3);
   });
 

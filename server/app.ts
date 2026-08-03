@@ -281,8 +281,10 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         }
         auditPrincipal = principal;
         requireAllowedOrigin(request, options.allowedSyncOrigins);
+        let subscriptionPlanKey: string | null = null;
         if (options.subscriptionEntitlements) {
           const entitlement = await options.subscriptionEntitlements.checkEntitlement(principal.userId);
+          subscriptionPlanKey = entitlement.planKey;
           if (entitlement.planKey) response.setHeader("Subscription-Plan", entitlement.planKey);
           response.setHeader("Subscription-State", entitlement.state);
           if (entitlement.accessUntil !== null) {
@@ -293,7 +295,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
             return sendJson(response, 402, { error: "Active subscription required" });
           }
         }
-        const decision = await options.modelUsageLedger.checkBudget(principal.userId);
+        const decision = await options.modelUsageLedger.checkBudget(principal.userId, subscriptionPlanKey);
         response.setHeader("ModelBudget-Remaining-Tokens", String(decision.remainingTokens));
         response.setHeader("ModelBudget-Remaining-Cost-Micros", String(decision.remainingCostMicros));
         if (decision.remainingGlobalCostMicros !== undefined) {

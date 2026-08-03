@@ -59,12 +59,14 @@ describe("sync runtime configuration", () => {
       AI_INPUT_COST_PER_MILLION_USD: "2",
       AI_OUTPUT_COST_PER_MILLION_USD: "8.000001",
       AI_GLOBAL_MONTHLY_COST_LIMIT_USD: "250",
+      AI_PLAN_BUDGETS_JSON: '{"starter":{"monthlyTokenLimit":50000,"monthlyCostLimitUsd":"2.50"}}',
     })?.modelUsagePolicy).toEqual({
       monthlyTokenLimit: 250_000,
       monthlyCostLimitMicros: 12_500_000,
       inputCostMicrosPerMillionTokens: 2_000_000,
       outputCostMicrosPerMillionTokens: 8_000_001,
       globalMonthlyCostLimitMicros: 250_000_000,
+      planBudgets: { starter: { monthlyTokenLimit: 50_000, monthlyCostLimitMicros: 2_500_000 } },
     });
   });
 
@@ -103,7 +105,20 @@ describe("sync runtime configuration", () => {
       AI_INPUT_COST_PER_MILLION_USD: "2",
       AI_OUTPUT_COST_PER_MILLION_USD: "8",
       AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED: "true",
+      AI_PLAN_BUDGETS_JSON: '{"starter":{"monthlyTokenLimit":50000,"monthlyCostLimitUsd":"2.50"}}',
     })?.requireSubscriptionEntitlement).toBe(true);
+  });
+
+  it("rejects missing or malformed plan budgets when subscription enforcement is enabled", () => {
+    const base = {
+      DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AI_MONTHLY_TOKEN_LIMIT: "250000", AI_MONTHLY_COST_LIMIT_USD: "12.50",
+      AI_INPUT_COST_PER_MILLION_USD: "2", AI_OUTPUT_COST_PER_MILLION_USD: "8",
+      AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED: "true",
+    };
+    expect(() => readSyncRuntimeConfig(base)).toThrow(/AI_PLAN_BUDGETS_JSON/);
+    expect(() => readSyncRuntimeConfig({ ...base, AI_PLAN_BUDGETS_JSON: '{"starter":{"monthlyTokenLimit":0,"monthlyCostLimitUsd":"2"}}' })).toThrow(/positive integer/);
+    expect(() => readSyncRuntimeConfig({ ...base, AI_PLAN_BUDGETS_JSON: '{"starter":{"monthlyTokenLimit":100,"monthlyCostLimitUsd":2}}' })).toThrow(/requires only/);
   });
 
   it("allows an HTTP issuer only for local development", () => {

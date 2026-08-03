@@ -3,7 +3,7 @@ import type { AppOptions } from "./app";
 import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolver";
 import { PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { StandardOidcClient, type OidcConfig } from "./auth/oidc-client";
-import { PostgresModelUsageLedger, type ModelUsagePolicy } from "./ai/model-usage";
+import { PostgresModelUsageLedger, type AccountModelBudget, type ModelUsagePolicy } from "./ai/model-usage";
 import { PostgresSubscriptionEntitlementResolver } from "./billing/subscription-entitlement";
 import { JsonLineRequestLogSink } from "./observability/request-observability";
 import { PostgresFixedWindowRateLimiter } from "./security/postgres-rate-limiter";
@@ -50,6 +50,35 @@ function parseOrigins(value: string): string[] {
   return origins;
 }
 
+function parsePlanBudgets(value: string): Record<string, AccountModelBudget> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("AI_PLAN_BUDGETS_JSON must be valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).length === 0) {
+    throw new Error("AI_PLAN_BUDGETS_JSON must be a non-empty object");
+  }
+  return Object.fromEntries(Object.entries(parsed).map(([planKey, candidate]) => {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(planKey) || !candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      throw new Error("AI_PLAN_BUDGETS_JSON contains an invalid plan");
+    }
+    const values = candidate as Record<string, unknown>;
+    if (Object.keys(values).some((key) => key !== "monthlyTokenLimit" && key !== "monthlyCostLimitUsd")
+      || typeof values.monthlyTokenLimit !== "number" || typeof values.monthlyCostLimitUsd !== "string") {
+      throw new Error(`AI_PLAN_BUDGETS_JSON.${planKey} requires only monthlyTokenLimit and monthlyCostLimitUsd`);
+    }
+    if (!Number.isSafeInteger(values.monthlyTokenLimit) || values.monthlyTokenLimit <= 0) {
+      throw new Error(`AI_PLAN_BUDGETS_JSON.${planKey}.monthlyTokenLimit must be a positive integer`);
+    }
+    return [planKey, {
+      monthlyTokenLimit: values.monthlyTokenLimit,
+      monthlyCostLimitMicros: parseUsdMicros(values.monthlyCostLimitUsd, `AI_PLAN_BUDGETS_JSON.${planKey}.monthlyCostLimitUsd`),
+    }];
+  }));
+}
+
 export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig | null {
   const connectionString = env.DATABASE_URL?.trim();
   const configuredOrigins = env.SYNC_ALLOWED_ORIGINS?.trim();
@@ -60,13 +89,14 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     env.AI_OUTPUT_COST_PER_MILLION_USD,
   ];
   const globalBudgetValue = env.AI_GLOBAL_MONTHLY_COST_LIMIT_USD;
+  const planBudgetsValue = env.AI_PLAN_BUDGETS_JSON?.trim();
   const entitlementValue = env.AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED?.trim();
   if (entitlementValue && entitlementValue !== "true" && entitlementValue !== "false") {
     throw new Error("AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED must be true or false");
   }
   const requireSubscriptionEntitlement = entitlementValue === "true";
   if (!connectionString) {
-    if (configuredOrigins || globalBudgetValue?.trim() || requireSubscriptionEntitlement || budgetValues.some((value) => value?.trim())) {
+    if (configuredOrigins || globalBudgetValue?.trim() || planBudgetsValue || requireSubscriptionEntitlement || budgetValues.some((value) => value?.trim())) {
       throw new Error("DATABASE_URL is required when sync or AI account budgets are configured");
     }
     return null;
@@ -111,15 +141,19 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
       monthlyCostLimitMicros: parseUsdMicros(env.AI_MONTHLY_COST_LIMIT_USD!.trim(), "AI_MONTHLY_COST_LIMIT_USD"),
       inputCostMicrosPerMillionTokens: parseUsdMicros(env.AI_INPUT_COST_PER_MILLION_USD!.trim(), "AI_INPUT_COST_PER_MILLION_USD"),
       outputCostMicrosPerMillionTokens: parseUsdMicros(env.AI_OUTPUT_COST_PER_MILLION_USD!.trim(), "AI_OUTPUT_COST_PER_MILLION_USD"),
+      ...(planBudgetsValue ? { planBudgets: parsePlanBudgets(planBudgetsValue) } : {}),
       ...(globalBudgetValue?.trim()
         ? { globalMonthlyCostLimitMicros: parseUsdMicros(globalBudgetValue.trim(), "AI_GLOBAL_MONTHLY_COST_LIMIT_USD") }
         : {}),
     };
-  } else if (globalBudgetValue?.trim()) {
-    throw new Error("AI_GLOBAL_MONTHLY_COST_LIMIT_USD requires the complete AI account budget configuration");
+  } else if (globalBudgetValue?.trim() || planBudgetsValue) {
+    throw new Error("AI_GLOBAL_MONTHLY_COST_LIMIT_USD and AI_PLAN_BUDGETS_JSON require the complete AI account budget configuration");
   }
   if (requireSubscriptionEntitlement && !modelUsagePolicy) {
     throw new Error("AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED requires the complete AI account budget configuration");
+  }
+  if (requireSubscriptionEntitlement && !modelUsagePolicy?.planBudgets) {
+    throw new Error("AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED requires AI_PLAN_BUDGETS_JSON");
   }
   return {
     connectionString,

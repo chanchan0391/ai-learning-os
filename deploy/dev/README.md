@@ -28,7 +28,9 @@ AI_INPUT_COST_PER_MILLION_USD=<current-model-input-price>
 AI_OUTPUT_COST_PER_MILLION_USD=<current-model-output-price>
 # 可选：所有账号合计的应用级月度金额熔断
 AI_GLOBAL_MONTHLY_COST_LIMIT_USD=250
-# 可选：要求付费 Agent 请求具有数据库中的有效订阅权益；需先运行迁移并写入权益
+# 可选：套餐对应的账号月度 token 与金额硬配额；金额使用字符串避免 JSON 浮点歧义
+AI_PLAN_BUDGETS_JSON='{"starter":{"monthlyTokenLimit":50000,"monthlyCostLimitUsd":"2.50"},"pro":{"monthlyTokenLimit":250000,"monthlyCostLimitUsd":"12.50"}}'
+# 可选：要求付费 Agent 请求具有数据库中的有效订阅权益；启用时套餐表为必填
 AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=false
 ```
 
