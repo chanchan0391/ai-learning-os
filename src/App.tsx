@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import {
   activeGoalOverview,
   activeGoalPortfolioOverview,
+  archivedLearningStateExportFilename,
   crossGoalWeeklyReview,
   crossGoalWeeklyReviewMarkdownFilename,
   portfolioDailyAgenda,
@@ -634,6 +635,36 @@ export function App() {
     setStorageNoticeIsError(false);
   }
 
+  function exportArchivedLearningData(entry: ArchivedLearningState) {
+    const now = new Date();
+    const blob = new Blob([serializeLearningStateExport(entry.state, now)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = archivedLearningStateExportFilename(entry.state, now);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setStorageNotice(`已导出“${entry.state.plan.goal.subject}”学习记录。`);
+    setStorageNoticeIsError(false);
+  }
+
+  function exportArchivedGoalCompletionReport(entry: ArchivedLearningState) {
+    const now = new Date();
+    const blob = new Blob([serializeGoalCompletionMarkdown(entry.state, now)], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = goalCompletionMarkdownFilename(entry.state, now);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setStorageNotice(`已导出“${entry.state.plan.goal.subject}”目标证据报告。`);
+    setStorageNoticeIsError(false);
+  }
+
   function exportCrossGoalWeeklyReview() {
     const now = new Date();
     const blob = new Blob([serializeCrossGoalWeeklyReviewMarkdown(activeGoals, now)], { type: "text/markdown;charset=utf-8" });
@@ -1131,6 +1162,25 @@ export function App() {
     </div>
   );
 
+  const archivedGoalsPanel = archivedGoals.length > 0 && (
+    <section className="panel archived-goals" aria-labelledby="archived-goals-title">
+      <div><p className="eyebrow">本地学习档案</p><h2 id="archived-goals-title">已完成目标</h2></div>
+      <div className="archived-goal-list">
+        {archivedGoals.map((entry) => (
+          <article key={entry.state.plan.id}>
+            <div><strong>{entry.state.plan.goal.subject}</strong><span>{entry.state.plan.goal.targetOutcome}</span><small>{entry.state.days.length} 个完成日 · 归档于 {new Date(entry.archivedAt).toLocaleDateString("zh-CN")}</small></div>
+            <div className="archived-goal-actions">
+              <button className="text-button" onClick={() => exportArchivedLearningData(entry)}>导出学习记录</button>
+              <button className="text-button" onClick={() => exportArchivedGoalCompletionReport(entry)}>导出证据报告</button>
+              <button className="secondary-action" onClick={() => restoreArchivedGoal(entry.state.plan.id)}>恢复查看</button>
+            </div>
+          </article>
+        ))}
+      </div>
+      <p className="archive-boundary">可直接导出归档备份与目标证据；登录账号后，归档会安全同步到其他设备，恢复归档会把它重新设为当前目标。</p>
+    </section>
+  );
+
   if (!plan || !learningState || !currentRecord) {
     return (
       <main className="shell onboarding">
@@ -1190,20 +1240,7 @@ export function App() {
             </div>
           </section>
         )}
-        {archivedGoals.length > 0 && (
-          <section className="panel archived-goals" aria-labelledby="archived-goals-title">
-            <div><p className="eyebrow">本地学习档案</p><h2 id="archived-goals-title">已完成目标</h2></div>
-            <div className="archived-goal-list">
-              {archivedGoals.map((entry) => (
-                <article key={entry.state.plan.id}>
-                  <div><strong>{entry.state.plan.goal.subject}</strong><span>{entry.state.plan.goal.targetOutcome}</span><small>{entry.state.days.length} 个完成日 · 归档于 {new Date(entry.archivedAt).toLocaleDateString("zh-CN")}</small></div>
-                  <button className="secondary-action" onClick={() => restoreArchivedGoal(entry.state.plan.id)}>恢复查看</button>
-                </article>
-              ))}
-            </div>
-            <p className="archive-boundary">登录账号后，归档会安全同步到其他设备；恢复归档会把它重新设为当前目标。</p>
-          </section>
-        )}
+        {archivedGoalsPanel}
       </main>
     );
   }
@@ -1291,6 +1328,7 @@ export function App() {
         </div>
         {authState.status === "signed-in" && activeGoals.length > 1 && <p className="archive-boundary">全部进行中目标都会自动同步；切换目标不会中断其他目标的云端更新。</p>}
       </section>
+      {archivedGoalsPanel}
       <section className="welcome">
         <div><p className="eyebrow">DAY {learningState.currentDay} · 持续推进你的学习系统</p><h1>{plan.goal.subject}</h1><p>目标：{plan.goal.targetOutcome}</p></div>
         <div className="progress-ring" style={{ "--progress": `${progress * 3.6}deg` } as React.CSSProperties}><strong>{progress}%</strong><span>今日完成</span></div>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeGoalOverview,
   activeGoalPortfolioOverview,
+  archivedLearningStateExportFilename,
   portfolioBudgetStatus,
   portfolioDailyAgenda,
   addStageMasteryTask,
@@ -284,6 +285,7 @@ describe("multi-day learning state", () => {
     });
     expect(JSON.parse(serializeLearningStateExport(state, exportedAt))).toEqual(payload);
     expect(learningStateExportFilename(exportedAt)).toBe("ai-learning-os-learning-data-2026-07-31.json");
+    expect(archivedLearningStateExportFilename(state, exportedAt)).toBe("AI-Agent-工程-learning-data-2026-07-31.json");
   });
 
   it("exports the weekly review and every stage progress summary as Markdown", () => {

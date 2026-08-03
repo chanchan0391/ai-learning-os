@@ -166,12 +166,16 @@ describe("learning data controls", () => {
 
   it("archives a completed goal and returns to goal creation without losing its history", async () => {
     const user = userEvent.setup();
+    const downloads: string[] = [];
     let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
     for (let index = 0; index < 7; index += 1) {
       for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
       state = completeCurrentDay(state, { difficulty: "just-right", reflection: `完成第 ${index + 1} 天` }, new Date(`2026-08-0${index + 1}T10:00:00.000Z`));
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:archived-goal") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) { downloads.push(this.download); });
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "归档已完成目标" }));
@@ -183,9 +187,36 @@ describe("learning data controls", () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
     expect(JSON.parse(localStorage.getItem(ARCHIVE_KEY)!)[0].state.plan.id).toBe(state.plan.id);
 
+    const archive = screen.getByRole("region", { name: "已完成目标" });
+    await user.click(within(archive).getByRole("button", { name: "导出学习记录" }));
+    await user.click(within(archive).getByRole("button", { name: "导出证据报告" }));
+    expect(downloads).toEqual([
+      expect.stringMatching(/^AI-Agent-工程-learning-data-\d{4}-\d{2}-\d{2}\.json$/),
+      expect.stringMatching(/^AI-Agent-工程-goal-evidence-\d{4}-\d{2}-\d{2}\.md$/),
+    ]);
+    expect(JSON.parse(localStorage.getItem(ARCHIVE_KEY)!)[0].state.plan.id).toBe(state.plan.id);
+
     await user.click(screen.getByRole("button", { name: "恢复查看" }));
     expect(screen.getByRole("heading", { name: goal.subject })).toBeTruthy();
     expect(localStorage.getItem(ARCHIVE_KEY)).toBeNull();
+  });
+
+  it("keeps archived exports accessible while another goal is active", () => {
+    const active = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统" }));
+    let archived = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let day = 1; day <= 7; day += 1) {
+      for (const task of getCurrentRecord(archived).tasks) archived = toggleCurrentTask(archived, task.id);
+      archived = completeCurrentDay(archived, { difficulty: "just-right", reflection: "完成" });
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(active));
+    localStorage.setItem(ARCHIVE_KEY, JSON.stringify([{ archivedAt: "2026-08-03T12:00:00.000Z", state: archived }]));
+
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "分布式系统", level: 1 })).toBeTruthy();
+    const archive = screen.getByRole("region", { name: "已完成目标" });
+    expect(within(archive).getByRole("button", { name: "导出学习记录" })).toBeTruthy();
+    expect(within(archive).getByRole("button", { name: "导出证据报告" })).toBeTruthy();
   });
 
   it("shows a weekly evidence review with a concrete next action", () => {

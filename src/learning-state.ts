@@ -456,6 +456,10 @@ function safeFilenamePart(value: string): string {
   return cleaned || "stage-note";
 }
 
+export function archivedLearningStateExportFilename(state: LearningState, now = new Date()): string {
+  return `${safeFilenamePart(state.plan.goal.subject)}-learning-data-${dateKey(now)}.json`;
+}
+
 export function stageNoteMarkdownFilename(note: StageLearningNote, now = new Date()): string {
   return `${safeFilenamePart(note.title)}-${dateKey(now)}.md`;
 }
