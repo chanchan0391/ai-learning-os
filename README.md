@@ -51,6 +51,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - 多实例容量保护：PostgreSQL 原子共享哈希客户端限流计数，健康端点报告 60 秒滚动的 Agent、认证与同步容量和延迟
 - 响应式界面：支持桌面和移动端
 - 自动化测试：覆盖输入校验、路线分期、时间预算、学习状态、关键界面交互和可访问性扫描
+- Agent 发布评估：固定合成案例覆盖五类 Agent 的质量门槛、延迟和 token 用量，实时模型运行需要显式成本授权
 - 持续集成：推送和 Pull Request 自动运行测试与生产构建
 
 ## 本地运行
@@ -87,13 +88,14 @@ cp .env.example .env.local
 ```sh
 npm test
 npm run build
+npm run eval:agents
 ```
 
 开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。迁移也会创建多实例共享限流表；缺少最新迁移时受保护路由会拒绝服务，不会退回不安全的单实例配额。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。启用登录还需同时配置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`；配置完成后，页面会显示登录与“立即同步”控制。身份方案和 HTTP 契约见 [`docs/authentication-design.md`](docs/authentication-design.md)。
 
 要启用账号模型成本熔断，必须同时配置 `AI_MONTHLY_TOKEN_LIMIT`、`AI_MONTHLY_COST_LIMIT_USD`、`AI_INPUT_COST_PER_MILLION_USD` 和 `AI_OUTPUT_COST_PER_MILLION_USD`。启用后 Agent API 要求登录；费率应与实际模型价格一致。可再配置 `AI_GLOBAL_MONTHLY_COST_LIMIT_USD`，让所有账号的已入账估算成本达到应用总上限后统一停止新调用。账本按厂商返回的成功调用用量记账，不保存 Prompt 或模型输出；生产仍需配置模型厂商侧的独立硬上限。
 
-数据收集边界、导出/删除控制和恢复演练见 [`docs/privacy-and-recovery.md`](docs/privacy-and-recovery.md)。
+数据收集边界、导出/删除控制和恢复演练见 [`docs/privacy-and-recovery.md`](docs/privacy-and-recovery.md)。Agent 质量、成本评估集和实时运行门禁见 [`docs/agent-evaluation.md`](docs/agent-evaluation.md)。
 
 ## 项目结构
 
@@ -111,6 +113,7 @@ src/
 server/
   agents/           Planner、Teacher、Coach、Evaluator 的编排、Prompt 和领域校验
   ai/               模型提供者契约与厂商适配器
+  evals/            五类 Agent 的固定质量、延迟与 token 发布评估
   sync/             跨设备同步领域契约与用户隔离测试
   auth/             OIDC 登录、应用会话与可信用户/设备身份边界
   runtime-config.ts 数据库、会话和允许来源的启动组合
@@ -121,6 +124,7 @@ docs/
   persistence-model.md 持久化、所有权与同步设计
   authentication-design.md OIDC、服务端会话与身份信任边界
   privacy-and-recovery.md 数据边界、用户控制与恢复演练
+  agent-evaluation.md Agent 评估集、隐私边界与实时成本门禁
   todo.md           当前产品待办列表
 ```
 
