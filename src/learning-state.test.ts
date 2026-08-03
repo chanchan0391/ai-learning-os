@@ -817,6 +817,52 @@ describe("multi-day learning state", () => {
     expect(markdown).toContain("- 四维证据：理解 3/4（1 份）；应用 3/4（1 份）；证据 3/4（1 份）；反思 3/4（1 份）");
     expect(markdown).toContain("- 代表成果：可验证成果");
     expect(markdown).toContain("- 可迁移能力：拆解与验证");
+    expect(markdown).toContain("### 成果证据明细");
+    expect(markdown).toContain("#### 第 3 天 · 完成递进实践");
+    expect(markdown).toContain("- 成果提交：可验证成果");
+    expect(markdown).toContain("- 理解 3/4：证据“解释完整”；反馈“继续”");
+    expect(markdown).toContain("- 最小下一步：增加一个边界案例");
+  });
+
+  it("attributes remediation evidence to its source stage exactly once", () => {
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 2 }));
+    for (let day = 1; day <= 14; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 3 || day === 10) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, `第 ${day} 天成果`, {
+          rubric: [
+            { dimension: "understanding", score: day === 3 ? 2 : 4, evidence: "理解证据", feedback: "继续" },
+            { dimension: "application", score: day === 3 ? 2 : 4, evidence: "应用证据", feedback: "继续" },
+            { dimension: "evidence", score: day === 3 ? 2 : 4, evidence: "结果证据", feedback: "继续" },
+            { dimension: "reflection", score: day === 3 ? 2 : 4, evidence: "反思证据", feedback: "继续" },
+          ],
+          totalScore: day === 3 ? 8 : 16,
+          masteryLevel: day === 3 ? "developing" : "ready",
+          misconceptions: [],
+          nextAction: day === 3 ? "补强第一阶段" : "继续迁移",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "完成" });
+    }
+    state = startStageMasteryFollowUp(state, "stage-1");
+    const remediation = getCurrentRecord(state).tasks.find((task) => task.id === stageMasteryTaskId(15, "stage-1"))!;
+    state = saveEvaluation(state, remediation.id, "第一阶段补强成果", {
+      rubric: [
+        { dimension: "understanding", score: 4, evidence: "补强理解", feedback: "继续" },
+        { dimension: "application", score: 4, evidence: "补强应用", feedback: "继续" },
+        { dimension: "evidence", score: 4, evidence: "补强结果", feedback: "继续" },
+        { dimension: "reflection", score: 4, evidence: "补强反思", feedback: "继续" },
+      ],
+      totalScore: 16, masteryLevel: "ready", misconceptions: [], nextAction: "第一阶段已补强",
+    });
+
+    expect(stageMasteryReport(state, "stage-1")).toMatchObject({ evaluationCount: 2, averageTotalScore: 12 });
+    expect(stageMasteryReport(state, "stage-2")).toMatchObject({ evaluationCount: 1, averageTotalScore: 16 });
+    for (const task of getCurrentRecord(state).tasks.filter((task) => !task.completed)) state = toggleCurrentTask(state, task.id);
+    state = completeCurrentDay(state, { difficulty: "just-right", reflection: "补强完成" });
+    const markdown = serializeGoalCompletionMarkdown(state);
+    expect(markdown.match(/成果提交：第一阶段补强成果/g)).toHaveLength(1);
   });
 
   it("does not create a completion report before the planned schedule is complete", () => {

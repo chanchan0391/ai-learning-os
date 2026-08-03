@@ -670,6 +670,27 @@ export function serializeGoalCompletionMarkdown(state: LearningState, now = new 
     const mastery = stageMasteryReport(state, stage.id);
     const retrospective = (state.plan.retrospectives ?? []).find((item) => item.stageId === stage.id);
     const stageStatus = mastery.status === "ready" ? "证据达标" : mastery.status === "developing" ? "需要加强" : "证据不足";
+    const evidenceDetails = stageEvaluationEvidence(state, stage).map(({ day, taskId, taskTitle, artifact }) => {
+      const evaluation = artifact.evaluation!;
+      const inline = (value: string) => value.trim().replace(/\r?\n+/g, " / ");
+      const remediation = artifact.stageMasteryRemediation;
+      return [
+        `#### 第 ${day} 天 · ${taskTitle}`,
+        "",
+        `- 任务 ID：\`${taskId}\``,
+        `- 成果提交：${inline(artifact.submission ?? "未保存成果正文")}`,
+        `- 评估总分：${evaluation.totalScore}/16（${evaluation.masteryLevel}）`,
+        ...(remediation ? [
+          `- 补强来源：第 ${remediation.sourceDay} 天 · ${inline(remediation.sourceNextAction)}`,
+        ] : []),
+        ...evaluation.rubric.map((item) => {
+          const label = item.dimension === "understanding" ? "理解" : item.dimension === "application" ? "应用" : item.dimension === "evidence" ? "证据" : "反思";
+          return `- ${label} ${item.score}/4：证据“${inline(item.evidence)}”；反馈“${inline(item.feedback)}”`;
+        }),
+        `- 误解：${evaluation.misconceptions.length > 0 ? evaluation.misconceptions.map(inline).join("；") : "无"}`,
+        `- 最小下一步：${inline(evaluation.nextAction)}`,
+      ].join("\n");
+    });
     return [
       `## ${stage.title}`,
       "",
@@ -693,6 +714,10 @@ export function serializeGoalCompletionMarkdown(state: LearningState, now = new 
         `- 后续应用：${retrospective.nextApplication}`,
         `- 来源学习日：${retrospective.sourceDays.join("、")}`,
       ] : []),
+      "",
+      "### 成果证据明细",
+      "",
+      ...(evidenceDetails.length > 0 ? evidenceDetails.flatMap((detail) => [detail, ""]) : ["尚无经过 Evaluator 评估的成果。", ""]),
     ].join("\n");
   });
   return [
@@ -1328,6 +1353,26 @@ function completedStageRecords(state: LearningState, stage: LearningStage): Dail
   return stageRecords(state, stage).filter((record) => record.status === "completed");
 }
 
+function stageEvaluationEvidence(state: LearningState, stage: LearningStage) {
+  return state.days.flatMap((record) => Object.entries(record.artifacts)
+    .flatMap(([taskId, artifact]) => {
+      if (!artifact.evaluation) return [];
+      const remediationStageId = artifact.stageMasteryRemediation?.stageId;
+      const week = Math.ceil(record.day / 7);
+      const belongsToScheduledStage = record.status === "completed"
+        && week >= stage.startWeek
+        && week <= stage.endWeek;
+      if (remediationStageId ? remediationStageId !== stage.id : !belongsToScheduledStage) return [];
+      return [{
+        day: record.day,
+        taskId,
+        taskTitle: record.tasks.find((task) => task.id === taskId)?.title ?? taskId,
+        artifact,
+      }];
+    }))
+    .sort((left, right) => left.day - right.day || left.taskId.localeCompare(right.taskId));
+}
+
 function requireCompletedStage(state: LearningState, stageId: string): { stage: LearningStage; records: DailyLearningRecord[] } {
   const stage = state.plan.stages.find((item) => item.id === stageId);
   if (!stage) throw new Error("学习阶段不存在");
@@ -1342,13 +1387,10 @@ export function stageMasteryReport(state: LearningState, stageId: string): Stage
   if (!stage) throw new Error("学习阶段不存在");
   const records = completedStageRecords(state, stage);
   if (!records.some((record) => record.day === stage.endWeek * 7)) throw new Error("完成这个阶段后才能检查阶段掌握度");
-  const stageEvidence = records.flatMap((record) => Object.entries(record.artifacts)
-    .flatMap(([taskId, artifact]) => artifact.evaluation ? [{ day: record.day, taskId, evaluation: artifact.evaluation }] : []));
-  const remediationEvidence = state.days.flatMap((record) => Object.entries(record.artifacts)
-    .flatMap(([taskId, artifact]) => artifact.evaluation && artifact.stageMasteryRemediation?.stageId === stageId
-      ? [{ day: record.day, taskId, evaluation: artifact.evaluation, source: artifact.stageMasteryRemediation }]
-      : []))
-    .sort((left, right) => left.day - right.day || left.taskId.localeCompare(right.taskId));
+  const allEvidence = stageEvaluationEvidence(state, stage);
+  const remediationEvidence = allEvidence.flatMap((item) => item.artifact.stageMasteryRemediation
+    ? [{ ...item, evaluation: item.artifact.evaluation!, source: item.artifact.stageMasteryRemediation }]
+    : []);
   const labels: Record<StageMasteryDimension["dimension"], string> = {
     understanding: "理解",
     application: "应用",
@@ -1377,12 +1419,14 @@ export function stageMasteryReport(state: LearningState, stageId: string): Stage
         : "developing";
     return { dimensions, averageTotalScore, status };
   };
-  const allEvidence = [...stageEvidence, ...remediationEvidence];
-  const summary = summarize(allEvidence.map((item) => item.evaluation));
-  const weakest = [...allEvidence].sort((left, right) => left.evaluation.totalScore - right.evaluation.totalScore)[0]?.evaluation;
+  const summary = summarize(allEvidence.map((item) => item.artifact.evaluation!));
+  const weakest = [...allEvidence]
+    .sort((left, right) => left.artifact.evaluation!.totalScore - right.artifact.evaluation!.totalScore)[0]
+    ?.artifact.evaluation;
   const latestRemediationEvidence = remediationEvidence.at(-1);
   const beforeLatest = latestRemediationEvidence
-    ? summarize(allEvidence.filter((item) => item !== latestRemediationEvidence).map((item) => item.evaluation))
+    ? summarize(allEvidence.filter((item) => item.taskId !== latestRemediationEvidence.taskId || item.day !== latestRemediationEvidence.day)
+      .map((item) => item.artifact.evaluation!))
     : null;
   return {
     stageId,
