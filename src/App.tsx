@@ -30,7 +30,9 @@ import {
   learningProgressMarkdownFilename,
   learningCalendarMonth,
   learningStreak,
+  parsePortfolioLearningStateExport,
   parseLearningStateExport,
+  portfolioLearningStateExportFilename,
   saveEvaluation,
   saveCrossStageReviewAssessment,
   saveReviewAssessment,
@@ -38,6 +40,7 @@ import {
   saveUnderstandingResponse,
   scheduledReviewItems,
   serializeLearningStateExport,
+  serializePortfolioLearningStateExport,
   serializeGoalCompletionMarkdown,
   serializeCrossGoalWeeklyReviewMarkdown,
   serializeLearningProgressMarkdown,
@@ -56,7 +59,7 @@ import { BrowserLearningStateRepository, type ArchivedLearningState } from "./le
 import { completionRate, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
-import type { LearningStateExport } from "./learning-state";
+import type { LearningStateExport, PortfolioLearningStateExport } from "./learning-state";
 import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, RecoveryPlan, ReviewAssessment, StageLearningNote, StageRetrospective, TaskDifficulty, TeachingSession } from "./types";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
@@ -156,7 +159,9 @@ export function App() {
   const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
   const [activeDevices, setActiveDevices] = useState<ActiveDevice[]>([]);
   const [busyDeviceId, setBusyDeviceId] = useState("");
-  const [pendingImport, setPendingImport] = useState<LearningStateExport | null>(null);
+  const [pendingImport, setPendingImport] = useState<
+    { kind: "state"; data: LearningStateExport } | { kind: "portfolio"; data: PortfolioLearningStateExport } | null
+  >(null);
   const [storageNotice, setStorageNotice] = useState(initialLoad.status === "recovered" ? "本地进度无法读取，已安全重置。" : "");
   const [storageNoticeIsError, setStorageNoticeIsError] = useState(initialLoad.status === "recovered");
   const [authState, setAuthState] = useState<AuthState>({ status: "checking" });
@@ -603,6 +608,27 @@ export function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
+  function exportAllLearningData() {
+    const now = new Date();
+    const blob = new Blob([serializePortfolioLearningStateExport(
+      activeGoals,
+      archivedGoals,
+      learningState?.plan.id ?? null,
+      dailyBudgetMinutes,
+      now,
+    )], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = portfolioLearningStateExportFilename(now);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setStorageNotice(`已导出 ${activeGoals.length} 个进行中目标和 ${archivedGoals.length} 个归档目标。`);
+    setStorageNoticeIsError(false);
+  }
+
   function exportLearningProgress() {
     if (!learningState) return;
     const now = new Date();
@@ -699,13 +725,19 @@ export function App() {
       return;
     }
     try {
-      const parsed = parseLearningStateExport(await file.text());
-      if (parsed.status === "invalid") {
-        setStorageNotice(parsed.error);
-        setStorageNoticeIsError(true);
+      const raw = await file.text();
+      const portfolio = parsePortfolioLearningStateExport(raw);
+      if (portfolio.status === "valid") {
+        setPendingImport({ kind: "portfolio", data: portfolio.data });
         return;
       }
-      setPendingImport(parsed.data);
+      const state = parseLearningStateExport(raw);
+      if (state.status === "valid") {
+        setPendingImport({ kind: "state", data: state.data });
+        return;
+      }
+      setStorageNotice(state.error === "这不是 AI Learning OS 学习记录文件。" ? portfolio.error : state.error);
+      setStorageNoticeIsError(true);
     } catch {
       setStorageNotice("无法读取所选学习记录文件。");
       setStorageNoticeIsError(true);
@@ -714,15 +746,33 @@ export function App() {
 
   function importLearningData() {
     if (!pendingImport) return;
-    saveState(pendingImport.state);
-    setGoal(pendingImport.state.plan.goal);
+    if (pendingImport.kind === "portfolio") {
+      const data = pendingImport.data;
+      learningStateRepository.replacePortfolio(
+        data.activeStates, data.archivedStates, data.selectedPlanId, data.dailyBudgetMinutes,
+      );
+      const selected = data.activeStates.find((state) => state.plan.id === data.selectedPlanId) ?? null;
+      resetGoalWorkspace(selected);
+      setActiveGoals(learningStateRepository.loadActive());
+      archivedGoalsRef.current = learningStateRepository.loadArchived();
+      setArchivedGoals(archivedGoalsRef.current);
+      setDailyBudgetMinutes(data.dailyBudgetMinutes);
+      setDailyBudgetDraft(String(data.dailyBudgetMinutes ?? ""));
+      setPendingImport(null);
+      setStorageNotice(`已恢复全部学习数据：${data.activeStates.length} 个进行中目标，${data.archivedStates.length} 个归档目标。`);
+      setStorageNoticeIsError(false);
+      if (authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
+      return;
+    }
+    saveState(pendingImport.data.state);
+    setGoal(pendingImport.data.state.plan.goal);
     setSubmissionDrafts({});
     setDifficulty("");
     setReflection("");
     setAgentError("");
     setErrors([]);
     setPendingImport(null);
-    setStorageNotice(`已恢复“${pendingImport.state.plan.goal.subject}”的第 ${pendingImport.state.currentDay} 天进度。`);
+    setStorageNotice(`已恢复“${pendingImport.data.state.plan.goal.subject}”的第 ${pendingImport.data.state.currentDay} 天进度。`);
     setStorageNoticeIsError(false);
   }
 
@@ -961,6 +1011,7 @@ export function App() {
   const importControl = (
     <>
       <input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" aria-label="选择学习记录文件" onChange={selectImportFile} />
+      <button className="text-button" disabled={activeGoals.length + archivedGoals.length === 0} onClick={exportAllLearningData}>导出全部数据</button>
       <button className="text-button" onClick={() => importInput.current?.click()}>导入学习记录</button>
     </>
   );
@@ -1045,8 +1096,12 @@ export function App() {
     }}>
       <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="import-dialog-title" aria-describedby="import-dialog-description">
         <p className="eyebrow">已验证学习记录</p>
-        <h2 id="import-dialog-title">恢复“{pendingImport.state.plan.goal.subject}”？</h2>
-        <p id="import-dialog-description">将恢复到第 {pendingImport.state.currentDay} 天；同一目标的本地版本会被替换，其他进行中目标会保留。导出时间：{new Date(pendingImport.exportedAt).toLocaleString("zh-CN")}。</p>
+        <h2 id="import-dialog-title">{pendingImport.kind === "portfolio"
+          ? "恢复全部学习数据？"
+          : `恢复“${pendingImport.data.state.plan.goal.subject}”？`}</h2>
+        <p id="import-dialog-description">{pendingImport.kind === "portfolio"
+          ? `将用文件中的 ${pendingImport.data.activeStates.length} 个进行中目标、${pendingImport.data.archivedStates.length} 个归档目标和时间预算替换当前浏览器的全部学习数据。导出时间：${new Date(pendingImport.data.exportedAt).toLocaleString("zh-CN")}。`
+          : `将恢复到第 ${pendingImport.data.state.currentDay} 天；同一目标的本地版本会被替换，其他进行中目标会保留。导出时间：${new Date(pendingImport.data.exportedAt).toLocaleString("zh-CN")}。`}</p>
         <div className="dialog-actions">
           <button className="secondary-action" autoFocus onClick={() => setPendingImport(null)}>取消</button>
           <button className="primary-dialog-action" onClick={importLearningData}>确认恢复</button>

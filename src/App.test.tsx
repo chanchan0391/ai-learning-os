@@ -12,6 +12,7 @@ import {
   saveEvaluation,
   saveTeachingSession,
   serializeLearningStateExport,
+  serializePortfolioLearningStateExport,
   toggleCurrentTask,
 } from "./learning-state";
 import { generateLearningPlan } from "./planner";
@@ -712,6 +713,22 @@ describe("learning data controls", () => {
     expect(downloads).toEqual([expect.stringMatching(/^ai-learning-os-learning-data-\d{4}-\d{2}-\d{2}\.json$/)]);
   });
 
+  it("downloads a dated backup of the complete learning portfolio", async () => {
+    const user = userEvent.setup();
+    const downloads: string[] = [];
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:all-learning-data") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) {
+      downloads.push(this.download);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "导出全部数据" }));
+
+    expect(downloads).toEqual([expect.stringMatching(/^ai-learning-os-all-learning-data-\d{4}-\d{2}-\d{2}\.json$/)]);
+    expect(screen.getByRole("status").textContent).toContain("1 个进行中目标");
+  });
+
   it("validates and confirms a learning-record restore before replacing local progress", async () => {
     const user = userEvent.setup();
     const restoredPlan = generateLearningPlan({ ...goal, subject: "分布式系统" }, new Date("2026-07-30T10:00:00.000Z"));
@@ -730,6 +747,27 @@ describe("learning data controls", () => {
     expect(screen.getByRole("heading", { name: "分布式系统" })).toBeTruthy();
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).plan.goal.subject).toBe("分布式系统");
     expect(screen.getByRole("status").textContent).toContain("已恢复");
+  });
+
+  it("validates and confirms a complete portfolio restore before replacing all local goals", async () => {
+    const user = userEvent.setup();
+    const restored = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统" }));
+    const serialized = serializePortfolioLearningStateExport([restored], [], restored.plan.id, 90);
+    render(<App />);
+
+    await user.upload(
+      screen.getByLabelText("选择学习记录文件"),
+      new File([serialized], "all-learning-data.json", { type: "application/json" }),
+    );
+
+    expect(screen.getByRole("alertdialog", { name: "恢复全部学习数据？" })).toBeTruthy();
+    expect(screen.getByText(/替换当前浏览器的全部学习数据/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "确认恢复" }));
+
+    expect(screen.getByRole("heading", { name: "分布式系统" })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).states).toHaveLength(1);
+    expect(localStorage.getItem(DAILY_BUDGET_KEY)).toBe("90");
+    expect(screen.getByText(/已恢复全部学习数据/)).toBeTruthy();
   });
 
   it("rejects an invalid learning-record file without changing local progress", async () => {

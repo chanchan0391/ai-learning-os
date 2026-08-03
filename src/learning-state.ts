@@ -17,6 +17,7 @@ import type {
 
 export const LEARNING_STATE_VERSION = 3 as const;
 export const LEARNING_EXPORT_VERSION = 1 as const;
+export const PORTFOLIO_EXPORT_VERSION = 1 as const;
 
 export interface LearningStateExport {
   format: "ai-learning-os-learning-data";
@@ -24,6 +25,20 @@ export interface LearningStateExport {
   exportedAt: string;
   state: LearningState;
 }
+
+export interface PortfolioLearningStateExport {
+  format: "ai-learning-os-portfolio-data";
+  exportVersion: typeof PORTFOLIO_EXPORT_VERSION;
+  exportedAt: string;
+  selectedPlanId: string | null;
+  activeStates: LearningState[];
+  archivedStates: Array<{ archivedAt: string; state: LearningState }>;
+  dailyBudgetMinutes: number | null;
+}
+
+export type ParsedPortfolioLearningStateExport =
+  | { status: "valid"; data: PortfolioLearningStateExport }
+  | { status: "invalid"; error: string };
 
 export type ParsedLearningStateExport =
   | { status: "valid"; data: LearningStateExport }
@@ -441,8 +456,84 @@ export function parseLearningStateExport(raw: string): ParsedLearningStateExport
   }
 }
 
+export function createPortfolioLearningStateExport(
+  activeStates: LearningState[],
+  archivedStates: Array<{ archivedAt: string; state: LearningState }>,
+  selectedPlanId: string | null,
+  dailyBudgetMinutes: number | null,
+  now = new Date(),
+): PortfolioLearningStateExport {
+  return {
+    format: "ai-learning-os-portfolio-data",
+    exportVersion: PORTFOLIO_EXPORT_VERSION,
+    exportedAt: now.toISOString(),
+    selectedPlanId,
+    activeStates,
+    archivedStates,
+    dailyBudgetMinutes,
+  };
+}
+
+export function serializePortfolioLearningStateExport(
+  activeStates: LearningState[],
+  archivedStates: Array<{ archivedAt: string; state: LearningState }>,
+  selectedPlanId: string | null,
+  dailyBudgetMinutes: number | null,
+  now = new Date(),
+): string {
+  return `${JSON.stringify(createPortfolioLearningStateExport(
+    activeStates, archivedStates, selectedPlanId, dailyBudgetMinutes, now,
+  ), null, 2)}\n`;
+}
+
+export function parsePortfolioLearningStateExport(raw: string): ParsedPortfolioLearningStateExport {
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!isRecord(value) || value.format !== "ai-learning-os-portfolio-data") {
+      return { status: "invalid", error: "这不是 AI Learning OS 全部学习数据文件。" };
+    }
+    if (value.exportVersion !== PORTFOLIO_EXPORT_VERSION) {
+      return { status: "invalid", error: "此全部学习数据版本暂不受支持。" };
+    }
+    if (!isValidDate(value.exportedAt)) {
+      return { status: "invalid", error: "全部学习数据缺少有效的导出时间。" };
+    }
+    if (!Array.isArray(value.activeStates) || !value.activeStates.every(isLearningState)
+      || !Array.isArray(value.archivedStates)
+      || !value.archivedStates.every((entry) => isRecord(entry)
+        && isValidDate(entry.archivedAt)
+        && isLearningState(entry.state)
+        && isLearningPlanComplete(entry.state))) {
+      return { status: "invalid", error: "全部学习数据内容不完整或已损坏。" };
+    }
+    const activeIds = value.activeStates.map((state) => state.plan.id);
+    const archivedIds = value.archivedStates.map((entry) => (entry as { state: LearningState }).state.plan.id);
+    const allIds = [...activeIds, ...archivedIds];
+    if (new Set(allIds).size !== allIds.length) {
+      return { status: "invalid", error: "全部学习数据包含重复目标。" };
+    }
+    if (value.selectedPlanId !== null
+      && (typeof value.selectedPlanId !== "string" || !activeIds.includes(value.selectedPlanId))) {
+      return { status: "invalid", error: "全部学习数据的当前目标无效。" };
+    }
+    if (value.dailyBudgetMinutes !== null
+      && (!Number.isInteger(value.dailyBudgetMinutes)
+        || Number(value.dailyBudgetMinutes) < 15
+        || Number(value.dailyBudgetMinutes) > 1440)) {
+      return { status: "invalid", error: "全部学习数据的每日总时间预算无效。" };
+    }
+    return { status: "valid", data: value as unknown as PortfolioLearningStateExport };
+  } catch {
+    return { status: "invalid", error: "无法读取此 JSON 全部学习数据。" };
+  }
+}
+
 export function learningStateExportFilename(now = new Date()): string {
   return `ai-learning-os-learning-data-${dateKey(now)}.json`;
+}
+
+export function portfolioLearningStateExportFilename(now = new Date()): string {
+  return `ai-learning-os-all-learning-data-${dateKey(now)}.json`;
 }
 
 function safeFilenamePart(value: string): string {

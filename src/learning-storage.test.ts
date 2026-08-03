@@ -213,4 +213,22 @@ describe("browser learning-state repository", () => {
     expect(repository.mergeArchived([remoteDuplicate, remoteNew])).toEqual([remoteNew, local]);
     expect(repository.loadArchived()).toEqual([remoteNew, local]);
   });
+
+  it("replaces the local portfolio from a validated backup", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const active = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统" }));
+    let archivedState = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let day = 0; day < 7; day += 1) {
+      for (const task of getCurrentRecord(archivedState).tasks) archivedState = toggleCurrentTask(archivedState, task.id);
+      archivedState = completeCurrentDay(archivedState, { difficulty: "just-right", reflection: "完成" });
+    }
+    const archived = [{ archivedAt: "2026-08-03T12:00:00.000Z", state: archivedState }];
+
+    repository.replacePortfolio([active], archived, active.plan.id, 75);
+
+    expect(repository.load().state).toEqual(active);
+    expect(repository.loadActive()).toEqual([active]);
+    expect(repository.loadArchived()).toEqual(archived);
+    expect(repository.loadDailyBudget()).toBe(75);
+  });
 });

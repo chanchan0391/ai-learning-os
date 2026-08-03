@@ -13,6 +13,7 @@ import {
   completedDayCount,
   createStageNote,
   createLearningStateExport,
+  createPortfolioLearningStateExport,
   crossStageMisconceptionInsights,
   crossGoalWeeklyReview,
   crossGoalWeeklyReviewMarkdownFilename,
@@ -33,6 +34,8 @@ import {
   learningCalendarMonth,
   parseLearningState,
   parseLearningStateExport,
+  parsePortfolioLearningStateExport,
+  portfolioLearningStateExportFilename,
   saveEvaluation,
   saveCrossStageReviewAssessment,
   saveReviewPerformance,
@@ -44,6 +47,7 @@ import {
   stageMasteryTaskId,
   startStageMasteryFollowUp,
   serializeLearningStateExport,
+  serializePortfolioLearningStateExport,
   serializeGoalCompletionMarkdown,
   serializeCrossGoalWeeklyReviewMarkdown,
   serializeLearningProgressMarkdown,
@@ -327,6 +331,31 @@ describe("multi-day learning state", () => {
       ...valid,
       state: { ...valid.state, plan: { ...valid.state.plan, stages: [{ anything: "passes" }] } },
     }))).toMatchObject({ status: "invalid" });
+  });
+
+  it("round-trips a validated portfolio backup with active goals, archives, and budget", () => {
+    const active = completedState();
+    let archived = initializeLearningState(generateLearningPlan({ ...goal, subject: "系统设计", durationWeeks: 1 }));
+    for (let day = 0; day < 7; day += 1) {
+      for (const task of getCurrentRecord(archived).tasks) archived = toggleCurrentTask(archived, task.id);
+      archived = completeCurrentDay(archived, { difficulty: "just-right", reflection: "完成" });
+    }
+    const now = new Date("2026-08-03T14:30:00.000Z");
+    const payload = createPortfolioLearningStateExport(
+      [active], [{ archivedAt: "2026-08-03T12:00:00.000Z", state: archived }], active.plan.id, 90, now,
+    );
+    const serialized = serializePortfolioLearningStateExport(
+      payload.activeStates, payload.archivedStates, payload.selectedPlanId, payload.dailyBudgetMinutes, now,
+    );
+
+    expect(parsePortfolioLearningStateExport(serialized)).toEqual({ status: "valid", data: payload });
+    expect(portfolioLearningStateExportFilename(now)).toBe("ai-learning-os-all-learning-data-2026-08-03.json");
+    expect(parsePortfolioLearningStateExport(JSON.stringify({ ...payload, activeStates: [active, active] })))
+      .toMatchObject({ status: "invalid", error: "全部学习数据包含重复目标。" });
+    expect(parsePortfolioLearningStateExport(JSON.stringify({ ...payload, dailyBudgetMinutes: 1 })))
+      .toMatchObject({ status: "invalid" });
+    expect(parsePortfolioLearningStateExport(JSON.stringify({ ...payload, selectedPlanId: "missing" })))
+      .toMatchObject({ status: "invalid" });
   });
 
   it("requires every task before closing the day", () => {

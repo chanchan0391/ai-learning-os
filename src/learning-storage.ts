@@ -38,6 +38,7 @@ export interface LearningStateRepository {
   loadDailyBudget(): number | null;
   saveDailyBudget(minutes: number | null): void;
   mergeArchived(entries: ArchivedLearningState[]): ArchivedLearningState[];
+  replacePortfolio(states: LearningState[], archived: ArchivedLearningState[], selectedPlanId: string | null, dailyBudgetMinutes: number | null): void;
   save(state: LearningState): void;
   archiveCompleted(state: LearningState, now?: Date): ArchivedLearningState[];
   restoreArchived(planId: string): LearningState;
@@ -185,6 +186,23 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
     const merged = [...existing, ...additions].sort((left, right) => right.archivedAt.localeCompare(left.archivedAt));
     if (additions.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(merged));
     return merged;
+  }
+
+  replacePortfolio(
+    states: LearningState[],
+    archived: ArchivedLearningState[],
+    selectedPlanId: string | null,
+    dailyBudgetMinutes: number | null,
+  ): void {
+    this.writeActiveCollection({ selectedPlanId, states: structuredClone(states) });
+    if (archived.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(archived));
+    else this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
+    if (dailyBudgetMinutes === null) this.storage.removeItem(PORTFOLIO_DAILY_BUDGET_KEY);
+    else this.storage.setItem(PORTFOLIO_DAILY_BUDGET_KEY, String(dailyBudgetMinutes));
+    const selected = states.find((state) => state.plan.id === selectedPlanId);
+    if (selected) this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(selected));
+    else this.removeCurrentKeys();
+    this.removeLegacyKeys();
   }
 
   archiveCompleted(state: LearningState, now = new Date()): ArchivedLearningState[] {
