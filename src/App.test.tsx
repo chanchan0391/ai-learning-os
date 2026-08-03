@@ -550,6 +550,43 @@ describe("learning data controls", () => {
     expect(saved.days.at(-1).artifacts["day-8-stage-mastery-stage-1"].stageMasteryRemediation).toMatchObject({ stageId: "stage-1", sourceDay: 3 });
   });
 
+  it("starts the goal-level priority remediation without searching stage cards", async () => {
+    const user = userEvent.setup();
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 2 }));
+    for (let day = 1; day <= 14; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 10) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, "完整的第二阶段成果", {
+          rubric: [
+            { dimension: "understanding", score: 4, evidence: "解释完整", feedback: "继续" },
+            { dimension: "application", score: 4, evidence: "应用完整", feedback: "继续" },
+            { dimension: "evidence", score: 4, evidence: "证据完整", feedback: "继续" },
+            { dimension: "reflection", score: 4, evidence: "复盘完整", feedback: "继续" },
+          ],
+          totalScore: 16, masteryLevel: "ready", misconceptions: [], nextAction: "继续迁移",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    render(<App />);
+
+    const goalSummary = screen.getByRole("status", { name: "目标掌握度" });
+    expect(goalSummary.textContent).toContain("当前优先建立基础");
+    await user.click(within(goalSummary).getByRole("button", { name: "开始当前优先补强日" }));
+
+    expect(screen.getAllByText("DAY 15", { exact: false }).length).toBeGreaterThan(0);
+    expect(screen.getByText("阶段补强实践：建立基础")).toBeTruthy();
+    expect((within(screen.getByRole("status", { name: "目标掌握度" })).getByRole("button", { name: "当前优先补强已加入" }) as HTMLButtonElement).disabled).toBe(true);
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    expect(saved.days[14].artifacts["day-15-stage-mastery-stage-1"].stageMasteryRemediation).toMatchObject({
+      stageId: "stage-1",
+      sourceDay: 7,
+      sourceNextAction: "补充一份可验证的实践成果并获取四维评估。",
+    });
+  });
+
   it("starts a follow-up learning day for weak final-stage evidence", async () => {
     const user = userEvent.setup();
     let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));

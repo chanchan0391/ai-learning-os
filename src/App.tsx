@@ -1471,6 +1471,19 @@ export function App() {
               <div><strong>{goalMastery.status === "ready" ? "目标证据已达标" : goalMastery.status === "in-progress" ? "目标仍在推进" : "目标仍需补强"}</strong><span>{goalMastery.headline}</span></div>
               <p>阶段完成 {goalMastery.completedStages}/{goalMastery.totalStages} · 证据达标 {goalMastery.readyStages}/{goalMastery.totalStages}</p>
               {goalMastery.priorityStageTitle && <p><b>当前优先</b>{goalMastery.priorityStageTitle} · {goalMastery.nextAction}</p>}
+              {goalMastery.priorityStageId && (currentRecord.status === "active" || isLearningPlanComplete(learningState)) && (() => {
+                const taskAdded = currentRecord.status === "active"
+                  && currentRecord.tasks.some((task) => task.id === stageMasteryTaskId(learningState.currentDay, goalMastery.priorityStageId!));
+                return (
+                  <button
+                    className="secondary-action mastery-action"
+                    disabled={taskAdded}
+                    onClick={() => updateState((current) => startStageMasteryFollowUp(current, goalMastery.priorityStageId!))}
+                  >
+                    {taskAdded ? "当前优先补强已加入" : currentRecord.status === "completed" ? "开始当前优先补强日" : "补强当前优先阶段"}
+                  </button>
+                );
+              })()}
             </div>
           )}
           <div className="retrospective-list">

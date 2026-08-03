@@ -232,6 +232,7 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .goal-mastery span, .goal-mastery p { margin: 0; color: #617069; font-size: 11px; line-height: 1.55; }
 .goal-mastery p { display: flex; gap: 6px; }
 .goal-mastery p b { flex: 0 0 auto; color: #526058; }
+.goal-mastery .mastery-action { justify-self: start; }
 .retrospective-list > article { padding: 18px; background: #fafaf7; border: 1px solid #d9dfd9; border-radius: 13px; }
 .retrospective-empty, .retrospective-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .retrospective-empty h3, .retrospective-title h3 { margin: 4px 0 0; font-size: 15px; }
