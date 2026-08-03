@@ -1,6 +1,15 @@
 import { DeterministicModelProvider } from "./deterministic-provider";
 import type { ModelProvider } from "./model-provider";
-import { OpenAIResponsesProvider } from "./openai-responses-provider";
+import { DEFAULT_MAX_OUTPUT_TOKENS, OpenAIResponsesProvider } from "./openai-responses-provider";
+
+function parseMaxOutputTokens(value: string | undefined): number {
+  if (!value?.trim()) return DEFAULT_MAX_OUTPUT_TOKENS;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error("OPENAI_MAX_OUTPUT_TOKENS must be a positive integer");
+  }
+  return parsed;
+}
 
 function normalizeCompatibleBaseUrl(value: string): string {
   const parsed = new URL(value);
@@ -18,6 +27,7 @@ export function createModelProvider(environment: NodeJS.ProcessEnv = process.env
   const compatibleBaseUrl = environment.OPENAI_COMPATIBLE_BASE_URL?.trim();
   const openAiModel = environment.OPENAI_MODEL?.trim();
   const compatibleModel = environment.OPENAI_COMPATIBLE_MODEL?.trim() || openAiModel;
+  const maxOutputTokens = parseMaxOutputTokens(environment.OPENAI_MAX_OUTPUT_TOKENS);
 
   if (compatibleApiKey && !compatibleBaseUrl) {
     throw new Error("OPENAI_COMPATIBLE_BASE_URL is required with OPENAI_COMPATIBLE_API_KEY");
@@ -34,16 +44,20 @@ export function createModelProvider(environment: NodeJS.ProcessEnv = process.env
       model: compatibleModel,
       baseUrl: normalizeCompatibleBaseUrl(compatibleBaseUrl),
       apiMode: "chat-completions",
+      maxOutputTokens,
     });
   }
   if (compatibleApiKey || compatibleBaseUrl || environment.OPENAI_COMPATIBLE_MODEL?.trim()) {
     throw new Error("Compatible API key, base URL, and model must be configured together");
   }
   if (openAiApiKey && openAiModel) {
-    return new OpenAIResponsesProvider({ apiKey: openAiApiKey, model: openAiModel });
+    return new OpenAIResponsesProvider({ apiKey: openAiApiKey, model: openAiModel, maxOutputTokens });
   }
   if (openAiApiKey || openAiModel) {
     throw new Error("OPENAI_API_KEY and OPENAI_MODEL must be configured together");
+  }
+  if (environment.OPENAI_MAX_OUTPUT_TOKENS?.trim()) {
+    throw new Error("OPENAI_MAX_OUTPUT_TOKENS requires a configured model provider");
   }
   return new DeterministicModelProvider();
 }

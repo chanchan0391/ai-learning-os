@@ -9,7 +9,10 @@ interface OpenAIProviderConfig {
   timeoutMs?: number;
   maxRetries?: number;
   retryDelayMs?: number;
+  maxOutputTokens?: number;
 }
+
+export const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
 
 interface OpenAIResponseBody {
   id?: string;
@@ -84,6 +87,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly retryDelayMs: number;
+  private readonly maxOutputTokens: number;
 
   constructor(private readonly config: OpenAIProviderConfig) {
     if (!config.apiKey.trim()) throw new Error("OpenAI API key is required");
@@ -94,8 +98,12 @@ export class OpenAIResponsesProvider implements ModelProvider {
     this.timeoutMs = config.timeoutMs ?? 30_000;
     this.maxRetries = config.maxRetries ?? 2;
     this.retryDelayMs = config.retryDelayMs ?? 250;
+    this.maxOutputTokens = config.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) throw new Error("OpenAI timeout must be positive");
     if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) throw new Error("OpenAI max retries must be a non-negative integer");
+    if (!Number.isSafeInteger(this.maxOutputTokens) || this.maxOutputTokens <= 0) {
+      throw new Error("OpenAI max output tokens must be a positive safe integer");
+    }
   }
 
   async generateStructured<T>(request: StructuredGenerationRequest): Promise<StructuredGenerationResult<T>> {
@@ -120,11 +128,13 @@ export class OpenAIResponsesProvider implements ModelProvider {
           strict: true,
         },
       },
+      max_completion_tokens: this.maxOutputTokens,
       stream: false,
     } : {
       model: this.config.model,
       instructions: request.instructions,
       input: request.input,
+      max_output_tokens: this.maxOutputTokens,
       text: { format },
       store: false,
     });

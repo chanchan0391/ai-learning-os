@@ -14,12 +14,25 @@ describe("OpenAI Responses provider", () => {
       const body = JSON.parse(String(init?.body));
       expect(init?.headers).toMatchObject({ Authorization: "Bearer secret", "Content-Type": "application/json" });
       expect((init?.headers as Record<string, string>)["X-Client-Request-Id"]).toMatch(/^[0-9a-f-]{36}$/);
-      expect(body).toMatchObject({ model: "test-model", store: false, text: { format: { type: "json_schema", name: "plan", strict: true } } });
+      expect(body).toMatchObject({ model: "test-model", max_output_tokens: 4_096, store: false, text: { format: { type: "json_schema", name: "plan", strict: true } } });
       return new Response(JSON.stringify({ id: "resp_1", output: [{ content: [{ type: "output_text", text: "{\"ok\":true}" }] }] }), { status: 200 });
     });
     const provider = new OpenAIResponsesProvider({ apiKey: "secret", model: "test-model", fetchImplementation: fetchMock as typeof fetch });
     await expect(provider.generateStructured<{ ok: boolean }>(request)).resolves.toMatchObject({ value: { ok: true }, model: "test-model" });
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("uses the compatible completion cap and validates explicit caps", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({ max_completion_tokens: 1_024 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "{\"ok\":true}" } }] }));
+    });
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "secret", model: "compatible-model", apiMode: "chat-completions",
+      maxOutputTokens: 1_024, fetchImplementation: fetchMock as typeof fetch,
+    });
+    await expect(provider.generateStructured(request)).resolves.toMatchObject({ value: { ok: true } });
+    expect(() => new OpenAIResponsesProvider({ apiKey: "secret", model: "test", maxOutputTokens: 0 })).toThrow(/positive safe integer/);
   });
 
   it("normalizes Responses and compatible token usage for account metering", async () => {

@@ -96,6 +96,7 @@ OpenAI Provider 对每次尝试设置 30 秒超时，并对网络错误、408、
 ```sh
 OPENAI_API_KEY=你的密钥
 OPENAI_MODEL=你选择的模型 ID
+OPENAI_MAX_OUTPUT_TOKENS=4096
 AI_API_PORT=8787
 # 启用账号预算时四项必须同时配置，并要求 DATABASE_URL 与登录会话
 AI_MONTHLY_TOKEN_LIMIT=250000
@@ -122,7 +123,7 @@ AI_GLOBAL_MONTHLY_COST_LIMIT_USD=250.00
 
 ### AI 模式
 
-同时配置 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 后，API 使用 `OpenAIResponsesProvider`，健康检查返回 `aiEnabled: true`。仅配置其中一项会拒绝启动，防止误以为 AI 已启用。
+同时配置 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 后，API 使用 `OpenAIResponsesProvider`，健康检查返回 `aiEnabled: true`。仅配置其中一项会拒绝启动，防止误以为 AI 已启用。Provider 默认把每次结构化响应限制为 4096 个输出 token；`OPENAI_MAX_OUTPUT_TOKENS` 可显式调整，Responses 与 compatible Chat Completions 分别映射到各自的输出上限字段。
 
 ## Agent 边界
 

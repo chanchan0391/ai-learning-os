@@ -66,4 +66,21 @@ describe("createModelProvider", () => {
       OPENAI_COMPATIBLE_MODEL: "model",
     }).id).toBe("openai-compatible-chat");
   });
+
+  it("passes an explicit output cap to model requests", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({ max_output_tokens: 768 });
+      return new Response(JSON.stringify({ output_text: "{\"ok\":true}" }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createModelProvider({
+      OPENAI_API_KEY: "openai-key", OPENAI_MODEL: "model", OPENAI_MAX_OUTPUT_TOKENS: "768",
+    });
+    await provider.generateStructured({ instructions: "Return JSON", input: "test", schema: { name: "result", value: {} } });
+  });
+
+  it("rejects an invalid or orphaned output cap", () => {
+    expect(() => createModelProvider({ OPENAI_MAX_OUTPUT_TOKENS: "0" })).toThrow(/positive integer/);
+    expect(() => createModelProvider({ OPENAI_MAX_OUTPUT_TOKENS: "512" })).toThrow(/requires a configured model provider/);
+  });
 });

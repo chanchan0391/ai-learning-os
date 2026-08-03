@@ -4,6 +4,13 @@
 
 ## 2026-08-03
 
+### 单次模型输出成本上限
+
+- OpenAI Responses 与 compatible Chat Completions 请求现在默认限制为 4096 个输出 token，避免结构化 Agent 响应在异常情况下无界消耗输出额度。
+- 可用 `OPENAI_MAX_OUTPUT_TOKENS` 显式调整；启动时拒绝非正整数或未配置模型 Provider 的孤立上限。
+- 文档明确单次上限只缩小输出侧风险，不能消除并发预算检查窗口、输入成本或替代厂商硬金额上限。
+- 完整校验：25 个测试文件、215 项测试全部通过，生产构建成功；七项确定性 Agent 评估全部通过。
+
 ### Agent 发布评估基线
 
 - 新增覆盖 Planner、Teacher、Evaluator、Review 和 Coach 的七案例合成评估集，直接复用生产 Agent 编排、结构化输出和领域校验。
