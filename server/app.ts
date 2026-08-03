@@ -14,6 +14,7 @@ import type { AuthenticatedPrincipalResolver } from "./auth/authenticated-princi
 import type { OidcAuthenticator } from "./auth/oidc-client";
 import type { AccountDataLifecycle, SessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { DEFAULT_SESSION_COOKIE_NAME, readSessionToken } from "./auth/postgres-session-resolver";
+import type { SubscriptionEntitlementResolver } from "./billing/subscription-entitlement";
 import { requestOutcome, type RequestLogEvent, type RequestLogSink } from "./observability/request-observability";
 import {
   InMemoryFixedWindowRateLimiter,
@@ -54,6 +55,7 @@ export interface AppOptions {
   auditSink?: SecurityAuditSink;
   capacityMonitor?: RequestCapacityMonitor;
   modelUsageLedger?: ModelUsageLedger;
+  subscriptionEntitlements?: SubscriptionEntitlementResolver;
   requestLogSink?: RequestLogSink;
   readinessCheck?: () => Promise<void>;
 }
@@ -163,6 +165,9 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
 }
 
 export function createApp(provider: ModelProvider, options: AppOptions = {}) {
+  if (options.subscriptionEntitlements && !options.modelUsageLedger) {
+    throw new Error("Subscription entitlement enforcement requires account model budgets");
+  }
   const meteredProvider = options.modelUsageLedger ? new MeteredModelProvider(provider, options.modelUsageLedger) : null;
   const agentProvider = meteredProvider ?? provider;
   const planner = createPlannerAgent(agentProvider);
@@ -260,6 +265,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           dependencies: { database },
           capacity: capacityMonitor.snapshot(),
           accountModelBudgetsEnabled: Boolean(options.modelUsageLedger),
+          subscriptionEntitlementsRequired: Boolean(options.subscriptionEntitlements),
         });
       }
       if (route?.rateLimitScope.startsWith("ai-") && options.modelUsageLedger) {
@@ -275,6 +281,18 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         }
         auditPrincipal = principal;
         requireAllowedOrigin(request, options.allowedSyncOrigins);
+        if (options.subscriptionEntitlements) {
+          const entitlement = await options.subscriptionEntitlements.checkEntitlement(principal.userId);
+          if (entitlement.planKey) response.setHeader("Subscription-Plan", entitlement.planKey);
+          response.setHeader("Subscription-State", entitlement.state);
+          if (entitlement.accessUntil !== null) {
+            response.setHeader("Subscription-Access-Until", String(Math.ceil(entitlement.accessUntil / 1_000)));
+          }
+          if (!entitlement.allowed) {
+            auditReason = "subscription-entitlement-required";
+            return sendJson(response, 402, { error: "Active subscription required" });
+          }
+        }
         const decision = await options.modelUsageLedger.checkBudget(principal.userId);
         response.setHeader("ModelBudget-Remaining-Tokens", String(decision.remainingTokens));
         response.setHeader("ModelBudget-Remaining-Cost-Micros", String(decision.remainingCostMicros));

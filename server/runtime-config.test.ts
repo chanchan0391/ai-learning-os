@@ -84,6 +84,26 @@ describe("sync runtime configuration", () => {
       AI_MONTHLY_TOKEN_LIMIT: "100", AI_MONTHLY_COST_LIMIT_USD: "1.0000001",
       AI_INPUT_COST_PER_MILLION_USD: "2", AI_OUTPUT_COST_PER_MILLION_USD: "8",
     })).toThrow(/at most 6 decimals/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED: "yes",
+    })).toThrow(/must be true or false/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED: "true",
+    })).toThrow(/requires the complete AI account budget/);
+  });
+
+  it("enables server-side subscription enforcement only with account budgets", () => {
+    expect(readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AI_MONTHLY_TOKEN_LIMIT: "250000",
+      AI_MONTHLY_COST_LIMIT_USD: "12.50",
+      AI_INPUT_COST_PER_MILLION_USD: "2",
+      AI_OUTPUT_COST_PER_MILLION_USD: "8",
+      AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED: "true",
+    })?.requireSubscriptionEntitlement).toBe(true);
   });
 
   it("allows an HTTP issuer only for local development", () => {

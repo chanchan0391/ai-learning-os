@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { DeterministicModelProvider } from "./ai/deterministic-provider";
 import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest } from "./ai/model-provider";
+import type { SubscriptionEntitlementDecision } from "./billing/subscription-entitlement";
 import type { RequestLogEvent } from "./observability/request-observability";
 import type { SecurityAuditEvent } from "./security/request-security";
 import type { SyncStore } from "./sync/sync-store";
@@ -29,6 +30,14 @@ describe("AI Learning OS API", () => {
       dependencies: { database: "disabled" },
       capacity: { inFlight: 0, requests: 0, rejected: 0, failed: 0, rateLimited: 0, byScope: {} },
     });
+  });
+
+  it("fails startup when subscription enforcement cannot guard model calls", () => {
+    expect(() => createApp(new DeterministicModelProvider(), {
+      subscriptionEntitlements: {
+        checkEntitlement: async () => ({ allowed: true, state: "active", planKey: "pro", accessUntil: null }),
+      },
+    })).toThrow(/requires account model budgets/);
   });
 
   it("reports degraded readiness without exposing database errors", async () => {
@@ -182,6 +191,57 @@ describe("AI Learning OS API", () => {
     await expect(response.json()).resolves.toEqual({ error: "Request origin is not allowed" });
     expect(budgetChecks).toBe(0);
     expect(providerCalls).toBe(0);
+  });
+
+  it("enforces subscription denial, plan changes, and grace periods before budget and model work", async () => {
+    let providerCalls = 0;
+    let budgetChecks = 0;
+    let decision: SubscriptionEntitlementDecision = { allowed: false, state: "inactive", planKey: null, accessUntil: null };
+    const provider: ModelProvider = {
+      id: "live-test", isAiEnabled: true,
+      generateStructured: async <T>(request: StructuredGenerationRequest) => {
+        providerCalls += 1;
+        return new DeterministicModelProvider().generateStructured<T>(request);
+      },
+    };
+    const baseUrl = await startApi(provider, {
+      allowedSyncOrigins: ["https://learn.example"],
+      resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
+      subscriptionEntitlements: { checkEntitlement: async () => decision },
+      modelUsageLedger: {
+        checkBudget: async () => {
+          budgetChecks += 1;
+          return { allowed: true, exceeded: null, resetAt: Date.now() + 60_000, remainingTokens: 1_000, remainingCostMicros: 1_000 };
+        },
+        record: async () => undefined,
+      },
+    });
+    const request = () => fetch(`${baseUrl}/api/plans`, {
+      method: "POST", headers: { Origin: "https://learn.example", "Content-Type": "application/json" }, body: JSON.stringify(goal),
+    });
+
+    const denied = await request();
+    expect(denied.status).toBe(402);
+    await expect(denied.json()).resolves.toEqual({ error: "Active subscription required" });
+    expect(budgetChecks).toBe(0);
+    expect(providerCalls).toBe(0);
+
+    decision = { allowed: true, state: "active", planKey: "starter", accessUntil: Date.now() + 86_400_000 };
+    const starter = await request();
+    expect(starter.status).toBe(201);
+    expect(starter.headers.get("subscription-plan")).toBe("starter");
+
+    decision = { allowed: true, state: "active", planKey: "pro", accessUntil: Date.now() + 86_400_000 };
+    const switched = await request();
+    expect(switched.status).toBe(201);
+    expect(switched.headers.get("subscription-plan")).toBe("pro");
+
+    decision = { allowed: true, state: "grace", planKey: "pro", accessUntil: Date.now() + 3_600_000 };
+    const grace = await request();
+    expect(grace.status).toBe(201);
+    expect(grace.headers.get("subscription-state")).toBe("grace");
+    expect(budgetChecks).toBe(3);
+    expect(providerCalls).toBe(3);
   });
 
   it("creates a teaching session with active understanding checks", async () => {

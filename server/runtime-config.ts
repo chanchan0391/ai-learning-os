@@ -4,6 +4,7 @@ import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolv
 import { PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { StandardOidcClient, type OidcConfig } from "./auth/oidc-client";
 import { PostgresModelUsageLedger, type ModelUsagePolicy } from "./ai/model-usage";
+import { PostgresSubscriptionEntitlementResolver } from "./billing/subscription-entitlement";
 import { JsonLineRequestLogSink } from "./observability/request-observability";
 import { PostgresFixedWindowRateLimiter } from "./security/postgres-rate-limiter";
 import { JsonLineSecurityAuditSink, RollingRequestCapacityMonitor } from "./security/request-security";
@@ -20,6 +21,7 @@ export interface SyncRuntimeConfig {
   sessionCookieName?: string;
   oidc?: OidcConfig;
   modelUsagePolicy?: ModelUsagePolicy;
+  requireSubscriptionEntitlement?: boolean;
 }
 
 function parsePositiveInteger(value: string, name: string): number {
@@ -58,8 +60,13 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     env.AI_OUTPUT_COST_PER_MILLION_USD,
   ];
   const globalBudgetValue = env.AI_GLOBAL_MONTHLY_COST_LIMIT_USD;
+  const entitlementValue = env.AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED?.trim();
+  if (entitlementValue && entitlementValue !== "true" && entitlementValue !== "false") {
+    throw new Error("AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED must be true or false");
+  }
+  const requireSubscriptionEntitlement = entitlementValue === "true";
   if (!connectionString) {
-    if (configuredOrigins || globalBudgetValue?.trim() || budgetValues.some((value) => value?.trim())) {
+    if (configuredOrigins || globalBudgetValue?.trim() || requireSubscriptionEntitlement || budgetValues.some((value) => value?.trim())) {
       throw new Error("DATABASE_URL is required when sync or AI account budgets are configured");
     }
     return null;
@@ -111,12 +118,16 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
   } else if (globalBudgetValue?.trim()) {
     throw new Error("AI_GLOBAL_MONTHLY_COST_LIMIT_USD requires the complete AI account budget configuration");
   }
+  if (requireSubscriptionEntitlement && !modelUsagePolicy) {
+    throw new Error("AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED requires the complete AI account budget configuration");
+  }
   return {
     connectionString,
     allowedOrigins,
     ...(sessionCookieName ? { sessionCookieName } : {}),
     ...(oidc ? { oidc } : {}),
     ...(modelUsagePolicy ? { modelUsagePolicy } : {}),
+    ...(requireSubscriptionEntitlement ? { requireSubscriptionEntitlement: true } : {}),
   };
 }
 
@@ -147,6 +158,9 @@ export function createSyncRuntime(
       requestLogSink: new JsonLineRequestLogSink(),
       capacityMonitor: new RollingRequestCapacityMonitor(),
       modelUsageLedger: config.modelUsagePolicy ? new PostgresModelUsageLedger(pool, config.modelUsagePolicy) : undefined,
+      subscriptionEntitlements: config.requireSubscriptionEntitlement
+        ? new PostgresSubscriptionEntitlementResolver(pool)
+        : undefined,
       readinessCheck: async () => {
         let timeout: NodeJS.Timeout | undefined;
         try {
