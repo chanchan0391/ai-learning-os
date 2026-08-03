@@ -23,6 +23,7 @@ import {
   generateStageNote,
   getCurrentRecord,
   initializeLearningState,
+  isLearningPlanComplete,
   learningStateExportFilename,
   learningProgressMarkdownFilename,
   learningStreak,
@@ -38,6 +39,7 @@ import {
   scheduledReviewItems,
   stageMasteryReport,
   stageMasteryTaskId,
+  startStageMasteryFollowUp,
   serializeLearningStateExport,
   serializeCrossGoalWeeklyReviewMarkdown,
   serializeLearningProgressMarkdown,
@@ -679,6 +681,64 @@ describe("multi-day learning state", () => {
     const invalidSource = structuredClone(state);
     invalidSource.days[7].artifacts[taskId].stageMasteryRemediation!.stageId = "missing-stage";
     expect(parseLearningState(JSON.stringify(invalidSource)).status).not.toBe("valid");
+  });
+
+  it("opens a validated follow-up day when the final stage still needs evidence", () => {
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let day = 1; day <= 7; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 3) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, "只验证了成功路径", {
+          rubric: [
+            { dimension: "understanding", score: 3, evidence: "解释边界", feedback: "继续" },
+            { dimension: "application", score: 2, evidence: "只有成功路径", feedback: "补失败路径" },
+            { dimension: "evidence", score: 2, evidence: "缺少日志", feedback: "保留结果" },
+            { dimension: "reflection", score: 2, evidence: "复盘较短", feedback: "补充取舍" },
+          ],
+          totalScore: 9, masteryLevel: "developing", misconceptions: [], nextAction: "验证最终阶段的失败恢复路径",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    }
+
+    expect(isLearningPlanComplete(state)).toBe(true);
+    state = startStageMasteryFollowUp(state, "stage-1", new Date("2026-08-10T10:00:00.000Z"));
+    expect(state.currentDay).toBe(8);
+    expect(isLearningPlanComplete(state)).toBe(false);
+    expect(getCurrentRecord(state).date).toBe("2026-08-10");
+    expect(getCurrentRecord(state).tasks).toContainEqual(expect.objectContaining({
+      id: "day-8-stage-mastery-stage-1",
+      title: "阶段补强实践：建立基础",
+      description: expect.stringContaining("验证最终阶段的失败恢复路径"),
+    }));
+    expect(parseLearningState(JSON.stringify(state))).toMatchObject({ status: "valid", state: { currentDay: 8 } });
+
+    state = saveEvaluation(state, "day-8-stage-mastery-stage-1", "补充了失败路径但证据仍不完整", {
+      rubric: [
+        { dimension: "understanding", score: 3, evidence: "解释失败边界", feedback: "继续" },
+        { dimension: "application", score: 3, evidence: "覆盖失败路径", feedback: "继续" },
+        { dimension: "evidence", score: 2, evidence: "日志不完整", feedback: "补充日志" },
+        { dimension: "reflection", score: 2, evidence: "取舍不完整", feedback: "补充取舍" },
+      ],
+      totalScore: 10, masteryLevel: "developing", misconceptions: [], nextAction: "补全失败日志和取舍",
+    });
+    for (const task of getCurrentRecord(state).tasks.filter((task) => !task.completed)) state = toggleCurrentTask(state, task.id);
+    state = completeCurrentDay(state, { difficulty: "just-right", reflection: "补强完成" });
+    expect(isLearningPlanComplete(state)).toBe(true);
+    expect(parseLearningState(JSON.stringify(state))).toMatchObject({ status: "valid", state: { currentDay: 8 } });
+
+    state = startStageMasteryFollowUp(state, "stage-1", new Date("2026-08-11T10:00:00.000Z"));
+    expect(state.days[8].artifacts["day-9-stage-mastery-stage-1"].stageMasteryRemediation).toMatchObject({
+      sourceDay: 8,
+      sourceTaskId: "day-8-stage-mastery-stage-1",
+      sourceNextAction: "补全失败日志和取舍",
+    });
+    expect(parseLearningState(JSON.stringify(state))).toMatchObject({ status: "valid", state: { currentDay: 9 } });
+
+    const invalid = structuredClone(state);
+    delete invalid.days[8].artifacts["day-9-stage-mastery-stage-1"].stageMasteryRemediation;
+    expect(parseLearningState(JSON.stringify(invalid)).status).toBe("recovered");
   });
 
   it("uses persisted evaluation feedback to focus the next day", () => {

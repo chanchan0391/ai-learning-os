@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { completeCurrentDay, getCurrentRecord, initializeLearningState, toggleCurrentTask } from "./learning-state";
+import { completeCurrentDay, getCurrentRecord, initializeLearningState, startStageMasteryFollowUp, toggleCurrentTask } from "./learning-state";
 import {
   BrowserLearningStateRepository,
   ACTIVE_LEARNING_STATES_KEY,
@@ -155,6 +155,24 @@ describe("browser learning-state repository", () => {
     expect(repository.restoreArchived(state.plan.id)).toEqual(state);
     expect(repository.load().state).toEqual(state);
     expect(repository.loadArchived()).toEqual([]);
+  });
+
+  it("archives completed final-stage follow-up evidence with the goal", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let index = 0; index < 7; index += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    }
+    state = startStageMasteryFollowUp(state, "stage-1");
+    for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+    state = completeCurrentDay(state, { difficulty: "just-right", reflection: "补充了最终证据" });
+    repository.save(state);
+
+    const archived = repository.archiveCompleted(state, new Date("2026-08-10T10:00:00.000Z"));
+
+    expect(archived[0].state.days).toHaveLength(8);
+    expect(archived[0].state.days[7].artifacts["day-8-stage-mastery-stage-1"].stageMasteryRemediation).toMatchObject({ stageId: "stage-1" });
   });
 
   it("refuses to archive an unfinished goal", () => {

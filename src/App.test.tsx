@@ -548,6 +548,40 @@ describe("learning data controls", () => {
     expect(saved.days.at(-1).artifacts["day-8-stage-mastery-stage-1"].stageMasteryRemediation).toMatchObject({ stageId: "stage-1", sourceDay: 3 });
   });
 
+  it("starts a follow-up learning day for weak final-stage evidence", async () => {
+    const user = userEvent.setup();
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let day = 1; day <= 7; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 3) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, "只验证了成功路径", {
+          rubric: [
+            { dimension: "understanding", score: 3, evidence: "解释边界", feedback: "继续" },
+            { dimension: "application", score: 2, evidence: "只有成功路径", feedback: "补失败路径" },
+            { dimension: "evidence", score: 2, evidence: "缺少日志", feedback: "保留结果" },
+            { dimension: "reflection", score: 2, evidence: "复盘较短", feedback: "补充取舍" },
+          ],
+          totalScore: 9, masteryLevel: "developing", misconceptions: [], nextAction: "验证最终阶段的失败恢复路径",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    render(<App />);
+
+    expect(screen.getByRole("button", { name: "归档已完成目标" })).toBeTruthy();
+    const section = screen.getByRole("region", { name: "阶段结束回顾" });
+    await user.click(within(section).getByRole("button", { name: "开始补强学习日" }));
+
+    expect(screen.getAllByText("DAY 8", { exact: false }).length).toBeGreaterThan(0);
+    expect(screen.getByText("阶段补强实践：建立基础")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "归档已完成目标" })).toBeNull();
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    expect(saved.currentDay).toBe(8);
+    expect(saved.days[7].artifacts["day-8-stage-mastery-stage-1"].stageMasteryRemediation).toMatchObject({ stageId: "stage-1", sourceDay: 3 });
+  });
+
   it("keeps data on cancellation and removes every local version after confirmation", async () => {
     const user = userEvent.setup();
     localStorage.setItem("ai-learning-os-state-v2", "legacy-state");

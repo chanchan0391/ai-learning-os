@@ -1,4 +1,4 @@
-import { parseLearningState, type ParsedLearningState } from "./learning-state";
+import { isLearningPlanComplete, parseLearningState, type ParsedLearningState } from "./learning-state";
 import type { LearningState } from "./types";
 
 export const CURRENT_LEARNING_STATE_KEY = "ai-learning-os-state-v3";
@@ -188,9 +188,7 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
   }
 
   archiveCompleted(state: LearningState, now = new Date()): ArchivedLearningState[] {
-    const plannedDays = state.plan.goal.durationWeeks * 7;
-    const completedDays = state.days.filter((day) => day.status === "completed").length;
-    if (completedDays !== plannedDays || state.days.length !== plannedDays) {
+    if (!isLearningPlanComplete(state)) {
       throw new Error("只有完成全部计划学习日后才能归档目标");
     }
     const archived = [

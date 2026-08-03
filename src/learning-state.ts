@@ -335,9 +335,10 @@ function isLearningState(value: unknown): value is LearningState {
   if (!Array.isArray(value.days) || !isLearningPlan(value.plan)) return false;
   const days = value.days;
   const plan = value.plan;
+  const plannedDays = plan.goal.durationWeeks * 7;
   return value.version === LEARNING_STATE_VERSION
     && Number.isInteger(value.currentDay)
-    && Number(value.currentDay) <= plan.goal.durationWeeks * 7
+    && Number(value.currentDay) > 0
     && value.days.length > 0
     && days.every(isDailyRecord)
     && days.every((day) => isRecord(day) && Array.isArray(day.tasks)
@@ -345,13 +346,17 @@ function isLearningState(value: unknown): value is LearningState {
     && days.every((day) => isRecord(day) && isRecord(day.artifacts)
       && Object.values(day.artifacts).every((artifact) => !isLearningTaskArtifact(artifact) || artifact.stageMasteryRemediation === undefined
         || (plan.stages.some((stage) => stage.id === artifact.stageMasteryRemediation?.stageId)
-          && artifact.stageMasteryRemediation.sourceDay <= plan.goal.durationWeeks * 7
+          && artifact.stageMasteryRemediation.sourceDay < Number(day.day)
           && (artifact.stageMasteryRemediation.sourceTaskId === undefined
             || days.some((sourceDay) => isRecord(sourceDay)
               && sourceDay.day === artifact.stageMasteryRemediation?.sourceDay
               && Array.isArray(sourceDay.tasks)
               && sourceDay.tasks.some((task) => isRecord(task) && task.id === artifact.stageMasteryRemediation?.sourceTaskId))))))
     && days.every((day, index) => isRecord(day) && day.day === index + 1)
+    && days.filter((day) => isRecord(day) && Number(day.day) > plannedDays)
+      .every((day) => isRecord(day) && isRecord(day.artifacts)
+        && Object.values(day.artifacts).some((artifact) => isLearningTaskArtifact(artifact)
+          && artifact.stageMasteryRemediation !== undefined))
     && isRecord(days.at(-1))
     && days.at(-1)?.day === value.currentDay
     && days.slice(0, -1).every((day) => isRecord(day) && day.status === "completed");
@@ -1391,6 +1396,32 @@ export function addStageMasteryTask(state: LearningState, stageId: string): Lear
   });
 }
 
+/** Opens a focused post-plan day when the final stage still needs evaluated evidence. */
+export function startStageMasteryFollowUp(state: LearningState, stageId: string, now = new Date()): LearningState {
+  const current = getCurrentRecord(state);
+  if (current.status === "active") return addStageMasteryTask(state, stageId);
+  const plannedDays = state.plan.goal.durationWeeks * 7;
+  if (state.currentDay < plannedDays || !state.days.some((day) => day.day === plannedDays && day.status === "completed")) {
+    throw new Error("请先完成全部计划学习日");
+  }
+  if (stageMasteryReport(state, stageId).status === "ready") {
+    throw new Error("这个阶段已经达到进入下一阶段的证据标准");
+  }
+  const nextDay = state.currentDay + 1;
+  const feedback = current.feedback ?? { difficulty: "just-right" as const, reflection: "" };
+  return addStageMasteryTask({
+    ...state,
+    currentDay: nextDay,
+    days: [...state.days, {
+      day: nextDay,
+      date: dateKey(now),
+      tasks: buildNextDayTasks(state, feedback),
+      status: "active",
+      artifacts: {},
+    }],
+  }, stageId);
+}
+
 export function generateStageRetrospective(state: LearningState, stageId: string, now = new Date()): LearningState {
   const { stage, records } = requireCompletedStage(state, stageId);
   if ((state.plan.retrospectives ?? []).some((item) => item.stageId === stageId)) throw new Error("这个阶段已经有阶段回顾");
@@ -1778,6 +1809,14 @@ export function completeCurrentDay(state: LearningState, feedback: DailyFeedback
 
 export function completedDayCount(state: LearningState): number {
   return state.days.filter((day) => day.status === "completed").length;
+}
+
+/** A goal is archivable after its planned days and any optional follow-up day are complete. */
+export function isLearningPlanComplete(state: LearningState): boolean {
+  const plannedDays = state.plan.goal.durationWeeks * 7;
+  return getCurrentRecord(state).status === "completed"
+    && state.days.filter((day) => day.day <= plannedDays).length === plannedDays
+    && state.days.filter((day) => day.day <= plannedDays).every((day) => day.status === "completed");
 }
 
 export function learningStreak(state: LearningState): number {
