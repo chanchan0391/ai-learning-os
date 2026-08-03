@@ -30,6 +30,14 @@ Name documents descriptively with kebab-case where practical, such as `docs/lear
 
 For documentation-only changes, verify heading hierarchy, link targets, code-fence balance, and terminology consistency. For future code, place tests beside the relevant module or in `tests/`, name them after the behavior they cover (for example, `planner-generates-daily-tasks.test.ts`), and ensure the full test suite passes before review.
 
+## Delivery, Escalation, and Production Readiness
+
+Treat this project as a production-bound commercial product, not a disposable prototype. For implementation and architecture decisions, consider authentication and authorization, tenant isolation, privacy, observability, backup and recovery, backward-compatible migrations, rollback, capacity, cost, accessibility, and operational ownership. Record material tradeoffs or deferred production risks in `docs/`.
+
+Updates merged or pushed to `main` are expected to reach the dev environment through the repository's automatic deployment path. Do not claim deployment from a successful build alone: verify the deployed commit, service state, and `/api/health`. Routine successful deployments do not require a user notification.
+
+If work is blocked, requires credentials or external access, presents a material product/security/cost tradeoff, or needs an owner decision, notify the project owner through the connected Gmail account with `to: "me"`. Include the blocked outcome, evidence already gathered, impact, the smallest decision or action needed, and a safe default recommendation. Do not email routine progress or successful deployment status. Also report the blocker in the active Codex task; email supplements rather than replaces the task record.
+
 ## Commits & Pull Requests
 
 Git history is not available in this workspace, so no existing commit convention can be inferred. Use concise imperative commits such as `docs: clarify evaluator agent scope` or `feat: add learning-plan generator`.
