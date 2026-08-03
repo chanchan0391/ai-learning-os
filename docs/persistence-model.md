@@ -49,6 +49,7 @@ React 页面通过 `LearningStateRepository` 读写学习状态，默认实现�
 | `sync_devices` | `id`, `user_id`, `label`, `last_seen_at`, `revoked_at` | 可撤销设备身份，不保存浏览器指纹 |
 | `auth_sessions` | `token_hash`, `user_id`, `device_id`, `expires_at`, `revoked_at` | 只保存不透明会话令牌哈希；绑定可撤销设备并强制过期 |
 | `sync_operations` | `id`, `user_id`, `device_id`, `operation_id`, `entity_type`, `entity_id`, `base_revision`, `created_at` | `(user_id, operation_id)` 唯一，保证重试幂等 |
+| `model_usage_events` | `user_id`, `action`, `provider`, `model`, `input_tokens`, `output_tokens`, `cost_micros`, `occurred_at` | 只保存成功调用的计量元数据；按账号和 UTC 月汇总配额，删除账号时级联清除 |
 
 所有业务表都包含 `user_id` 或通过不可绕过的外键链归属用户。数据库访问必须在事务内绑定已认证用户，任何客户端提交的 `user_id` 都不可信。
 

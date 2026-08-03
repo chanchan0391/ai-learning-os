@@ -22,6 +22,29 @@ describe("OpenAI Responses provider", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("normalizes Responses and compatible token usage for account metering", async () => {
+    const responsesProvider = new OpenAIResponsesProvider({
+      apiKey: "secret", model: "responses-model",
+      fetchImplementation: (async () => new Response(JSON.stringify({
+        output_text: "{\"ok\":true}", usage: { input_tokens: 120, output_tokens: 30, total_tokens: 150 },
+      }))) as typeof fetch,
+    });
+    await expect(responsesProvider.generateStructured(request)).resolves.toMatchObject({
+      usage: { inputTokens: 120, outputTokens: 30, totalTokens: 150 },
+    });
+
+    const compatibleProvider = new OpenAIResponsesProvider({
+      apiKey: "secret", model: "compatible-model", apiMode: "chat-completions",
+      fetchImplementation: (async () => new Response(JSON.stringify({
+        choices: [{ message: { content: "{\"ok\":true}" } }],
+        usage: { prompt_tokens: 80, completion_tokens: 20, total_tokens: 100 },
+      }))) as typeof fetch,
+    });
+    await expect(compatibleProvider.generateStructured(request)).resolves.toMatchObject({
+      usage: { inputTokens: 80, outputTokens: 20, totalTokens: 100 },
+    });
+  });
+
   it("converts provider failures to safe typed errors", async () => {
     const provider = new OpenAIResponsesProvider({
       apiKey: "secret", model: "test-model",

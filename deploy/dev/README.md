@@ -19,6 +19,11 @@ OIDC_ISSUER=http://127.0.0.1:5556/dex
 OIDC_CLIENT_ID=ai-learning-os
 OIDC_REDIRECT_URI=http://127.0.0.1:5173/api/auth/callback
 OIDC_TRANSACTION_SECRET=<at-least-32-random-characters>
+# 可选：四项同时配置后启用认证账号的月度模型预算
+AI_MONTHLY_TOKEN_LIMIT=250000
+AI_MONTHLY_COST_LIMIT_USD=12.50
+AI_INPUT_COST_PER_MILLION_USD=<current-model-input-price>
+AI_OUTPUT_COST_PER_MILLION_USD=<current-model-output-price>
 ```
 
 完整容器部署启动后，通过上述隧道打开 `http://127.0.0.1:8088` 即可查看远端 Web、API、OIDC、PostgreSQL 和实时模型组成的完整效果。

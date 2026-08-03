@@ -3,6 +3,7 @@ import type { AppOptions } from "./app";
 import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolver";
 import { PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { StandardOidcClient, type OidcConfig } from "./auth/oidc-client";
+import { PostgresModelUsageLedger, type ModelUsagePolicy } from "./ai/model-usage";
 import { PostgresFixedWindowRateLimiter } from "./security/postgres-rate-limiter";
 import { JsonLineSecurityAuditSink, RollingRequestCapacityMonitor } from "./security/request-security";
 import { PostgresSyncStore } from "./sync/postgres-sync-store";
@@ -17,6 +18,21 @@ export interface SyncRuntimeConfig {
   allowedOrigins: string[];
   sessionCookieName?: string;
   oidc?: OidcConfig;
+  modelUsagePolicy?: ModelUsagePolicy;
+}
+
+function parsePositiveInteger(value: string, name: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer`);
+  return parsed;
+}
+
+function parseUsdMicros(value: string, name: string): number {
+  if (!/^\d+(?:\.\d{1,6})?$/.test(value)) throw new Error(`${name} must be a positive USD amount with at most 6 decimals`);
+  const [whole, fraction = ""] = value.split(".");
+  const micros = Number(whole) * 1_000_000 + Number(fraction.padEnd(6, "0"));
+  if (!Number.isSafeInteger(micros) || micros <= 0) throw new Error(`${name} must be a positive safe USD amount`);
+  return micros;
 }
 
 function parseOrigins(value: string): string[] {
@@ -34,8 +50,16 @@ function parseOrigins(value: string): string[] {
 export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig | null {
   const connectionString = env.DATABASE_URL?.trim();
   const configuredOrigins = env.SYNC_ALLOWED_ORIGINS?.trim();
+  const budgetValues = [
+    env.AI_MONTHLY_TOKEN_LIMIT,
+    env.AI_MONTHLY_COST_LIMIT_USD,
+    env.AI_INPUT_COST_PER_MILLION_USD,
+    env.AI_OUTPUT_COST_PER_MILLION_USD,
+  ];
   if (!connectionString) {
-    if (configuredOrigins) throw new Error("DATABASE_URL is required when SYNC_ALLOWED_ORIGINS is configured");
+    if (configuredOrigins || budgetValues.some((value) => value?.trim())) {
+      throw new Error("DATABASE_URL is required when sync or AI account budgets are configured");
+    }
     return null;
   }
   const sessionCookieName = env.SESSION_COOKIE_NAME?.trim();
@@ -67,11 +91,25 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     if (transactionSecret.length < 32) throw new Error("OIDC_TRANSACTION_SECRET must be at least 32 characters");
     oidc = { issuer, clientId: env.OIDC_CLIENT_ID!.trim(), redirectUri, transactionSecret };
   }
+  const hasModelBudget = budgetValues.some((value) => Boolean(value?.trim()));
+  let modelUsagePolicy: ModelUsagePolicy | undefined;
+  if (hasModelBudget) {
+    if (budgetValues.some((value) => !value?.trim())) {
+      throw new Error("AI_MONTHLY_TOKEN_LIMIT, AI_MONTHLY_COST_LIMIT_USD, AI_INPUT_COST_PER_MILLION_USD, and AI_OUTPUT_COST_PER_MILLION_USD must be configured together");
+    }
+    modelUsagePolicy = {
+      monthlyTokenLimit: parsePositiveInteger(env.AI_MONTHLY_TOKEN_LIMIT!.trim(), "AI_MONTHLY_TOKEN_LIMIT"),
+      monthlyCostLimitMicros: parseUsdMicros(env.AI_MONTHLY_COST_LIMIT_USD!.trim(), "AI_MONTHLY_COST_LIMIT_USD"),
+      inputCostMicrosPerMillionTokens: parseUsdMicros(env.AI_INPUT_COST_PER_MILLION_USD!.trim(), "AI_INPUT_COST_PER_MILLION_USD"),
+      outputCostMicrosPerMillionTokens: parseUsdMicros(env.AI_OUTPUT_COST_PER_MILLION_USD!.trim(), "AI_OUTPUT_COST_PER_MILLION_USD"),
+    };
+  }
   return {
     connectionString,
     allowedOrigins,
     ...(sessionCookieName ? { sessionCookieName } : {}),
     ...(oidc ? { oidc } : {}),
+    ...(modelUsagePolicy ? { modelUsagePolicy } : {}),
   };
 }
 
@@ -97,6 +135,7 @@ export function createSyncRuntime(
       rateLimiter: new PostgresFixedWindowRateLimiter(pool),
       auditSink: new JsonLineSecurityAuditSink(),
       capacityMonitor: new RollingRequestCapacityMonitor(),
+      modelUsageLedger: config.modelUsagePolicy ? new PostgresModelUsageLedger(pool, config.modelUsagePolicy) : undefined,
     },
     close: () => pool.end(),
   };

@@ -49,6 +49,35 @@ describe("sync runtime configuration", () => {
     });
   });
 
+  it("loads explicit monthly token and USD account budgets", () => {
+    expect(readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AI_MONTHLY_TOKEN_LIMIT: "250000",
+      AI_MONTHLY_COST_LIMIT_USD: "12.50",
+      AI_INPUT_COST_PER_MILLION_USD: "2",
+      AI_OUTPUT_COST_PER_MILLION_USD: "8.000001",
+    })?.modelUsagePolicy).toEqual({
+      monthlyTokenLimit: 250_000,
+      monthlyCostLimitMicros: 12_500_000,
+      inputCostMicrosPerMillionTokens: 2_000_000,
+      outputCostMicrosPerMillionTokens: 8_000_001,
+    });
+  });
+
+  it("rejects partial or invalid account budget configuration", () => {
+    expect(() => readSyncRuntimeConfig({ AI_MONTHLY_TOKEN_LIMIT: "100" })).toThrow(/DATABASE_URL/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AI_MONTHLY_TOKEN_LIMIT: "100",
+    })).toThrow(/configured together/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AI_MONTHLY_TOKEN_LIMIT: "100", AI_MONTHLY_COST_LIMIT_USD: "1.0000001",
+      AI_INPUT_COST_PER_MILLION_USD: "2", AI_OUTPUT_COST_PER_MILLION_USD: "8",
+    })).toThrow(/at most 6 decimals/);
+  });
+
   it("allows an HTTP issuer only for local development", () => {
     expect(readSyncRuntimeConfig({
       DATABASE_URL: "postgres://localhost/learning",

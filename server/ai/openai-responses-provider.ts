@@ -16,7 +16,22 @@ interface OpenAIResponseBody {
   output_text?: string;
   output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
   choices?: Array<{ message?: { content?: string } }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  };
   error?: { message?: string };
+}
+
+function extractUsage(body: OpenAIResponseBody) {
+  const inputTokens = body.usage?.input_tokens ?? body.usage?.prompt_tokens;
+  const outputTokens = body.usage?.output_tokens ?? body.usage?.completion_tokens;
+  const totalTokens = body.usage?.total_tokens ?? ((inputTokens ?? 0) + (outputTokens ?? 0));
+  if (![inputTokens, outputTokens, totalTokens].every((value) => Number.isSafeInteger(value) && value! >= 0)) return undefined;
+  return { inputTokens: inputTokens!, outputTokens: outputTokens!, totalTokens };
 }
 
 function extractOutputText(body: OpenAIResponseBody): string | undefined {
@@ -145,7 +160,13 @@ export class OpenAIResponsesProvider implements ModelProvider {
         const outputText = extractOutputText(responseBody);
         if (!outputText) throw new ModelProviderError("OpenAI response did not contain structured output", 502, requestId);
         try {
-          return { value: JSON.parse(outputText) as T, model: this.config.model, requestId };
+          const usage = extractUsage(responseBody);
+          return {
+            value: JSON.parse(outputText) as T,
+            model: this.config.model,
+            requestId,
+            ...(usage ? { usage } : {}),
+          };
         } catch {
           throw new ModelProviderError("OpenAI response contained invalid JSON", 502, requestId);
         }

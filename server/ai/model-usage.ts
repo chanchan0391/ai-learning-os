@@ -1,0 +1,126 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { Pool } from "pg";
+import type { ModelProvider, StructuredGenerationRequest, StructuredGenerationResult } from "./model-provider";
+
+export interface ModelBudgetDecision {
+  allowed: boolean;
+  resetAt: number;
+  remainingTokens: number;
+  remainingCostMicros: number;
+}
+
+export interface ModelUsageLedger {
+  checkBudget(userId: string): Promise<ModelBudgetDecision>;
+  record(entry: {
+    userId: string;
+    action: string;
+    provider: string;
+    model: string;
+    requestId?: string;
+    inputTokens: number;
+    outputTokens: number;
+  }): Promise<void>;
+}
+
+export interface ModelUsagePolicy {
+  monthlyTokenLimit: number;
+  monthlyCostLimitMicros: number;
+  inputCostMicrosPerMillionTokens: number;
+  outputCostMicrosPerMillionTokens: number;
+}
+
+interface UsageContext {
+  userId: string;
+  action: string;
+}
+
+function utcMonthRange(now: number): { start: Date; end: Date } {
+  const date = new Date(now);
+  return {
+    start: new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)),
+    end: new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)),
+  };
+}
+
+function assertPositiveSafeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive safe integer`);
+}
+
+export class PostgresModelUsageLedger implements ModelUsageLedger {
+  constructor(
+    private readonly pool: Pool,
+    private readonly policy: ModelUsagePolicy,
+    private readonly now: () => number = Date.now,
+  ) {
+    assertPositiveSafeInteger(policy.monthlyTokenLimit, "monthlyTokenLimit");
+    assertPositiveSafeInteger(policy.monthlyCostLimitMicros, "monthlyCostLimitMicros");
+    assertPositiveSafeInteger(policy.inputCostMicrosPerMillionTokens, "inputCostMicrosPerMillionTokens");
+    assertPositiveSafeInteger(policy.outputCostMicrosPerMillionTokens, "outputCostMicrosPerMillionTokens");
+  }
+
+  async checkBudget(userId: string): Promise<ModelBudgetDecision> {
+    const { start, end } = utcMonthRange(this.now());
+    const result = await this.pool.query<{ total_tokens: string; total_cost_micros: string }>(
+      `SELECT COALESCE(SUM(input_tokens + output_tokens), 0)::text AS total_tokens,
+              COALESCE(SUM(cost_micros), 0)::text AS total_cost_micros
+         FROM model_usage_events
+        WHERE user_id = $1 AND occurred_at >= $2 AND occurred_at < $3`,
+      [userId, start, end],
+    );
+    const totalTokens = Number(result.rows[0].total_tokens);
+    const totalCostMicros = Number(result.rows[0].total_cost_micros);
+    const remainingTokens = Math.max(0, this.policy.monthlyTokenLimit - totalTokens);
+    const remainingCostMicros = Math.max(0, this.policy.monthlyCostLimitMicros - totalCostMicros);
+    return {
+      allowed: remainingTokens > 0 && remainingCostMicros > 0,
+      resetAt: end.getTime(),
+      remainingTokens,
+      remainingCostMicros,
+    };
+  }
+
+  async record(entry: Parameters<ModelUsageLedger["record"]>[0]): Promise<void> {
+    const costMicros = Math.ceil((
+      entry.inputTokens * this.policy.inputCostMicrosPerMillionTokens
+      + entry.outputTokens * this.policy.outputCostMicrosPerMillionTokens
+    ) / 1_000_000);
+    await this.pool.query(
+      `INSERT INTO model_usage_events
+        (user_id, action, provider, model, provider_request_id, input_tokens, output_tokens, cost_micros, occurred_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [entry.userId, entry.action, entry.provider, entry.model, entry.requestId ?? null,
+        entry.inputTokens, entry.outputTokens, costMicros, new Date(this.now())],
+    );
+  }
+}
+
+export class MeteredModelProvider implements ModelProvider {
+  readonly id: string;
+  readonly isAiEnabled: boolean;
+  private readonly context = new AsyncLocalStorage<UsageContext>();
+
+  constructor(private readonly provider: ModelProvider, private readonly ledger: ModelUsageLedger) {
+    this.id = provider.id;
+    this.isAiEnabled = provider.isAiEnabled;
+  }
+
+  run<T>(context: UsageContext, callback: () => Promise<T>): Promise<T> {
+    return this.context.run(context, callback);
+  }
+
+  async generateStructured<T>(request: StructuredGenerationRequest): Promise<StructuredGenerationResult<T>> {
+    const result = await this.provider.generateStructured<T>(request);
+    const context = this.context.getStore();
+    if (context && result.usage) {
+      await this.ledger.record({
+        ...context,
+        provider: this.provider.id,
+        model: result.model,
+        requestId: result.requestId,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+      });
+    }
+    return result;
+  }
+}

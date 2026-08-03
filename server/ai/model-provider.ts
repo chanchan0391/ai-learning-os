@@ -14,6 +14,13 @@ export interface StructuredGenerationResult<T> {
   value: T;
   model: string;
   requestId?: string;
+  usage?: ModelTokenUsage;
+}
+
+export interface ModelTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
 }
 
 export interface ModelProvider {

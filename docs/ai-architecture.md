@@ -69,6 +69,7 @@ ModelProvider
 - 解析后的结构化数据
 - 实际模型名称
 - 可选的厂商请求 ID，便于排查问题
+- 可选的标准化输入、输出和总 token 用量，用于账号成本记账
 
 OpenAI 实现采用 Responses API，并使用 Structured Outputs 约束返回格式。OpenAI 当前建议将 Responses API 用于推理、工具调用和多轮工作流；模型通过环境变量显式选择，不在代码中绑定某个型号。参考：[Responses API](https://developers.openai.com/api/reference/resources/responses)、[模型指南](https://developers.openai.com/api/docs/guides/latest-model)。
 
@@ -82,7 +83,9 @@ OpenAI Provider 对每次尝试设置 30 秒超时，并对网络错误、408、
 
 所有会触发模型工作的 Agent HTTP 入口都在读取请求正文和调用 Provider 前进入限流。当前每客户端每 60 秒最多创建 10 个计划、30 个教学会话、30 个成果评估、30 个复习评估和 20 个恢复计划；启用 PostgreSQL 后配额由所有实例原子共享。拒绝事件只记录动作、路径、状态和限流原因，不记录学习目标、回答、成果正文或模型凭据。
 
-`/api/health` 的 60 秒滚动容量快照按 `ai-plan`、`ai-teaching`、`ai-evaluation`、`ai-review` 和 `ai-recovery` 分组，供 dev 验收和后续集中告警使用。这组分钟级配额是滥用与突发成本的第一层保护，不等同于商业配额或硬预算；生产环境仍需按认证账号和订阅状态实施长期用量账本、并发限制与每日金额熔断，并由可信网关施加独立的全局保护。
+`/api/health` 的 60 秒滚动容量快照按 `ai-plan`、`ai-teaching`、`ai-evaluation`、`ai-review` 和 `ai-recovery` 分组，供 dev 验收和后续集中告警使用。这组分钟级配额是滥用与突发成本的第一层保护。
+
+配置账号预算后，五类 Agent 入口要求有效应用会话，并在读取学习正文和调用 Provider 前检查当前 UTC 月已入账的 token 与估算金额。成功调用按账号、Agent 动作、Provider、模型、输入 token 和输出 token 写入 PostgreSQL；不保存 Prompt 或模型输出。达到任一上限后返回 `429` 和下月重置时间。价格由部署者按所选模型配置为每百万 token 的美元成本，因此切换模型前必须同步更新费率。当前熔断按已完成调用记账，最多可能被同一时间已经在途的有限调用超出；生产仍需接入订阅权益、厂商侧全局金额上限和集中成本告警。
 
 ## 配置与安全
 
@@ -92,6 +95,11 @@ OpenAI Provider 对每次尝试设置 30 秒超时，并对网络错误、408、
 OPENAI_API_KEY=你的密钥
 OPENAI_MODEL=你选择的模型 ID
 AI_API_PORT=8787
+# 启用账号预算时四项必须同时配置，并要求 DATABASE_URL 与登录会话
+AI_MONTHLY_TOKEN_LIMIT=250000
+AI_MONTHLY_COST_LIMIT_USD=12.50
+AI_INPUT_COST_PER_MILLION_USD=2.00
+AI_OUTPUT_COST_PER_MILLION_USD=8.00
 ```
 
 安全约束：

@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { DeterministicModelProvider } from "./ai/deterministic-provider";
-import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
+import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest } from "./ai/model-provider";
 import type { SecurityAuditEvent } from "./security/request-security";
 
 const servers: ReturnType<typeof createApp>[] = [];
@@ -37,6 +37,51 @@ describe("AI Learning OS API", () => {
     const plan = await response.json() as { today: Array<{ minutes: number }> };
     expect(response.status).toBe(201);
     expect(plan.today.reduce((sum, task) => sum + task.minutes, 0)).toBe(60);
+  });
+
+  it("requires an account and records live-model usage when account budgets are enabled", async () => {
+    let providerCalls = 0;
+    const recorded: unknown[] = [];
+    const deterministic = new DeterministicModelProvider();
+    const provider: ModelProvider = {
+      id: "live-test", isAiEnabled: true,
+      generateStructured: async <T>(request: StructuredGenerationRequest) => {
+        providerCalls += 1;
+        return { ...(await deterministic.generateStructured<T>(request)), model: "model-a", requestId: "req-1", usage: { inputTokens: 100, outputTokens: 25, totalTokens: 125 } };
+      },
+    };
+    const baseUrl = await startApi(provider, {
+      resolvePrincipal: async (request) => request.headers.cookie === "session=valid" ? { userId: "user-1", deviceId: "device-1" } : null,
+      modelUsageLedger: {
+        checkBudget: async () => ({ allowed: true, resetAt: Date.now() + 60_000, remainingTokens: 900, remainingCostMicros: 800 }),
+        record: async (entry) => { recorded.push(entry); },
+      },
+    });
+
+    const anonymous = await fetch(`${baseUrl}/api/plans`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(goal) });
+    expect(anonymous.status).toBe(401);
+    expect(providerCalls).toBe(0);
+
+    const response = await fetch(`${baseUrl}/api/plans`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: "session=valid" }, body: JSON.stringify(goal) });
+    expect(response.status).toBe(201);
+    expect(response.headers.get("modelbudget-remaining-tokens")).toBe("900");
+    expect(recorded).toEqual([{ userId: "user-1", action: "ai.plan.create", provider: "live-test", model: "model-a", requestId: "req-1", inputTokens: 100, outputTokens: 25 }]);
+  });
+
+  it("rejects exhausted account budgets before reading the body or calling the model", async () => {
+    let providerCalls = 0;
+    const provider: ModelProvider = { id: "live-test", isAiEnabled: true, generateStructured: async () => { providerCalls += 1; throw new Error("must not run"); } };
+    const baseUrl = await startApi(provider, {
+      resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
+      modelUsageLedger: {
+        checkBudget: async () => ({ allowed: false, resetAt: Date.now() + 60_000, remainingTokens: 0, remainingCostMicros: 0 }),
+        record: async () => undefined,
+      },
+    });
+    const response = await fetch(`${baseUrl}/api/plans`, { method: "POST", body: "not-json" });
+    expect(response.status).toBe(429);
+    expect(providerCalls).toBe(0);
+    await expect(response.json()).resolves.toEqual({ error: "Monthly model budget exceeded" });
   });
 
   it("creates a teaching session with active understanding checks", async () => {

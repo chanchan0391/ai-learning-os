@@ -8,6 +8,7 @@ import { createPlannerAgent } from "./agents/planner-agent";
 import { createTeacherAgent } from "./agents/teacher-agent";
 import { createReviewAgent } from "./agents/review-agent";
 import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
+import { MeteredModelProvider, type ModelUsageLedger } from "./ai/model-usage";
 import type { AuthenticatedPrincipalResolver } from "./auth/authenticated-principal";
 import type { OidcAuthenticator } from "./auth/oidc-client";
 import type { AccountDataLifecycle, SessionLifecycle } from "./auth/postgres-session-lifecycle";
@@ -50,6 +51,7 @@ export interface AppOptions {
   rateLimiter?: RequestRateLimiter;
   auditSink?: SecurityAuditSink;
   capacityMonitor?: RequestCapacityMonitor;
+  modelUsageLedger?: ModelUsageLedger;
 }
 
 interface ProtectedRoute {
@@ -157,11 +159,13 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
 }
 
 export function createApp(provider: ModelProvider, options: AppOptions = {}) {
-  const planner = createPlannerAgent(provider);
-  const teacher = createTeacherAgent(provider);
-  const evaluator = createEvaluatorAgent(provider);
-  const coach = createCoachAgent(provider);
-  const reviewer = createReviewAgent(provider);
+  const meteredProvider = options.modelUsageLedger ? new MeteredModelProvider(provider, options.modelUsageLedger) : null;
+  const agentProvider = meteredProvider ?? provider;
+  const planner = createPlannerAgent(agentProvider);
+  const teacher = createTeacherAgent(agentProvider);
+  const evaluator = createEvaluatorAgent(agentProvider);
+  const coach = createCoachAgent(agentProvider);
+  const reviewer = createReviewAgent(agentProvider);
   const rateLimiter = options.rateLimiter ?? new InMemoryFixedWindowRateLimiter();
   const capacityMonitor = options.capacityMonitor ?? new RollingRequestCapacityMonitor();
   return createServer(async (request, response) => {
@@ -174,6 +178,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
     const route = protectedRoute(request.method, url.pathname);
     let auditPrincipal: { userId: string; deviceId: string } | null = null;
     let auditReason: string | undefined;
+    let modelUsageContext: { userId: string; action: string } | null = null;
     const completeCapacity = route ? capacityMonitor.start(route.rateLimitScope) : null;
     if (completeCapacity) {
       response.once("finish", () => completeCapacity(response.statusCode, auditReason === "rate-limit-exceeded"));
@@ -217,27 +222,54 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           aiEnabled: provider.isAiEnabled,
           syncEnabled: Boolean(options.syncStore && options.resolvePrincipal),
           capacity: capacityMonitor.snapshot(),
+          accountModelBudgetsEnabled: Boolean(options.modelUsageLedger),
         });
       }
+      if (route?.rateLimitScope.startsWith("ai-") && options.modelUsageLedger) {
+        if (!options.resolvePrincipal) {
+          const error = new Error("Account model budgets require authentication");
+          error.name = "ModelBudgetConfigurationError";
+          throw error;
+        }
+        const principal = await options.resolvePrincipal(request);
+        if (!principal) {
+          auditReason = "authentication-required";
+          return sendJson(response, 401, { error: "Authentication required" });
+        }
+        auditPrincipal = principal;
+        const decision = await options.modelUsageLedger.checkBudget(principal.userId);
+        response.setHeader("ModelBudget-Remaining-Tokens", String(decision.remainingTokens));
+        response.setHeader("ModelBudget-Remaining-Cost-Micros", String(decision.remainingCostMicros));
+        response.setHeader("ModelBudget-Reset", String(Math.ceil(decision.resetAt / 1_000)));
+        if (!decision.allowed) {
+          auditReason = "model-budget-exceeded";
+          const retryAfter = Math.max(1, Math.ceil((decision.resetAt - Date.now()) / 1_000));
+          return sendJson(response, 429, { error: "Monthly model budget exceeded" }, { "Retry-After": String(retryAfter) });
+        }
+        modelUsageContext = { userId: principal.userId, action: route.action };
+      }
+      const runAgent = <T>(callback: () => Promise<T>): Promise<T> => modelUsageContext && meteredProvider
+        ? meteredProvider.run(modelUsageContext, callback)
+        : callback();
       if (request.method === "POST" && request.url === "/api/plans") {
         const goal = await readJson(request) as LearningGoal;
-        return sendJson(response, 201, await planner.createPlan(goal, new Date(), controller.signal));
+        return sendJson(response, 201, await runAgent(() => planner.createPlan(goal, new Date(), controller.signal)));
       }
       if (request.method === "POST" && request.url === "/api/teaching-sessions") {
         const teachingRequest = await readJson(request) as TeachingSessionRequest;
-        return sendJson(response, 201, await teacher.createSession(teachingRequest, controller.signal));
+        return sendJson(response, 201, await runAgent(() => teacher.createSession(teachingRequest, controller.signal)));
       }
       if (request.method === "POST" && request.url === "/api/evaluations") {
         const evaluationRequest = await readJson(request) as EvaluationRequest;
-        return sendJson(response, 201, await evaluator.evaluate(evaluationRequest, controller.signal));
+        return sendJson(response, 201, await runAgent(() => evaluator.evaluate(evaluationRequest, controller.signal)));
       }
       if (request.method === "POST" && request.url === "/api/review-assessments") {
         const assessmentRequest = await readJson(request) as ReviewAssessmentRequest;
-        return sendJson(response, 201, await reviewer.assess(assessmentRequest, controller.signal));
+        return sendJson(response, 201, await runAgent(() => reviewer.assess(assessmentRequest, controller.signal)));
       }
       if (request.method === "POST" && request.url === "/api/recovery-plans") {
         const recoveryRequest = await readJson(request) as RecoveryPlanRequest;
-        return sendJson(response, 201, await coach.createRecoveryPlan(recoveryRequest, controller.signal));
+        return sendJson(response, 201, await runAgent(() => coach.createRecoveryPlan(recoveryRequest, controller.signal)));
       }
       if (url.pathname.startsWith("/api/auth/")) {
         if (!options.resolvePrincipal || !options.sessionLifecycle) {
@@ -450,6 +482,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         return sendJson(response, status, { error: error.code, message: error.message });
       }
       if (error instanceof Error && error.name === "SyncConfigurationError") return sendJson(response, 503, { error: error.message });
+      if (error instanceof Error && error.name === "ModelBudgetConfigurationError") return sendJson(response, 503, { error: error.message });
       if (error instanceof Error && error.name === "ForbiddenOriginError") return sendJson(response, 403, { error: error.message });
       if (error instanceof Error && error.name === "PreconditionRequiredError") return sendJson(response, 428, { error: error.message });
       if (error instanceof SyntaxError || error instanceof TypeError) return sendJson(response, 400, { error: error.message });
