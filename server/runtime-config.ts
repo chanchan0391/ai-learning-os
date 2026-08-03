@@ -56,8 +56,9 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     env.AI_INPUT_COST_PER_MILLION_USD,
     env.AI_OUTPUT_COST_PER_MILLION_USD,
   ];
+  const globalBudgetValue = env.AI_GLOBAL_MONTHLY_COST_LIMIT_USD;
   if (!connectionString) {
-    if (configuredOrigins || budgetValues.some((value) => value?.trim())) {
+    if (configuredOrigins || globalBudgetValue?.trim() || budgetValues.some((value) => value?.trim())) {
       throw new Error("DATABASE_URL is required when sync or AI account budgets are configured");
     }
     return null;
@@ -102,7 +103,12 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
       monthlyCostLimitMicros: parseUsdMicros(env.AI_MONTHLY_COST_LIMIT_USD!.trim(), "AI_MONTHLY_COST_LIMIT_USD"),
       inputCostMicrosPerMillionTokens: parseUsdMicros(env.AI_INPUT_COST_PER_MILLION_USD!.trim(), "AI_INPUT_COST_PER_MILLION_USD"),
       outputCostMicrosPerMillionTokens: parseUsdMicros(env.AI_OUTPUT_COST_PER_MILLION_USD!.trim(), "AI_OUTPUT_COST_PER_MILLION_USD"),
+      ...(globalBudgetValue?.trim()
+        ? { globalMonthlyCostLimitMicros: parseUsdMicros(globalBudgetValue.trim(), "AI_GLOBAL_MONTHLY_COST_LIMIT_USD") }
+        : {}),
     };
+  } else if (globalBudgetValue?.trim()) {
+    throw new Error("AI_GLOBAL_MONTHLY_COST_LIMIT_USD requires the complete AI account budget configuration");
   }
   return {
     connectionString,

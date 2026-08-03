@@ -240,11 +240,17 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         const decision = await options.modelUsageLedger.checkBudget(principal.userId);
         response.setHeader("ModelBudget-Remaining-Tokens", String(decision.remainingTokens));
         response.setHeader("ModelBudget-Remaining-Cost-Micros", String(decision.remainingCostMicros));
+        if (decision.remainingGlobalCostMicros !== undefined) {
+          response.setHeader("ModelBudget-Remaining-Global-Cost-Micros", String(decision.remainingGlobalCostMicros));
+        }
         response.setHeader("ModelBudget-Reset", String(Math.ceil(decision.resetAt / 1_000)));
         if (!decision.allowed) {
-          auditReason = "model-budget-exceeded";
+          auditReason = decision.exceeded === "global" ? "global-model-budget-exceeded" : "model-budget-exceeded";
           const retryAfter = Math.max(1, Math.ceil((decision.resetAt - Date.now()) / 1_000));
-          return sendJson(response, 429, { error: "Monthly model budget exceeded" }, { "Retry-After": String(retryAfter) });
+          const message = decision.exceeded === "global"
+            ? "Global monthly model budget exceeded"
+            : "Monthly model budget exceeded";
+          return sendJson(response, 429, { error: message }, { "Retry-After": String(retryAfter) });
         }
         modelUsageContext = { userId: principal.userId, action: route.action };
       }

@@ -53,7 +53,7 @@ describe("AI Learning OS API", () => {
     const baseUrl = await startApi(provider, {
       resolvePrincipal: async (request) => request.headers.cookie === "session=valid" ? { userId: "user-1", deviceId: "device-1" } : null,
       modelUsageLedger: {
-        checkBudget: async () => ({ allowed: true, resetAt: Date.now() + 60_000, remainingTokens: 900, remainingCostMicros: 800 }),
+        checkBudget: async () => ({ allowed: true, exceeded: null, resetAt: Date.now() + 60_000, remainingTokens: 900, remainingCostMicros: 800, remainingGlobalCostMicros: 10_000 }),
         record: async (entry) => { recorded.push(entry); },
       },
     });
@@ -65,6 +65,7 @@ describe("AI Learning OS API", () => {
     const response = await fetch(`${baseUrl}/api/plans`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: "session=valid" }, body: JSON.stringify(goal) });
     expect(response.status).toBe(201);
     expect(response.headers.get("modelbudget-remaining-tokens")).toBe("900");
+    expect(response.headers.get("modelbudget-remaining-global-cost-micros")).toBe("10000");
     expect(recorded).toEqual([{ userId: "user-1", action: "ai.plan.create", provider: "live-test", model: "model-a", requestId: "req-1", inputTokens: 100, outputTokens: 25 }]);
   });
 
@@ -74,7 +75,7 @@ describe("AI Learning OS API", () => {
     const baseUrl = await startApi(provider, {
       resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
       modelUsageLedger: {
-        checkBudget: async () => ({ allowed: false, resetAt: Date.now() + 60_000, remainingTokens: 0, remainingCostMicros: 0 }),
+        checkBudget: async () => ({ allowed: false, exceeded: "account", resetAt: Date.now() + 60_000, remainingTokens: 0, remainingCostMicros: 0 }),
         record: async () => undefined,
       },
     });
@@ -82,6 +83,20 @@ describe("AI Learning OS API", () => {
     expect(response.status).toBe(429);
     expect(providerCalls).toBe(0);
     await expect(response.json()).resolves.toEqual({ error: "Monthly model budget exceeded" });
+  });
+
+  it("rejects a depleted global model budget before reading the request body", async () => {
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
+      modelUsageLedger: {
+        checkBudget: async () => ({ allowed: false, exceeded: "global", resetAt: Date.now() + 60_000, remainingTokens: 900, remainingCostMicros: 800, remainingGlobalCostMicros: 0 }),
+        record: async () => undefined,
+      },
+    });
+    const response = await fetch(`${baseUrl}/api/plans`, { method: "POST", body: "not-json" });
+    expect(response.status).toBe(429);
+    expect(response.headers.get("modelbudget-remaining-global-cost-micros")).toBe("0");
+    await expect(response.json()).resolves.toEqual({ error: "Global monthly model budget exceeded" });
   });
 
   it("creates a teaching session with active understanding checks", async () => {

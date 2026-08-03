@@ -57,20 +57,27 @@ describe("sync runtime configuration", () => {
       AI_MONTHLY_COST_LIMIT_USD: "12.50",
       AI_INPUT_COST_PER_MILLION_USD: "2",
       AI_OUTPUT_COST_PER_MILLION_USD: "8.000001",
+      AI_GLOBAL_MONTHLY_COST_LIMIT_USD: "250",
     })?.modelUsagePolicy).toEqual({
       monthlyTokenLimit: 250_000,
       monthlyCostLimitMicros: 12_500_000,
       inputCostMicrosPerMillionTokens: 2_000_000,
       outputCostMicrosPerMillionTokens: 8_000_001,
+      globalMonthlyCostLimitMicros: 250_000_000,
     });
   });
 
   it("rejects partial or invalid account budget configuration", () => {
     expect(() => readSyncRuntimeConfig({ AI_MONTHLY_TOKEN_LIMIT: "100" })).toThrow(/DATABASE_URL/);
+    expect(() => readSyncRuntimeConfig({ AI_GLOBAL_MONTHLY_COST_LIMIT_USD: "250" })).toThrow(/DATABASE_URL/);
     expect(() => readSyncRuntimeConfig({
       DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
       AI_MONTHLY_TOKEN_LIMIT: "100",
     })).toThrow(/configured together/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AI_GLOBAL_MONTHLY_COST_LIMIT_USD: "250",
+    })).toThrow(/complete AI account budget/);
     expect(() => readSyncRuntimeConfig({
       DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
       AI_MONTHLY_TOKEN_LIMIT: "100", AI_MONTHLY_COST_LIMIT_USD: "1.0000001",

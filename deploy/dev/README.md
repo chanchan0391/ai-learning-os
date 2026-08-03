@@ -24,6 +24,8 @@ AI_MONTHLY_TOKEN_LIMIT=250000
 AI_MONTHLY_COST_LIMIT_USD=12.50
 AI_INPUT_COST_PER_MILLION_USD=<current-model-input-price>
 AI_OUTPUT_COST_PER_MILLION_USD=<current-model-output-price>
+# 可选：所有账号合计的应用级月度金额熔断
+AI_GLOBAL_MONTHLY_COST_LIMIT_USD=250
 ```
 
 完整容器部署启动后，通过上述隧道打开 `http://127.0.0.1:8088` 即可查看远端 Web、API、OIDC、PostgreSQL 和实时模型组成的完整效果。

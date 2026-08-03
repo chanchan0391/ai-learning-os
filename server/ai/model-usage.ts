@@ -4,9 +4,11 @@ import type { ModelProvider, StructuredGenerationRequest, StructuredGenerationRe
 
 export interface ModelBudgetDecision {
   allowed: boolean;
+  exceeded: "account" | "global" | null;
   resetAt: number;
   remainingTokens: number;
   remainingCostMicros: number;
+  remainingGlobalCostMicros?: number;
 }
 
 export interface ModelUsageLedger {
@@ -25,6 +27,7 @@ export interface ModelUsageLedger {
 export interface ModelUsagePolicy {
   monthlyTokenLimit: number;
   monthlyCostLimitMicros: number;
+  globalMonthlyCostLimitMicros?: number;
   inputCostMicrosPerMillionTokens: number;
   outputCostMicrosPerMillionTokens: number;
 }
@@ -54,6 +57,9 @@ export class PostgresModelUsageLedger implements ModelUsageLedger {
   ) {
     assertPositiveSafeInteger(policy.monthlyTokenLimit, "monthlyTokenLimit");
     assertPositiveSafeInteger(policy.monthlyCostLimitMicros, "monthlyCostLimitMicros");
+    if (policy.globalMonthlyCostLimitMicros !== undefined) {
+      assertPositiveSafeInteger(policy.globalMonthlyCostLimitMicros, "globalMonthlyCostLimitMicros");
+    }
     assertPositiveSafeInteger(policy.inputCostMicrosPerMillionTokens, "inputCostMicrosPerMillionTokens");
     assertPositiveSafeInteger(policy.outputCostMicrosPerMillionTokens, "outputCostMicrosPerMillionTokens");
   }
@@ -71,11 +77,28 @@ export class PostgresModelUsageLedger implements ModelUsageLedger {
     const totalCostMicros = Number(result.rows[0].total_cost_micros);
     const remainingTokens = Math.max(0, this.policy.monthlyTokenLimit - totalTokens);
     const remainingCostMicros = Math.max(0, this.policy.monthlyCostLimitMicros - totalCostMicros);
+    let remainingGlobalCostMicros: number | undefined;
+    if (this.policy.globalMonthlyCostLimitMicros !== undefined) {
+      const globalResult = await this.pool.query<{ total_cost_micros: string }>(
+        `SELECT COALESCE(SUM(cost_micros), 0)::text AS total_cost_micros
+           FROM model_usage_events
+          WHERE occurred_at >= $1 AND occurred_at < $2`,
+        [start, end],
+      );
+      remainingGlobalCostMicros = Math.max(
+        0,
+        this.policy.globalMonthlyCostLimitMicros - Number(globalResult.rows[0].total_cost_micros),
+      );
+    }
+    const accountAllowed = remainingTokens > 0 && remainingCostMicros > 0;
+    const globalAllowed = remainingGlobalCostMicros === undefined || remainingGlobalCostMicros > 0;
     return {
-      allowed: remainingTokens > 0 && remainingCostMicros > 0,
+      allowed: accountAllowed && globalAllowed,
+      exceeded: !accountAllowed ? "account" : !globalAllowed ? "global" : null,
       resetAt: end.getTime(),
       remainingTokens,
       remainingCostMicros,
+      ...(remainingGlobalCostMicros === undefined ? {} : { remainingGlobalCostMicros }),
     };
   }
 

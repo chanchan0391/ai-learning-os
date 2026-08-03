@@ -85,7 +85,9 @@ OpenAI Provider 对每次尝试设置 30 秒超时，并对网络错误、408、
 
 `/api/health` 的 60 秒滚动容量快照按 `ai-plan`、`ai-teaching`、`ai-evaluation`、`ai-review` 和 `ai-recovery` 分组，供 dev 验收和后续集中告警使用。这组分钟级配额是滥用与突发成本的第一层保护。
 
-配置账号预算后，五类 Agent 入口要求有效应用会话，并在读取学习正文和调用 Provider 前检查当前 UTC 月已入账的 token 与估算金额。成功调用按账号、Agent 动作、Provider、模型、输入 token 和输出 token 写入 PostgreSQL；不保存 Prompt 或模型输出。达到任一上限后返回 `429` 和下月重置时间。价格由部署者按所选模型配置为每百万 token 的美元成本，因此切换模型前必须同步更新费率。当前熔断按已完成调用记账，最多可能被同一时间已经在途的有限调用超出；生产仍需接入订阅权益、厂商侧全局金额上限和集中成本告警。
+配置账号预算后，五类 Agent 入口要求有效应用会话，并在读取学习正文和调用 Provider 前检查当前 UTC 月已入账的 token 与估算金额。成功调用按账号、Agent 动作、Provider、模型、输入 token 和输出 token 写入 PostgreSQL；不保存 Prompt 或模型输出。达到任一上限后返回 `429` 和下月重置时间。价格由部署者按所选模型配置为每百万 token 的美元成本，因此切换模型前必须同步更新费率。
+
+可选的 `AI_GLOBAL_MONTHLY_COST_LIMIT_USD` 使用同一账本汇总所有账号，在应用估算金额达到部署总上限后阻止所有新 Agent 调用，并以不同的安全审计原因区分账号额度和全局额度。该检查由所有实例共享，但仍按已完成调用记账，同一时间已经在途的有限调用可能造成超额；它也不能替代模型厂商控制台中的独立硬上限。生产仍需接入订阅权益、厂商侧金额上限和集中成本告警。
 
 ## 配置与安全
 
@@ -100,6 +102,8 @@ AI_MONTHLY_TOKEN_LIMIT=250000
 AI_MONTHLY_COST_LIMIT_USD=12.50
 AI_INPUT_COST_PER_MILLION_USD=2.00
 AI_OUTPUT_COST_PER_MILLION_USD=8.00
+# 可选：应用内所有账号合计的月度金额上限
+AI_GLOBAL_MONTHLY_COST_LIMIT_USD=250.00
 ```
 
 安全约束：
