@@ -260,6 +260,30 @@ describe("browser learning-state repository", () => {
     expect(repository.loadDailyBudget()).toBe(60);
   });
 
+  it("applies selected backup versions while preserving unselected local goals and budget", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const local = initializeLearningState(generateLearningPlan(goal));
+    const localOnly = initializeLearningState(generateLearningPlan(
+      { ...goal, subject: "数据库内核" }, new Date("2026-08-02T10:00:00.000Z"),
+    ));
+    const importedReplacement = toggleCurrentTask(local, getCurrentRecord(local).tasks[0].id);
+    const importedNew = initializeLearningState(generateLearningPlan(
+      { ...goal, subject: "事件驱动架构" }, new Date("2026-08-03T10:00:00.000Z"),
+    ));
+    repository.replaceActive([local, localOnly]);
+    repository.selectActive(local.plan.id);
+    repository.saveDailyBudget(60);
+
+    expect(repository.applyPortfolioImport(
+      [importedReplacement, importedNew],
+      [],
+      [local.plan.id],
+    )).toEqual({ activeAdded: 1, archivedAdded: 0, replaced: 1, skipped: 0 });
+    expect(repository.loadActive()).toEqual([localOnly, importedReplacement, importedNew]);
+    expect(repository.load().state).toEqual(importedReplacement);
+    expect(repository.loadDailyBudget()).toBe(60);
+  });
+
   it("previews additions, skipped versions, and local goals removed by replacement", () => {
     const localActive = initializeLearningState(generateLearningPlan(goal));
     const importedDuplicate = toggleCurrentTask(localActive, getCurrentRecord(localActive).tasks[0].id);
@@ -281,6 +305,12 @@ describe("browser learning-state repository", () => {
       skipped: [{ planId: localActive.plan.id, subject: "分布式系统" }],
       localActiveOnly: [],
       localArchivedOnly: [{ planId: localArchivedState.plan.id, subject: "数据库内核" }],
+      conflicts: [{
+        planId: localActive.plan.id,
+        subject: "分布式系统",
+        local: expect.objectContaining({ location: "active", currentDay: 1, completedDays: 0, completedTasks: 0 }),
+        imported: expect.objectContaining({ location: "active", currentDay: 1, completedDays: 0, completedTasks: 1 }),
+      }],
     });
   });
 });

@@ -32,6 +32,7 @@ export interface PortfolioMergeResult {
   activeAdded: number;
   archivedAdded: number;
   skipped: number;
+  replaced?: number;
 }
 
 export interface PortfolioGoalSummary {
@@ -45,10 +46,46 @@ export interface PortfolioMergePreview {
   skipped: PortfolioGoalSummary[];
   localActiveOnly: PortfolioGoalSummary[];
   localArchivedOnly: PortfolioGoalSummary[];
+  conflicts: PortfolioVersionConflict[];
+}
+
+export interface PortfolioGoalVersionSummary extends PortfolioGoalSummary {
+  location: "active" | "archived";
+  currentDay: number;
+  completedDays: number;
+  completedTasks: number;
+  totalTasks: number;
+  latestActivityAt: string;
+}
+
+export interface PortfolioVersionConflict {
+  planId: string;
+  subject: string;
+  local: PortfolioGoalVersionSummary;
+  imported: PortfolioGoalVersionSummary;
 }
 
 function summarizeState(state: LearningState): PortfolioGoalSummary {
   return { planId: state.plan.id, subject: state.plan.goal.subject };
+}
+
+function summarizeVersion(state: LearningState, location: "active" | "archived"): PortfolioGoalVersionSummary {
+  const completedDays = state.days.filter((day) => day.status === "completed");
+  const activityDates = [
+    state.plan.createdAt,
+    ...state.days.map((day) => day.completedAt ?? day.date),
+    ...(state.plan.notes ?? []).map((note) => note.updatedAt),
+    ...(state.plan.retrospectives ?? []).map((item) => item.updatedAt),
+  ];
+  return {
+    ...summarizeState(state),
+    location,
+    currentDay: state.currentDay,
+    completedDays: completedDays.length,
+    completedTasks: state.days.flatMap((day) => day.tasks).filter((task) => task.completed).length,
+    totalTasks: state.days.flatMap((day) => day.tasks).length,
+    latestActivityAt: activityDates.sort().at(-1) ?? state.plan.createdAt,
+  };
 }
 
 export function previewPortfolioMerge(
@@ -69,6 +106,14 @@ export function previewPortfolioMerge(
     ...importedActive.filter((state) => localIds.has(state.plan.id)).map(summarizeState),
     ...importedArchived.filter((entry) => localIds.has(entry.state.plan.id)).map((entry) => summarizeState(entry.state)),
   ];
+  const localVersions = new Map<string, PortfolioGoalVersionSummary>([
+    ...localActive.map((state) => [state.plan.id, summarizeVersion(state, "active")] as const),
+    ...localArchived.map((entry) => [entry.state.plan.id, summarizeVersion(entry.state, "archived")] as const),
+  ]);
+  const importedVersions = [
+    ...importedActive.map((state) => summarizeVersion(state, "active")),
+    ...importedArchived.map((entry) => summarizeVersion(entry.state, "archived")),
+  ];
 
   return {
     activeToAdd: importedActive.filter((state) => !localIds.has(state.plan.id)).map(summarizeState),
@@ -76,6 +121,10 @@ export function previewPortfolioMerge(
     skipped,
     localActiveOnly: localActive.filter((state) => !importedIds.has(state.plan.id)).map(summarizeState),
     localArchivedOnly: localArchived.filter((entry) => !importedIds.has(entry.state.plan.id)).map((entry) => summarizeState(entry.state)),
+    conflicts: importedVersions.flatMap((imported) => {
+      const local = localVersions.get(imported.planId);
+      return local ? [{ planId: imported.planId, subject: imported.subject, local, imported }] : [];
+    }),
   };
 }
 
@@ -90,6 +139,7 @@ export interface LearningStateRepository {
   saveDailyBudget(minutes: number | null): void;
   mergeArchived(entries: ArchivedLearningState[]): ArchivedLearningState[];
   mergePortfolioMissing(states: LearningState[], archived: ArchivedLearningState[]): PortfolioMergeResult;
+  applyPortfolioImport(states: LearningState[], archived: ArchivedLearningState[], replacePlanIds: string[]): PortfolioMergeResult;
   replacePortfolio(states: LearningState[], archived: ArchivedLearningState[], selectedPlanId: string | null, dailyBudgetMinutes: number | null): void;
   save(state: LearningState): void;
   archiveCompleted(state: LearningState, now?: Date): ArchivedLearningState[];
@@ -264,6 +314,48 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
       activeAdded: activeAdditions.length,
       archivedAdded: archivedAdditions.length,
       skipped: states.length + archived.length - activeAdditions.length - archivedAdditions.length,
+    };
+  }
+
+  applyPortfolioImport(states: LearningState[], archived: ArchivedLearningState[], replacePlanIds: string[]): PortfolioMergeResult {
+    const replaceIds = new Set(replacePlanIds);
+    const localActive = this.loadActive();
+    const localArchived = this.loadArchived();
+    const localIds = new Set([
+      ...localActive.map((state) => state.plan.id),
+      ...localArchived.map((entry) => entry.state.plan.id),
+    ]);
+    const importedActive = states.filter((state) => !localIds.has(state.plan.id) || replaceIds.has(state.plan.id));
+    const importedArchived = archived.filter((entry) => !localIds.has(entry.state.plan.id) || replaceIds.has(entry.state.plan.id));
+    const appliedIds = new Set([
+      ...importedActive.map((state) => state.plan.id),
+      ...importedArchived.map((entry) => entry.state.plan.id),
+    ]);
+    const nextActive = [
+      ...localActive.filter((state) => !appliedIds.has(state.plan.id)),
+      ...importedActive,
+    ];
+    const nextArchived = [
+      ...localArchived.filter((entry) => !appliedIds.has(entry.state.plan.id)),
+      ...importedArchived,
+    ].sort((left, right) => right.archivedAt.localeCompare(left.archivedAt));
+    const selectedPlanId = this.readActiveCollection()?.selectedPlanId ?? null;
+    this.writeActiveCollection({
+      selectedPlanId: selectedPlanId && nextActive.some((state) => state.plan.id === selectedPlanId) ? selectedPlanId : null,
+      states: structuredClone(nextActive),
+    });
+    if (nextArchived.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(nextArchived));
+    else this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
+    const selected = nextActive.find((state) => state.plan.id === selectedPlanId);
+    if (selected) this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(selected));
+    else this.removeCurrentKeys();
+
+    return {
+      activeAdded: states.filter((state) => !localIds.has(state.plan.id)).length,
+      archivedAdded: archived.filter((entry) => !localIds.has(entry.state.plan.id)).length,
+      replaced: appliedIds.size - states.filter((state) => !localIds.has(state.plan.id)).length
+        - archived.filter((entry) => !localIds.has(entry.state.plan.id)).length,
+      skipped: states.length + archived.length - appliedIds.size,
     };
   }
 

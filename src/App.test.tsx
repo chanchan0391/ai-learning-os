@@ -824,6 +824,43 @@ describe("learning data controls", () => {
     expect(screen.getByText(/已合并 1 个进行中目标/).textContent).toContain("保留 1 个本地同 ID 版本");
   });
 
+  it("compares same-ID versions and restores only explicitly selected backup goals", async () => {
+    const user = userEvent.setup();
+    const downloads: string[] = [];
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:pre-restore") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) { downloads.push(this.download); });
+    const local = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as ReturnType<typeof initializeLearningState>;
+    const replacement = toggleCurrentTask(local, getCurrentRecord(local).tasks[0].id);
+    const importedNew = initializeLearningState(generateLearningPlan(
+      { ...goal, subject: "分布式系统" }, new Date("2026-08-02T10:00:00.000Z"),
+    ));
+    localStorage.setItem(DAILY_BUDGET_KEY, "45");
+    render(<App />);
+
+    await user.upload(
+      screen.getByLabelText("选择学习记录文件"),
+      new File([
+        serializePortfolioLearningStateExport([replacement, importedNew], [], replacement.plan.id, 90),
+      ], "all-learning-data.json", { type: "application/json" }),
+    );
+
+    const preview = screen.getByRole("region", { name: "组合恢复预览" });
+    expect(within(preview).getByText("同 ID 版本比较")).toBeTruthy();
+    expect(preview.textContent).toContain("本地 · 进行中 · 第 1 天 · 完成 0 天 / 0 项任务");
+    expect(preview.textContent).toContain("备份 · 进行中 · 第 1 天 · 完成 0 天 / 1 项任务");
+    const restoreSelected = screen.getByRole("button", { name: "恢复所选版本" });
+    expect((restoreSelected as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole("checkbox", { name: /采用“AI Agent 工程”的备份版本/ }));
+    await user.click(restoreSelected);
+
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).days[0].tasks[0].completed).toBe(true);
+    expect(JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).states).toHaveLength(2);
+    expect(localStorage.getItem(DAILY_BUDGET_KEY)).toBe("45");
+    expect(downloads).toEqual([expect.stringMatching(/^ai-learning-os-before-restore-\d{4}-\d{2}-\d{2}\.json$/)]);
+    expect(screen.getByText(/已采用备份中的 1 个所选版本/)).toBeTruthy();
+  });
+
   it("rejects an invalid learning-record file without changing local progress", async () => {
     const user = userEvent.setup();
     render(<App />);

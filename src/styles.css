@@ -52,6 +52,14 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .danger-text { color: #9d3d2d; }
 .dialog-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(18,31,25,.55); }
 .confirmation-dialog { width: min(460px, 100%); padding: 28px; background: #fafaf7; border: 1px solid #d8ddd7; border-radius: 18px; box-shadow: 0 24px 80px rgba(18,31,25,.3); }
+.portfolio-import-dialog { width: min(720px, 100%); max-height: min(88vh, 820px); overflow-y: auto; }
+.import-version-choices { display: grid; gap: 10px; margin: 16px 0; padding: 0; border: 0; }
+.import-version-choices legend { font-weight: 700; }
+.import-version-choices > p { margin: 0; color: #64706a; font-size: 12px; }
+.import-version-choices label { display: grid; grid-template-columns: 22px 1fr; gap: 5px 8px; padding: 12px; background: white; border: 1px solid #d8ddd7; border-radius: 10px; cursor: pointer; }
+.import-version-choices input { grid-row: 1 / 4; margin-top: 3px; }
+.import-version-choices label > span { grid-column: 2; color: #64706a; font-size: 12px; line-height: 1.45; }
+.import-version-choices .import-version-subject { color: #1f3028; font-size: 13px; font-weight: 700; }
 .confirmation-dialog .eyebrow { margin-bottom: 10px; }
 .confirmation-dialog h2 { margin: 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 24px; font-weight: 500; }
 .confirmation-dialog > p:last-of-type { margin: 14px 0 22px; color: #64706a; font-size: 13px; line-height: 1.65; }

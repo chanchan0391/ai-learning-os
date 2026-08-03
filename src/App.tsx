@@ -163,6 +163,7 @@ export function App() {
   const [pendingImport, setPendingImport] = useState<
     { kind: "state"; data: LearningStateExport } | { kind: "portfolio"; data: PortfolioLearningStateExport } | null
   >(null);
+  const [selectedImportedPlanIds, setSelectedImportedPlanIds] = useState<string[]>([]);
   const [storageNotice, setStorageNotice] = useState(initialLoad.status === "recovered" ? "本地进度无法读取，已安全重置。" : "");
   const [storageNoticeIsError, setStorageNoticeIsError] = useState(initialLoad.status === "recovered");
   const [authState, setAuthState] = useState<AuthState>({ status: "checking" });
@@ -743,6 +744,7 @@ export function App() {
       const raw = await file.text();
       const portfolio = parsePortfolioLearningStateExport(raw);
       if (portfolio.status === "valid") {
+        setSelectedImportedPlanIds([]);
         setPendingImport({ kind: "portfolio", data: portfolio.data });
         return;
       }
@@ -811,6 +813,26 @@ export function App() {
       : `没有可合并的新目标；已保留 ${result.skipped} 个本地同 ID 版本。`);
     setStorageNoticeIsError(false);
     if (added > 0 && authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
+  }
+
+  function applySelectedPortfolioVersions() {
+    if (pendingImport?.kind !== "portfolio" || selectedImportedPlanIds.length === 0) return;
+    const backedUp = downloadPreRestoreBackup();
+    const result = learningStateRepository.applyPortfolioImport(
+      pendingImport.data.activeStates,
+      pendingImport.data.archivedStates,
+      selectedImportedPlanIds,
+    );
+    const loaded = learningStateRepository.load();
+    resetGoalWorkspace(loaded.state);
+    setActiveGoals(learningStateRepository.loadActive());
+    archivedGoalsRef.current = learningStateRepository.loadArchived();
+    setArchivedGoals(archivedGoalsRef.current);
+    setPendingImport(null);
+    setSelectedImportedPlanIds([]);
+    setStorageNotice(`${backedUp ? "已先下载恢复前备份；" : ""}已采用备份中的 ${result.replaced ?? 0} 个所选版本，并合并 ${result.activeAdded + result.archivedAdded} 个新目标；保留 ${result.skipped} 个本地同 ID 版本。`);
+    setStorageNoticeIsError(false);
+    if (authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
   }
 
   function deleteLearningData() {
@@ -1131,7 +1153,7 @@ export function App() {
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) setPendingImport(null);
     }}>
-      <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="import-dialog-title" aria-describedby="import-dialog-description">
+      <section className={`confirmation-dialog ${pendingImport.kind === "portfolio" ? "portfolio-import-dialog" : ""}`} role="alertdialog" aria-modal="true" aria-labelledby="import-dialog-title" aria-describedby="import-dialog-description">
         <p className="eyebrow">已验证学习记录</p>
         <h2 id="import-dialog-title">{pendingImport.kind === "portfolio"
           ? "恢复全部学习数据？"
@@ -1143,11 +1165,28 @@ export function App() {
           <p><strong>仅合并新目标：</strong>新增 {portfolioImportPreview.activeToAdd.length} 个进行中目标和 {portfolioImportPreview.archivedToAdd.length} 个归档目标；跳过 {portfolioImportPreview.skipped.length} 个本地同 ID 版本。</p>
           {(portfolioImportPreview.activeToAdd.length > 0 || portfolioImportPreview.archivedToAdd.length > 0) && <p>将新增：{[...portfolioImportPreview.activeToAdd, ...portfolioImportPreview.archivedToAdd].map((item) => item.subject).join("、")}。</p>}
           {portfolioImportPreview.skipped.length > 0 && <p>将保留本地版本：{portfolioImportPreview.skipped.map((item) => item.subject).join("、")}。</p>}
+          {portfolioImportPreview.conflicts.length > 0 && <fieldset className="import-version-choices">
+            <legend>同 ID 版本比较</legend>
+            <p>勾选要采用的备份版本；未勾选目标保留本地版本。</p>
+            {portfolioImportPreview.conflicts.map((conflict) => <label key={conflict.planId}>
+              <input
+                type="checkbox"
+                checked={selectedImportedPlanIds.includes(conflict.planId)}
+                onChange={(event) => setSelectedImportedPlanIds((current) => event.target.checked
+                  ? [...current, conflict.planId]
+                  : current.filter((planId) => planId !== conflict.planId))}
+              />
+              <span className="import-version-subject">采用“{conflict.subject}”的备份版本</span>
+              <span><strong>本地</strong> · {conflict.local.location === "active" ? "进行中" : "已归档"} · 第 {conflict.local.currentDay} 天 · 完成 {conflict.local.completedDays} 天 / {conflict.local.completedTasks} 项任务 · 最近记录 {new Date(conflict.local.latestActivityAt).toLocaleDateString("zh-CN")}</span>
+              <span><strong>备份</strong> · {conflict.imported.location === "active" ? "进行中" : "已归档"} · 第 {conflict.imported.currentDay} 天 · 完成 {conflict.imported.completedDays} 天 / {conflict.imported.completedTasks} 项任务 · 最近记录 {new Date(conflict.imported.latestActivityAt).toLocaleDateString("zh-CN")}</span>
+            </label>)}
+          </fieldset>}
           <p><strong>全部替换：</strong>{activeGoals.length + archivedGoals.length > 0 || dailyBudgetMinutes !== null ? "将先下载当前组合的恢复前备份，再" : "将"}移除 {portfolioImportPreview.localActiveOnly.length} 个文件中没有的本地进行中目标和 {portfolioImportPreview.localArchivedOnly.length} 个本地归档目标；时间预算将{dailyBudgetMinutes === pendingImport.data.dailyBudgetMinutes ? "保持不变" : `从${dailyBudgetMinutes === null ? "未设置" : `${dailyBudgetMinutes} 分钟`}变为${pendingImport.data.dailyBudgetMinutes === null ? "未设置" : `${pendingImport.data.dailyBudgetMinutes} 分钟`}`}。</p>
         </div>}
         <div className="dialog-actions">
           <button className="secondary-action" autoFocus onClick={() => setPendingImport(null)}>取消</button>
           {pendingImport.kind === "portfolio" && <button className="secondary-action" onClick={mergePortfolioLearningData}>仅合并新目标</button>}
+          {pendingImport.kind === "portfolio" && portfolioImportPreview && portfolioImportPreview.conflicts.length > 0 && <button className="secondary-action" disabled={selectedImportedPlanIds.length === 0} onClick={applySelectedPortfolioVersions}>恢复所选版本</button>}
           <button className="primary-dialog-action" onClick={importLearningData}>{pendingImport.kind === "portfolio" ? "全部替换" : "确认恢复"}</button>
         </div>
       </section>
