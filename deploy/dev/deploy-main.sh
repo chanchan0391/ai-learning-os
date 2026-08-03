@@ -7,6 +7,7 @@ node_bin=${AI_LEARNING_NODE_BIN:-"$HOME/.nvm/versions/node/v22.21.1/bin/node"}
 npm_bin=${AI_LEARNING_NPM_BIN:-"$HOME/.nvm/versions/node/v22.21.1/bin/npm"}
 requested_revision=${1:-}
 provided_archive=${2:-}
+provided_checksum=${3:-}
 
 case "$requested_revision" in
   "") revision=$(git ls-remote "$repository" refs/heads/main | awk 'NR == 1 { print $1 }') ;;
@@ -60,6 +61,18 @@ if [ -n "$provided_archive" ]; then
     echo "Provided archive must be the expected incoming revision archive" >&2
     exit 2
   fi
+  case "$provided_checksum" in
+    ""|*[!0-9a-f]*) echo "A lowercase SHA-256 checksum is required for an uploaded archive" >&2; exit 2 ;;
+  esac
+  if [ "${#provided_checksum}" -ne 64 ]; then
+    echo "A full SHA-256 checksum is required for an uploaded archive" >&2
+    exit 2
+  fi
+  actual_checksum=$(sha256sum "$provided_archive" | awk 'NR == 1 { print $1 }')
+  if [ "$actual_checksum" != "$provided_checksum" ]; then
+    echo "Uploaded archive checksum does not match" >&2
+    exit 2
+  fi
   tar -xzf "$provided_archive" -C "$temporary_dir"
   rm -f "$provided_archive"
 else
@@ -93,7 +106,9 @@ systemctl --user restart ai-learning-os-api.service ai-learning-os-web.service
 healthy=false
 attempt=1
 while [ "$attempt" -le 30 ]; do
-  if curl --fail --silent --show-error http://127.0.0.1:8787/api/health \
+  if systemctl --user is-active --quiet ai-learning-os-api.service ai-learning-os-web.service \
+    && curl --fail --silent --show-error http://127.0.0.1:8088/ >/dev/null \
+    && curl --fail --silent --show-error http://127.0.0.1:8787/api/health \
     | "$node_bin" -e '
       let body = "";
       process.stdin.on("data", (chunk) => body += chunk);
@@ -117,6 +132,9 @@ if [ "$healthy" != true ]; then
     ln -s "$previous_target" "$rollback_link"
     mv -Tf "$rollback_link" "$current_link"
     systemctl --user restart ai-learning-os-api.service ai-learning-os-web.service
+  else
+    rm -f "$current_link"
+    systemctl --user stop ai-learning-os-web.service ai-learning-os-api.service
   fi
   exit 1
 fi

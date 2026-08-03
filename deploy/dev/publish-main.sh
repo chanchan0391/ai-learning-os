@@ -41,6 +41,14 @@ fi
 
 temporary_archive=$(mktemp "${TMPDIR:-/tmp}/ai-learning-os-$revision.XXXXXX.tar.gz")
 git archive --format=tar.gz --output="$temporary_archive" "$revision"
+archive_checksum=$(shasum -a 256 "$temporary_archive" | awk 'NR == 1 { print $1 }')
+case "$archive_checksum" in
+  *[!0-9a-f]* ) echo "Could not calculate the archive SHA-256 checksum" >&2; exit 2 ;;
+esac
+if [ "${#archive_checksum}" -ne 64 ]; then
+  echo "Could not calculate the full archive SHA-256 checksum" >&2
+  exit 2
+fi
 ssh "$deploy_host" "mkdir -p '$remote_base/incoming'"
 scp -q "$temporary_archive" "$deploy_host:$remote_base/incoming/$revision.tar.gz.uploading"
-ssh "$deploy_host" "mv '$remote_base/incoming/$revision.tar.gz.uploading' '$remote_base/incoming/$revision.tar.gz' && '$remote_base/deploy-main.sh' '$revision' '$remote_base/incoming/$revision.tar.gz'"
+ssh "$deploy_host" "mv '$remote_base/incoming/$revision.tar.gz.uploading' '$remote_base/incoming/$revision.tar.gz' && '$remote_base/deploy-main.sh' '$revision' '$remote_base/incoming/$revision.tar.gz' '$archive_checksum'"

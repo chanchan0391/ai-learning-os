@@ -29,11 +29,11 @@ OIDC_TRANSACTION_SECRET=<at-least-32-random-characters>
 
 由于 dev 服务器位于内网且当前不能稳定访问 GitHub 下载端点，开发机通过 launchd 每五分钟运行安装在用户级 Application Support 中的 `publish-main.sh`。它在独立缓存目录读取 `origin/main` 的不可变提交、通过 SSH 上传归档，再由远端 `deploy-main.sh`：
 
-1. 接收不可变的提交归档并解压到独立 release 目录。
+1. 接收不可变的提交归档，在解压前校验 SHA-256 完整性。
 2. 执行 `npm ci` 和 `npm run check`。
 3. 在迁移前创建 PostgreSQL 备份，再执行幂等迁移。
 4. 原子切换 `current` 符号链接并重启 Web 与 API。
-5. 验证健康端点同时启用实时模型和同步；失败时恢复上一 release。
+5. 验证两个用户服务、Web 首页和 API 健康端点，同时确认实时模型和同步已启用；失败时恢复上一 release。
 6. 只保留最近三个 release，避免服务器磁盘持续增长。
 
 常规部署成功不发送通知。自动部署失败、持续版本落后或需要人工判断时，依照仓库协作规则通过 Gmail 通知项目所有者。
