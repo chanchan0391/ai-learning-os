@@ -430,6 +430,7 @@ describe("learning data controls", () => {
     const section = screen.getByRole("region", { name: "阶段结束回顾" });
     expect(within(section).getByRole("status", { name: "阶段掌握度" }).textContent).toContain("证据不足");
     expect(within(section).getByText("补充一份可验证的实践成果并获取四维评估。")).toBeTruthy();
+    expect(within(section).queryByRole("button", { name: "加入今天的补强实践" })).toBeNull();
     await user.click(within(section).getByRole("button", { name: "生成阶段回顾" }));
     expect(within(section).getByText(/已完成 7 个学习日/)).toBeTruthy();
     await user.click(within(section).getByRole("button", { name: "编辑回顾" }));
@@ -490,6 +491,38 @@ describe("learning data controls", () => {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
     const linkedTask = saved.days[8].tasks.find((task: { title: string }) => task.title.startsWith("跨阶段主动回忆"));
     expect(saved.days[8].artifacts[linkedTask.id].reviewPerformance.sourceDays).toEqual([1, 8]);
+  });
+
+  it("adds a stage mastery next action to today's evaluated practice", async () => {
+    const user = userEvent.setup();
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 2 }));
+    for (let day = 1; day <= 7; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 3) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, "恢复演练", {
+          rubric: [
+            { dimension: "understanding", score: 3, evidence: "解释边界", feedback: "继续" },
+            { dimension: "application", score: 2, evidence: "仅成功路径", feedback: "补失败路径" },
+            { dimension: "evidence", score: 2, evidence: "缺少日志", feedback: "保留结果" },
+            { dimension: "reflection", score: 2, evidence: "复盘较短", feedback: "补充取舍" },
+          ],
+          totalScore: 9, masteryLevel: "developing", misconceptions: [], nextAction: "验证失败恢复路径",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    render(<App />);
+
+    const section = screen.getByRole("region", { name: "阶段结束回顾" });
+    await user.click(within(section).getByRole("button", { name: "加入今天的补强实践" }));
+
+    expect((within(section).getByRole("button", { name: "已加入今日任务" }) as HTMLButtonElement).disabled).toBe(true);
+    const taskTitle = screen.getByText("阶段补强实践：建立基础");
+    expect(within(taskTitle.closest("article")!).getByText(/验证失败恢复路径/)).toBeTruthy();
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    expect(saved.days.at(-1).tasks.filter((task: { id: string }) => task.id === "day-8-stage-mastery-stage-1")).toHaveLength(1);
   });
 
   it("keeps data on cancellation and removes every local version after confirmation", async () => {

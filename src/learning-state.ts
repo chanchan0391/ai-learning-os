@@ -81,6 +81,10 @@ export interface StageMasteryReport {
   dimensions: StageMasteryDimension[];
 }
 
+export function stageMasteryTaskId(day: number, stageId: string): string {
+  return `day-${day}-stage-mastery-${stageId}`;
+}
+
 export function crossStageReviewTaskId(day: number, misconception: string): string {
   const normalized = normalizedMisconception(misconception);
   let hash = 2166136261;
@@ -1247,6 +1251,27 @@ export function stageMasteryReport(state: LearningState, stageId: string): Stage
     nextAction: weakest?.nextAction.trim() || "补充一份可验证的实践成果并获取四维评估。",
     dimensions,
   };
+}
+
+/** Turns a non-ready stage checkpoint into one evaluated practice task on the active day. */
+export function addStageMasteryTask(state: LearningState, stageId: string): LearningState {
+  const stage = state.plan.stages.find((item) => item.id === stageId);
+  if (!stage) throw new Error("学习阶段不存在");
+  const report = stageMasteryReport(state, stageId);
+  if (report.status === "ready") throw new Error("这个阶段已经达到进入下一阶段的证据标准");
+  const record = getCurrentRecord(state);
+  if (record.status !== "active") throw new Error("请先创建新的学习日再安排阶段补强任务");
+  const taskId = stageMasteryTaskId(state.currentDay, stageId);
+  if (record.tasks.some((task) => task.id === taskId)) return state;
+  const task: DailyTask = {
+    id: taskId,
+    type: "practice",
+    title: `阶段补强实践：${stage.title}`,
+    description: `${report.nextAction} 完成后提交成果、验证证据和复盘，重新获取四维评估。`,
+    minutes: Math.max(10, Math.round(state.plan.goal.dailyMinutes * 0.2)),
+    completed: false,
+  };
+  return updateCurrentRecord(state, (current) => ({ ...current, tasks: [...current.tasks, task] }));
 }
 
 export function generateStageRetrospective(state: LearningState, stageId: string, now = new Date()): LearningState {

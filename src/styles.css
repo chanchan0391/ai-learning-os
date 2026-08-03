@@ -248,6 +248,7 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .stage-mastery li.developing { color: #963f2f; background: #f8e7e2; }
 .stage-mastery p { display: flex; gap: 6px; margin: 0; }
 .stage-mastery p b { flex: 0 0 auto; color: #526058; }
+.stage-mastery .mastery-action { justify-self: start; }
 .progress-ring { --progress: 0deg; width: 106px; height: 106px; display: flex; flex-direction: column; justify-content: center; align-items: center; border-radius: 50%; background: radial-gradient(circle closest-side, #f2f0e9 80%, transparent 81%), conic-gradient(#c9633f var(--progress), #d9ddd7 0); }
 .progress-ring strong { font-size: 23px; }
 .progress-ring span { color: #7c8580; font-size: 10px; }

@@ -4,6 +4,7 @@ import {
   activeGoalPortfolioOverview,
   portfolioBudgetStatus,
   portfolioDailyAgenda,
+  addStageMasteryTask,
   addCrossStageReviewTask,
   appendStageNoteEvidence,
   completeTeachingTask,
@@ -36,6 +37,7 @@ import {
   saveUnderstandingResponse,
   scheduledReviewItems,
   stageMasteryReport,
+  stageMasteryTaskId,
   serializeLearningStateExport,
   serializeCrossGoalWeeklyReviewMarkdown,
   serializeLearningProgressMarkdown,
@@ -572,6 +574,7 @@ describe("multi-day learning state", () => {
     expect(stageMasteryReport(readyState, "stage-1")).toMatchObject({
       status: "ready", averageTotalScore: 14, headline: "现有成果证据支持进入下一阶段。",
     });
+    expect(() => addStageMasteryTask(readyState, "stage-1")).toThrow("已经达到进入下一阶段");
     state = generateStageRetrospective(state, "stage-1", new Date("2026-08-01T12:00:00.000Z"));
     expect(state.plan.retrospectives?.[0]).toMatchObject({
       id: "retrospective-stage-1", stageId: "stage-1", sourceDays: [1, 2, 3, 4, 5, 6, 7],
@@ -604,6 +607,39 @@ describe("multi-day learning state", () => {
       status: "insufficient-evidence", evaluationCount: 0, averageTotalScore: null,
       nextAction: "补充一份可验证的实践成果并获取四维评估。",
     });
+    expect(() => addStageMasteryTask(state, "stage-1")).toThrow("请先创建新的学习日");
+  });
+
+  it("turns a non-ready stage checkpoint into one evaluated practice task", () => {
+    let state = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 2 }));
+    for (let day = 1; day <= 7; day += 1) {
+      for (const task of getCurrentRecord(state).tasks) state = toggleCurrentTask(state, task.id);
+      if (day === 3) {
+        const practice = getCurrentRecord(state).tasks.find((task) => task.type === "practice")!;
+        state = saveEvaluation(state, practice.id, "恢复演练", {
+          rubric: [
+            { dimension: "understanding", score: 3, evidence: "解释了边界", feedback: "继续" },
+            { dimension: "application", score: 2, evidence: "仅覆盖成功路径", feedback: "补失败路径" },
+            { dimension: "evidence", score: 2, evidence: "缺少失败日志", feedback: "保留结果" },
+            { dimension: "reflection", score: 2, evidence: "复盘较短", feedback: "补充取舍" },
+          ],
+          totalScore: 9, masteryLevel: "developing", misconceptions: [], nextAction: "验证失败恢复路径",
+        });
+      }
+      state = completeCurrentDay(state, { difficulty: "just-right", reflection: "" });
+    }
+
+    state = addStageMasteryTask(state, "stage-1");
+    const taskId = stageMasteryTaskId(8, "stage-1");
+    expect(getCurrentRecord(state).tasks.at(-1)).toMatchObject({
+      id: taskId,
+      type: "practice",
+      title: "阶段补强实践：建立基础",
+      description: expect.stringContaining("验证失败恢复路径"),
+      minutes: 12,
+      completed: false,
+    });
+    expect(addStageMasteryTask(state, "stage-1")).toEqual(state);
   });
 
   it("uses persisted evaluation feedback to focus the next day", () => {
