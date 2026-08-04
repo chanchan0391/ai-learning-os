@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { SyncPrincipal } from "../sync/sync-store";
 
@@ -177,9 +178,19 @@ export interface SecurityAuditSink {
   record(event: SecurityAuditEvent): void | Promise<void>;
 }
 
+function auditPrincipalReference(kind: "user" | "device", value: string): string {
+  return createHash("sha256").update(`${kind}:${value}`, "utf8").digest("hex").slice(0, 32);
+}
+
 export class JsonLineSecurityAuditSink implements SecurityAuditSink {
   record(event: SecurityAuditEvent): void {
-    console.info(JSON.stringify({ type: "security_audit", ...event }));
+    const { userId, deviceId, ...safeEvent } = event;
+    console.info(JSON.stringify({
+      type: "security_audit",
+      ...safeEvent,
+      ...(userId ? { userRef: auditPrincipalReference("user", userId) } : {}),
+      ...(deviceId ? { deviceRef: auditPrincipalReference("device", deviceId) } : {}),
+    }));
   }
 }
 

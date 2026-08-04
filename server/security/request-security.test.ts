@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { InMemoryFixedWindowRateLimiter, RollingRequestCapacityMonitor, auditOutcome } from "./request-security";
+import { describe, expect, it, vi } from "vitest";
+import {
+  InMemoryFixedWindowRateLimiter,
+  JsonLineSecurityAuditSink,
+  RollingRequestCapacityMonitor,
+  auditOutcome,
+} from "./request-security";
 
 describe("request security", () => {
   it("limits each scope and client independently and resets expired windows", () => {
@@ -21,6 +26,37 @@ describe("request security", () => {
     expect(auditOutcome(302)).toBe("success");
     expect(auditOutcome(401)).toBe("rejected");
     expect(auditOutcome(503)).toBe("failed");
+  });
+
+  it("writes stable pseudonymous principal references instead of raw identifiers", () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const sink = new JsonLineSecurityAuditSink();
+    const event = {
+      occurredAt: "2026-08-04T04:00:00.000Z",
+      action: "sync.plan.write",
+      method: "PUT",
+      path: "/api/sync/plans/plan-1",
+      status: 200,
+      outcome: "success" as const,
+      userId: "user-private-id",
+      deviceId: "device-private-id",
+    };
+
+    sink.record(event);
+    sink.record(event);
+
+    const first = JSON.parse(String(log.mock.calls[0][0])) as Record<string, unknown>;
+    const second = JSON.parse(String(log.mock.calls[1][0])) as Record<string, unknown>;
+    expect(first).toMatchObject({ type: "security_audit", action: event.action, status: 200 });
+    expect(first).not.toHaveProperty("userId");
+    expect(first).not.toHaveProperty("deviceId");
+    expect(first.userRef).toMatch(/^[0-9a-f]{32}$/);
+    expect(first.deviceRef).toMatch(/^[0-9a-f]{32}$/);
+    expect(first.userRef).not.toBe(first.deviceRef);
+    expect(second.userRef).toBe(first.userRef);
+    expect(second.deviceRef).toBe(first.deviceRef);
+    expect(log.mock.calls.flat().join(" ")).not.toContain("private-id");
+    log.mockRestore();
   });
 
   it("reports rolling privacy-safe request capacity by scope", () => {
