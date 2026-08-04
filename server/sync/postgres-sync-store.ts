@@ -57,7 +57,10 @@ export class PostgresSyncStore {
     private readonly pool: Pool,
     private readonly now: () => Date = () => new Date(),
     private readonly createCursor: () => string = () => randomUUID(),
-  ) {}
+    private readonly pageSize = 250,
+  ) {
+    if (!Number.isSafeInteger(pageSize) || pageSize <= 0) throw new TypeError("Sync page size must be a positive integer");
+  }
 
   putPlan(principal: SyncPrincipal, request: SyncWriteRequest<LearningPlan>): Promise<SyncEntity<LearningPlan>> {
     return this.write(principal, "learning-plan", request);
@@ -88,25 +91,27 @@ export class PostgresSyncStore {
     }
 
     const rows = await this.pool.query<EntityRow>(
-      `SELECT 'learning-plan'::text AS entity_type, id AS entity_id, revision, updated_at, value, change_sequence
-         FROM learning_plans
-        WHERE user_id = $1 AND change_sequence > $2
-       UNION ALL
-       SELECT 'daily-record'::text AS entity_type, id AS entity_id, revision, updated_at, value, change_sequence
-         FROM daily_records
-        WHERE user_id = $1 AND change_sequence > $2
-       ORDER BY change_sequence`,
-      [principal.userId, afterSequence],
+      `SELECT * FROM (
+         SELECT 'learning-plan'::text AS entity_type, id AS entity_id, revision, updated_at, value, change_sequence
+           FROM learning_plans
+          WHERE user_id = $1 AND change_sequence > $2
+         UNION ALL
+         SELECT 'daily-record'::text AS entity_type, id AS entity_id, revision, updated_at, value, change_sequence
+           FROM daily_records
+          WHERE user_id = $1 AND change_sequence > $2
+       ) AS pending_changes
+       ORDER BY change_sequence
+       LIMIT $3`,
+      [principal.userId, afterSequence, this.pageSize + 1],
     );
-    const latestSequence = rows.rows.length > 0
-      ? Math.max(...rows.rows.map((row) => Number(row.change_sequence)))
-      : afterSequence;
+    const page = rows.rows.slice(0, this.pageSize);
+    const latestSequence = page.length > 0 ? Number(page.at(-1)!.change_sequence) : afterSequence;
     const nextCursor = this.createCursor();
     await this.pool.query(
       "INSERT INTO sync_cursors (token, user_id, sequence) VALUES ($1, $2, $3)",
       [nextCursor, principal.userId, latestSequence],
     );
-    return { changes: rows.rows.map((row) => entityFromRow(row)), cursor: nextCursor };
+    return { changes: page.map((row) => entityFromRow(row)), cursor: nextCursor, hasMore: rows.rows.length > page.length };
   }
 
   private async write<T extends SyncEntityValue>(

@@ -68,6 +68,8 @@ PUT  /api/sync/daily-records/:id
 409  返回服务端当前实体，客户端提示用户选择保留版本
 ```
 
+`GET /api/sync/changes` 每页最多返回 250 个实体，并返回 `cursor` 与 `hasMore`。`hasMore=true` 时客户端必须把不透明 `cursor` 原样传回以读取下一页；游标绑定认证账号且有效期为 30 天，不能作为跨账号或长期书签。浏览器客户端会完整读取分页，并在同步期间同一实体再次变化时保留后读到的版本。
+
 - 创建实体使用 `If-None-Match: *`，更新实体使用带引号的 `If-Match: "<revision>"`；缺失条件头返回 `428`。
 - 写入请求必须来自服务端配置的精确 Origin 白名单；身份只由会话解析器提供，正文、查询和路由中的用户字段都不会被信任。
 - 计划写入正文是完整 `LearningPlan`；每日记录正文为 `{ "planId": "...", "record": DailyLearningRecord }`。路由在进入仓库前执行完整领域校验。

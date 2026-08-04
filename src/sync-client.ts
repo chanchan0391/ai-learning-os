@@ -4,6 +4,7 @@ import type { DailyLearningRecord, LearningPlan, LearningState } from "./types";
 
 export const SYNC_METADATA_KEY = "ai-learning-os-sync-v1";
 const RESTORED_ARCHIVE_PLAN_KEY = "ai-learning-os-restored-archive-v1";
+const MAX_SYNC_PAGES = 1_000;
 
 interface SyncEntity<T = unknown> {
   entityType: "learning-plan" | "daily-record";
@@ -185,11 +186,7 @@ export class BrowserSyncClient {
   }
 
   async sync(localState: LearningState | null): Promise<SyncResult> {
-    const response = await this.request("/api/sync/changes", { credentials: "same-origin" });
-    const body = await response.json() as { changes?: SyncEntity[]; error?: string };
-    if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端进度"));
-
-    const remoteEntities = body.changes;
+    const remoteEntities = await this.readAllChanges("无法读取云端进度");
     if (!localState) {
       if (!remoteEntities.some((entity) => entity.entityType === "learning-plan" && !(entity.value as LearningPlan).archivedAt)) {
         return { state: null, uploaded: 0, downloaded: 0 };
@@ -277,16 +274,14 @@ export class BrowserSyncClient {
       downloaded += result.downloaded;
     }
 
-    const response = await this.request("/api/sync/changes", { credentials: "same-origin" });
-    const body = await response.json() as { changes?: SyncEntity[]; error?: string };
-    if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端进度"));
+    const remoteEntities = await this.readAllChanges("无法读取云端进度");
     const knownPlanIds = new Set(states.map((state) => state.plan.id));
-    const missingPlans = body.changes
+    const missingPlans = remoteEntities
       .filter((entity) => entity.entityType === "learning-plan" && !(entity.value as LearningPlan).archivedAt)
       .filter((entity) => !knownPlanIds.has(entity.entityId))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     for (const planEntity of missingPlans) {
-      const result = this.restoreFromRemote(body.changes, planEntity.entityId);
+      const result = this.restoreFromRemote(remoteEntities, planEntity.entityId);
       if (result.state) states.push(result.state);
       downloaded += result.downloaded;
     }
@@ -306,19 +301,17 @@ export class BrowserSyncClient {
   }
 
   async downloadArchived(existingPlanIds: Iterable<string>, activePlanId?: string): Promise<ArchivedSyncResult> {
-    const response = await this.request("/api/sync/changes", { credentials: "same-origin" });
-    const body = await response.json() as { changes?: SyncEntity[]; error?: string };
-    if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端归档"));
+    const remoteEntities = await this.readAllChanges("无法读取云端归档");
 
     const excluded = new Set(existingPlanIds);
     if (activePlanId) excluded.add(activePlanId);
     const entries: ArchivedLearningState[] = [];
     let downloaded = 0;
-    for (const planEntity of body.changes
+    for (const planEntity of remoteEntities
       .filter((entity) => entity.entityType === "learning-plan" && Boolean((entity.value as LearningPlan).archivedAt))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))) {
       if (excluded.has(planEntity.entityId)) continue;
-      const remoteState = this.stateFromRemote(body.changes, planEntity.entityId);
+      const remoteState = this.stateFromRemote(remoteEntities, planEntity.entityId);
       const archivedAt = remoteState.plan.archivedAt;
       if (!archivedAt) continue;
       const { archivedAt: _archivedAt, ...activePlan } = remoteState.plan;
@@ -333,10 +326,8 @@ export class BrowserSyncClient {
   async resolveConflict(preview: SyncConflictPreview, choice: "local" | "remote"): Promise<SyncResult> {
     if (choice === "remote") {
       if (preview.kind === "different-plan") {
-        const response = await this.request("/api/sync/changes", { credentials: "same-origin" });
-        const body = await response.json() as { changes?: SyncEntity[]; error?: string };
-        if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端进度"));
-        return this.restoreFromRemote(body.changes, preview.remoteState.plan.id);
+        const remoteEntities = await this.readAllChanges("无法读取云端进度");
+        return this.restoreFromRemote(remoteEntities, preview.remoteState.plan.id);
       }
       const nextState = this.applyRemoteEntity(preview.localState, preview);
       this.rememberResolvedEntity(nextState.plan.id, preview, "remote");
@@ -416,19 +407,35 @@ export class BrowserSyncClient {
   }
 
   private async uploadLocalPlan(state: LearningState): Promise<SyncResult> {
-    const response = await this.request("/api/sync/changes", { credentials: "same-origin" });
-    const body = await response.json() as { changes?: SyncEntity[]; error?: string };
-    if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, "无法读取云端进度"));
+    const remoteEntities = await this.readAllChanges("无法读取云端进度");
     const metadata: PlanSyncMetadata = { planId: state.plan.id, entities: {} };
     let uploaded = 0;
     for (const local of this.localEntities(state)) {
-      const remote = body.changes.find((entity) => entity.entityType === local.entityType && entity.entityId === local.entityId);
+      const remote = remoteEntities.find((entity) => entity.entityType === local.entityType && entity.entityId === local.entityId);
       const entity = await this.write(local, remote?.revision ?? null);
       metadata.entities[metadataKey(entity)] = { revision: entity.revision, fingerprint: fingerprint(entity.value) };
       uploaded += 1;
     }
     this.saveMetadata(metadata);
     return { state, uploaded, downloaded: 0 };
+  }
+
+  private async readAllChanges(fallbackError: string): Promise<SyncEntity[]> {
+    const entities = new Map<string, SyncEntity>();
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_SYNC_PAGES; page += 1) {
+      const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+      const response = await this.request(`/api/sync/changes${query}`, { credentials: "same-origin" });
+      const body = await response.json() as { changes?: SyncEntity[]; cursor?: string; hasMore?: boolean; error?: string };
+      if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, fallbackError));
+      for (const entity of body.changes) entities.set(metadataKey(entity), entity);
+      if (body.hasMore !== true) return [...entities.values()];
+      if (!body.cursor || seenCursors.has(body.cursor)) throw new Error("云端同步分页游标无效，请稍后重试");
+      seenCursors.add(body.cursor);
+      cursor = body.cursor;
+    }
+    throw new Error("云端学习记录过多，无法在单次同步中安全读取");
   }
 
   private async reconcile(

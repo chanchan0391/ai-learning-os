@@ -32,6 +32,7 @@ export interface SyncEntity<T = SyncEntityValue> {
 export interface SyncChanges {
   changes: SyncEntity[];
   cursor: string;
+  hasMore: boolean;
 }
 
 export interface SyncStore {
@@ -123,7 +124,10 @@ export class InMemorySyncStore {
   constructor(
     private readonly now: () => Date = () => new Date(),
     private readonly createCursor: () => string = () => randomUUID(),
-  ) {}
+    private readonly pageSize = 250,
+  ) {
+    if (!Number.isSafeInteger(pageSize) || pageSize <= 0) throw new TypeError("Sync page size must be a positive integer");
+  }
 
   putPlan(principal: SyncPrincipal, request: SyncWriteRequest<LearningPlan>): SyncEntity<LearningPlan> {
     return this.write(principal, "learning-plan", request) as SyncEntity<LearningPlan>;
@@ -149,18 +153,16 @@ export class InMemorySyncStore {
       afterSequence = position.sequence;
     }
 
-    const changes = [...this.entities.values()]
+    const matching = [...this.entities.values()]
       .filter((entity) => entity.userId === principal.userId && entity.sequence > afterSequence)
-      .sort((left, right) => left.sequence - right.sequence)
+      .sort((left, right) => left.sequence - right.sequence);
+    const page = matching.slice(0, this.pageSize);
+    const changes = page
       .map(({ userId: _userId, sequence: _sequence, ...entity }) => clone(entity));
-    const latestSequence = changes.length > 0
-      ? Math.max(...[...this.entities.values()]
-        .filter((entity) => entity.userId === principal.userId)
-        .map((entity) => entity.sequence))
-      : afterSequence;
+    const latestSequence = page.at(-1)?.sequence ?? afterSequence;
     const nextCursor = this.createCursor();
     this.cursors.set(nextCursor, { userId: principal.userId, sequence: latestSequence });
-    return { changes, cursor: nextCursor };
+    return { changes, cursor: nextCursor, hasMore: matching.length > page.length };
   }
 
   private write<T>(principal: SyncPrincipal, entityType: SyncEntityType, request: SyncWriteRequest<T>): SyncEntity<T> {

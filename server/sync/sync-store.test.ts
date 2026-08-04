@@ -117,6 +117,38 @@ describe("in-memory sync store", () => {
     expect(store.getChanges(aliceLaptop, secondPull.cursor).changes).toEqual([]);
   });
 
+  it("paginates large snapshots without skipping or repeating entities", () => {
+    let cursor = 0;
+    const store = new InMemorySyncStore(
+      () => new Date("2026-07-31T12:00:00.000Z"),
+      () => `page-${++cursor}`,
+      2,
+    );
+    const plan = generateLearningPlan(goal, new Date("2026-07-31T10:00:00.000Z"));
+    const state = initializeLearningState(plan);
+    store.putPlan(alice, { operationId: "page-plan", entityId: plan.id, baseRevision: null, value: plan });
+    for (let day = 1; day <= 3; day += 1) {
+      store.putDailyRecord(alice, {
+        operationId: `page-day-${day}`,
+        entityId: `${plan.id}:day-${day}`,
+        baseRevision: null,
+        value: { planId: plan.id, record: { ...state.days[0], day } },
+      });
+    }
+
+    const first = store.getChanges(alice);
+    const second = store.getChanges(alice, first.cursor);
+
+    expect(first).toMatchObject({ hasMore: true });
+    expect(second).toMatchObject({ hasMore: false });
+    expect([...first.changes, ...second.changes].map((entity) => entity.entityId)).toEqual([
+      plan.id,
+      `${plan.id}:day-1`,
+      `${plan.id}:day-2`,
+      `${plan.id}:day-3`,
+    ]);
+  });
+
   it("isolates entities, operations, and cursors by authenticated user", () => {
     const { store, plan } = setup();
     store.putPlan(alice, { operationId: "same-operation", entityId: plan.id, baseRevision: null, value: plan });

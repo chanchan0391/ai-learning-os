@@ -139,6 +139,38 @@ describe("PostgreSQL sync store", () => {
     );
   });
 
+  it("paginates account snapshots with an opaque continuation cursor", async () => {
+    const { pool, plan, state } = await setup();
+    let cursor = 0;
+    const store = new PostgresSyncStore(
+      pool,
+      () => new Date("2026-07-31T12:00:00.000Z"),
+      () => `page-${++cursor}`,
+      2,
+    );
+    await store.putPlan(alice, { operationId: "page-plan", entityId: plan.id, baseRevision: null, value: plan });
+    for (let day = 1; day <= 3; day += 1) {
+      await store.putDailyRecord(alice, {
+        operationId: `page-day-${day}`,
+        entityId: `${plan.id}:day-${day}`,
+        baseRevision: null,
+        value: { planId: plan.id, record: { ...state.days[0], day } },
+      });
+    }
+
+    const first = await store.getChanges(alice);
+    const second = await store.getChanges(alice, first.cursor);
+
+    expect(first).toMatchObject({ hasMore: true });
+    expect(second).toMatchObject({ hasMore: false });
+    expect([...first.changes, ...second.changes].map((entity) => entity.entityId)).toEqual([
+      plan.id,
+      `${plan.id}:day-1`,
+      `${plan.id}:day-2`,
+      `${plan.id}:day-3`,
+    ]);
+  });
+
   it("requires an active provisioned device and an owned plan", async () => {
     const { store, plan, state } = await setup();
     await store.putPlan(alice, { operationId: "op-plan", entityId: plan.id, baseRevision: null, value: plan });

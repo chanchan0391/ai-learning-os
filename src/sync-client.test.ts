@@ -143,6 +143,28 @@ describe("browser sync client", () => {
     expect(result.states.map((state) => state.plan.id).sort()).toEqual([first.plan.id, second.plan.id].sort());
   });
 
+  it("drains paginated cloud snapshots before restoring goals", async () => {
+    const state = learningState();
+    const pages = [
+      [{ entityType: "learning-plan" as const, entityId: state.plan.id, revision: 1, updatedAt: state.plan.createdAt, value: state.plan }],
+      [{ entityType: "daily-record" as const, entityId: `${state.plan.id}:day-1`, revision: 1, updatedAt: state.plan.createdAt, value: { planId: state.plan.id, record: state.days[0] } }],
+    ];
+    const requested: string[] = [];
+    const request = vi.fn(async (input: string | URL | Request) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      requested.push(rawUrl);
+      const url = new URL(rawUrl, "http://localhost");
+      const page = url.searchParams.get("cursor") === "page-1" ? 1 : 0;
+      return Response.json({ changes: pages[page], cursor: `page-${page + 1}`, hasMore: page === 0 });
+    }) as typeof fetch;
+
+    const result = await new BrowserSyncClient(localStorage, request).sync(null);
+
+    expect(result.state).toEqual(state);
+    expect(result.downloaded).toBe(2);
+    expect(requested).toEqual(["/api/sync/changes", "/api/sync/changes?cursor=page-1"]);
+  });
+
   it("marks a completed goal as archived and does not treat it as a competing active plan", async () => {
     const server = fakeServer();
     const client = new BrowserSyncClient(localStorage, server.request);
