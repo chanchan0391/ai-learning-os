@@ -125,7 +125,8 @@ export class PostgresModelUsageLedger implements ModelUsageLedger {
     await this.pool.query(
       `INSERT INTO model_usage_events
         (user_id, action, provider, model, provider_request_id, input_tokens, output_tokens, cost_micros, occurred_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT DO NOTHING`,
       [entry.userId, entry.action, entry.provider, entry.model, entry.requestId ?? null,
         entry.inputTokens, entry.outputTokens, costMicros, new Date(this.now())],
     );

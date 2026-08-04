@@ -13,7 +13,12 @@ async function createLedger(now: () => number) {
   const adapter = memory.adapters.createPg();
   const pool = new adapter.Pool();
   pools.push(pool);
-  for (const migration of ["001-initial-sync-schema.sql", "005-model-usage-ledger.sql", "006-model-usage-global-time-index.sql"]) {
+  for (const migration of [
+    "001-initial-sync-schema.sql",
+    "005-model-usage-ledger.sql",
+    "006-model-usage-global-time-index.sql",
+    "009-model-usage-provider-request-idempotency.sql",
+  ]) {
     await pool.query(await readFile(new URL(`../sync/migrations/${migration}`, import.meta.url), "utf8"));
   }
   await pool.query("INSERT INTO users (id) VALUES ('user-1')");
@@ -31,6 +36,38 @@ async function createLedger(now: () => number) {
 }
 
 describe("account model usage", () => {
+  it("converges duplicate historical provider responses before enforcing uniqueness", async () => {
+    const memory = newDb();
+    memory.public.registerFunction({ name: "length", args: [DataType.text], returns: DataType.integer, implementation: (value: string) => value.length });
+    const adapter = memory.adapters.createPg();
+    const pool = new adapter.Pool();
+    pools.push(pool);
+    for (const migration of ["001-initial-sync-schema.sql", "005-model-usage-ledger.sql"]) {
+      await pool.query(await readFile(new URL(`../sync/migrations/${migration}`, import.meta.url), "utf8"));
+    }
+    await pool.query("INSERT INTO users (id) VALUES ('user-1')");
+    await pool.query(
+      `INSERT INTO model_usage_events
+        (user_id, action, provider, model, provider_request_id, input_tokens, output_tokens, cost_micros)
+       VALUES
+        ('user-1', 'ai.plan.create', 'openai', 'model-a', 'req-duplicate', 10, 5, 60),
+        ('user-1', 'ai.plan.create', 'openai', 'model-a', 'req-duplicate', 10, 5, 60)`,
+    );
+
+    await pool.query(await readFile(
+      new URL("../sync/migrations/009-model-usage-provider-request-idempotency.sql", import.meta.url),
+      "utf8",
+    ));
+
+    const stored = await pool.query("SELECT count(*)::int AS count FROM model_usage_events");
+    expect(stored.rows[0].count).toBe(1);
+    await expect(pool.query(
+      `INSERT INTO model_usage_events
+        (user_id, action, provider, model, provider_request_id, input_tokens, output_tokens, cost_micros)
+       VALUES ('user-1', 'ai.plan.create', 'openai', 'model-a', 'req-duplicate', 10, 5, 60)`,
+    )).rejects.toThrow();
+  });
+
   it("records privacy-safe token and cost entries and enforces UTC monthly limits", async () => {
     let now = Date.parse("2026-08-03T12:00:00.000Z");
     const { pool, ledger } = await createLedger(() => now);
@@ -65,6 +102,50 @@ describe("account model usage", () => {
       remainingCostMicros: 1_000,
       remainingGlobalCostMicros: 0,
     });
+  });
+
+  it("charges a provider response only once when accounting is retried", async () => {
+    const { pool, ledger } = await createLedger(() => Date.parse("2026-08-03T12:00:00.000Z"));
+    const entry = {
+      userId: "user-1",
+      action: "ai.plan.create",
+      provider: "openai",
+      model: "model-a",
+      requestId: "req-replayed",
+      inputTokens: 100,
+      outputTokens: 50,
+    };
+
+    await ledger.record(entry);
+    await ledger.record(entry);
+
+    const stored = await pool.query(
+      "SELECT count(*)::int AS count, sum(cost_micros)::int AS cost FROM model_usage_events",
+    );
+    expect(stored.rows).toEqual([{ count: 1, cost: 600 }]);
+    await expect(ledger.checkBudget("user-1")).resolves.toMatchObject({
+      remainingTokens: 850,
+      remainingCostMicros: 400,
+      remainingGlobalCostMicros: 9_400,
+    });
+  });
+
+  it("continues recording responses when the provider supplies no request ID", async () => {
+    const { pool, ledger } = await createLedger(() => Date.parse("2026-08-03T12:00:00.000Z"));
+    const entry = {
+      userId: "user-1",
+      action: "ai.plan.create",
+      provider: "compatible",
+      model: "model-a",
+      inputTokens: 1,
+      outputTokens: 1,
+    };
+
+    await ledger.record(entry);
+    await ledger.record(entry);
+
+    const stored = await pool.query("SELECT count(*)::int AS count FROM model_usage_events");
+    expect(stored.rows[0].count).toBe(2);
   });
 
   it("selects account limits from the current subscription plan and denies unknown plans", async () => {
