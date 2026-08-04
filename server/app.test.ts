@@ -107,6 +107,52 @@ describe("AI Learning OS API", () => {
     expect(plan.today.reduce((sum, task) => sum + task.minutes, 0)).toBe(60);
   });
 
+  it("requires JSON media types before invoking an Agent", async () => {
+    let providerCalls = 0;
+    const provider: ModelProvider = {
+      id: "live-test",
+      isAiEnabled: true,
+      generateStructured: async () => {
+        providerCalls += 1;
+        throw new Error("must not run");
+      },
+    };
+    const baseUrl = await startApi(provider);
+
+    const response = await fetch(`${baseUrl}/api/plans`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify(goal),
+    });
+
+    expect(response.status).toBe(415);
+    await expect(response.json()).resolves.toEqual({ error: "Content-Type must be application/json" });
+    expect(providerCalls).toBe(0);
+  });
+
+  it("rejects oversized JSON before invoking an Agent", async () => {
+    let providerCalls = 0;
+    const provider: ModelProvider = {
+      id: "live-test",
+      isAiEnabled: true,
+      generateStructured: async () => {
+        providerCalls += 1;
+        throw new Error("must not run");
+      },
+    };
+    const baseUrl = await startApi(provider);
+
+    const response = await fetch(`${baseUrl}/api/plans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...goal, currentLevel: "x".repeat(1_000_001) }),
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({ error: "Request body is too large" });
+    expect(providerCalls).toBe(0);
+  });
+
   it("requires an account and records live-model usage when account budgets are enabled", async () => {
     let providerCalls = 0;
     const recorded: unknown[] = [];

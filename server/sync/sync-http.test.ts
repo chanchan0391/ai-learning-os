@@ -39,7 +39,7 @@ const goal = {
 };
 
 describe("authenticated sync HTTP API", () => {
-  const writeOrigin = { Origin: "http://127.0.0.1:5173" };
+  const writeOrigin = { Origin: "http://127.0.0.1:5173", "Content-Type": "application/json" };
   it("rejects requests without a principal resolved from a trusted session", async () => {
     const baseUrl = await startApi();
     const response = await fetch(`${baseUrl}/api/sync/changes`);

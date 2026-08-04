@@ -161,6 +161,16 @@ function entityIdFromPath(pathname: string, prefix: string): string | null {
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
+  const contentType = request.headers["content-type"];
+  if (typeof contentType !== "string" || contentType.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
+    const error = new Error("Content-Type must be application/json");
+    error.name = "UnsupportedMediaTypeError";
+    throw error;
+  }
+  const declaredSize = request.headers["content-length"];
+  if (typeof declaredSize === "string" && Number(declaredSize) > MAX_BODY_BYTES) {
+    throw new RangeError("Request body is too large");
+  }
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -557,6 +567,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (error instanceof Error && error.name === "SyncConfigurationError") return sendJson(response, 503, { error: error.message });
       if (error instanceof Error && error.name === "ModelBudgetConfigurationError") return sendJson(response, 503, { error: error.message });
       if (error instanceof Error && error.name === "ForbiddenOriginError") return sendJson(response, 403, { error: error.message });
+      if (error instanceof Error && error.name === "UnsupportedMediaTypeError") return sendJson(response, 415, { error: error.message });
       if (error instanceof Error && error.name === "PreconditionRequiredError") return sendJson(response, 428, { error: error.message });
       if (error instanceof SyntaxError || error instanceof TypeError) return sendJson(response, 400, { error: error.message });
       if (error instanceof RangeError) return sendJson(response, 413, { error: error.message });
