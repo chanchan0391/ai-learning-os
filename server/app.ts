@@ -37,6 +37,14 @@ import {
 } from "./sync/sync-store";
 
 const MAX_BODY_BYTES = 1_000_000;
+const BROWSER_SECURITY_HEADERS = {
+  "Content-Security-Policy": "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+  "Referrer-Policy": "no-referrer",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+} as const;
 
 function sendJson(response: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers });
@@ -181,6 +189,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
     const requestId = randomUUID();
     const requestStartedAt = Date.now();
     response.setHeader("X-Request-Id", requestId);
+    for (const [name, value] of Object.entries(BROWSER_SECURITY_HEADERS)) response.setHeader(name, value);
     const controller = new AbortController();
     request.once("aborted", () => controller.abort());
     response.once("close", () => {

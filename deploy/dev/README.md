@@ -49,6 +49,8 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=false
 5. 验证两个用户服务、Web 首页和 API 健康端点，同时确认实时模型、同步和 PostgreSQL 就绪检查均通过；失败时恢复上一 release。
 6. 只保留最近三个 release，避免服务器磁盘持续增长。
 
+Web 服务同时发送仅允许同源脚本、样式、连接和资源的 CSP，并禁止跨站嵌入、MIME 嗅探、Referrer 泄露及未使用的敏感浏览器能力。dev 只通过回环地址和 SSH 隧道提供 HTTP；未来公网 TLS 终止层必须另外配置 HSTS。
+
 常规部署成功不发送通知。自动部署失败、持续版本落后或需要人工判断时，依照仓库协作规则通过 Gmail 通知项目所有者。
 
 查看状态时使用：

@@ -32,6 +32,18 @@ describe("AI Learning OS API", () => {
     });
   });
 
+  it("hardens every API response against browser content injection and embedding", async () => {
+    const baseUrl = await startApi();
+    const response = await fetch(`${baseUrl}/api/health`);
+
+    expect(response.headers.get("content-security-policy")).toBe("default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+    expect(response.headers.get("cross-origin-opener-policy")).toBe("same-origin");
+    expect(response.headers.get("permissions-policy")).toBe("camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("x-frame-options")).toBe("DENY");
+  });
+
   it("fails startup when subscription enforcement cannot guard model calls", () => {
     expect(() => createApp(new DeterministicModelProvider(), {
       subscriptionEntitlements: {
