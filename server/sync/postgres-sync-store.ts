@@ -30,6 +30,9 @@ interface OperationRow extends QueryResultRow {
   result: SyncEntity;
 }
 
+const SYNC_METADATA_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const SYNC_METADATA_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+
 function entityFromRow<T = SyncEntityValue>(row: EntityRow): SyncEntity<T> {
   return {
     entityType: row.entity_type,
@@ -48,6 +51,8 @@ function entityFromRow<T = SyncEntityValue>(row: EntityRow): SyncEntity<T> {
  * idempotency and revision checks without blocking unrelated users.
  */
 export class PostgresSyncStore {
+  private nextMetadataCleanupAt = 0;
+
   constructor(
     private readonly pool: Pool,
     private readonly now: () => Date = () => new Date(),
@@ -68,11 +73,13 @@ export class PostgresSyncStore {
   async getChanges(principal: SyncPrincipal, cursor?: string): Promise<SyncChanges> {
     requireSyncIdentity(principal);
     await this.requireActivePrincipal(this.pool, principal);
+    const now = this.now();
+    await this.maybeCleanupExpiredMetadata(now);
     let afterSequence = 0;
     if (cursor) {
       const cursorResult = await this.pool.query<{ sequence: string | number }>(
-        "SELECT sequence FROM sync_cursors WHERE token = $1 AND user_id = $2",
-        [cursor, principal.userId],
+        "SELECT sequence FROM sync_cursors WHERE token = $1 AND user_id = $2 AND created_at >= $3",
+        [cursor, principal.userId, new Date(now.getTime() - SYNC_METADATA_RETENTION_MS)],
       );
       if (cursorResult.rowCount !== 1) {
         throw new SyncRequestError("invalid-cursor", "The sync cursor is invalid for the authenticated user");
@@ -109,14 +116,16 @@ export class PostgresSyncStore {
   ): Promise<SyncEntity<T>> {
     requireSyncIdentity(principal);
     requireSyncWriteRequest(request);
+    const now = this.now();
+    await this.maybeCleanupExpiredMetadata(now);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       await this.requireActivePrincipal(client, principal, true);
       const fingerprint = syncOperationFingerprint(entityType, request);
       const previous = await client.query<OperationRow>(
-        "SELECT fingerprint, result FROM sync_operations WHERE user_id = $1 AND operation_id = $2",
-        [principal.userId, request.operationId],
+        "SELECT fingerprint, result FROM sync_operations WHERE user_id = $1 AND operation_id = $2 AND created_at >= $3",
+        [principal.userId, request.operationId, new Date(now.getTime() - SYNC_METADATA_RETENTION_MS)],
       );
       if (previous.rowCount === 1) {
         if (previous.rows[0].fingerprint !== fingerprint) {
@@ -206,6 +215,19 @@ export class PostgresSyncStore {
     );
     if (result.rowCount !== 1) {
       throw new SyncRequestError("unknown-principal", "The authenticated user or device is not active");
+    }
+  }
+
+  private async maybeCleanupExpiredMetadata(now: Date): Promise<void> {
+    if (now.getTime() < this.nextMetadataCleanupAt) return;
+    this.nextMetadataCleanupAt = now.getTime() + SYNC_METADATA_CLEANUP_INTERVAL_MS;
+    const cutoff = new Date(now.getTime() - SYNC_METADATA_RETENTION_MS);
+    try {
+      await this.pool.query("DELETE FROM sync_cursors WHERE created_at < $1", [cutoff]);
+      await this.pool.query("DELETE FROM sync_operations WHERE created_at < $1", [cutoff]);
+    } catch (error) {
+      this.nextMetadataCleanupAt = 0;
+      console.error("Sync metadata cleanup failed", error instanceof Error ? error.name : "UnknownError");
     }
   }
 }

@@ -36,13 +36,14 @@ async function setup() {
     [alice.userId, alice.deviceId, aliceLaptop.deviceId, bob.userId],
   );
   let cursor = 0;
+  let now = new Date("2026-07-31T12:00:00.000Z");
   const store = new PostgresSyncStore(
     pool,
-    () => new Date("2026-07-31T12:00:00.000Z"),
+    () => now,
     () => `opaque-${++cursor}`,
   );
   const plan = generateLearningPlan(goal, new Date("2026-07-31T10:00:00.000Z"));
-  return { pool, store, plan, state: initializeLearningState(plan) };
+  return { pool, store, plan, state: initializeLearningState(plan), setNow: (value: Date) => { now = value; } };
 }
 
 describe("PostgreSQL sync store", () => {
@@ -148,5 +149,30 @@ describe("PostgreSQL sync store", () => {
     })).rejects.toMatchObject({ code: "missing-plan" } satisfies Partial<SyncRequestError>);
     await expect(store.getChanges({ userId: alice.userId, deviceId: "unknown-device" }))
       .rejects.toMatchObject({ code: "unknown-principal" } satisfies Partial<SyncRequestError>);
+  });
+
+  it("expires cursors and idempotency records after 30 days without deleting learning data", async () => {
+    const { pool, store, plan, setNow } = await setup();
+    await store.putPlan(alice, { operationId: "op-plan", entityId: plan.id, baseRevision: null, value: plan });
+    const firstPull = await store.getChanges(alice);
+    await pool.query("UPDATE sync_operations SET created_at = $1", ["2026-07-01T00:00:00.000Z"]);
+    await pool.query("UPDATE sync_cursors SET created_at = $1", ["2026-07-01T00:00:00.000Z"]);
+
+    setNow(new Date("2026-09-01T12:00:00.000Z"));
+    const freshPull = await store.getChanges(alice);
+
+    expect(freshPull.changes).toHaveLength(1);
+    await expect(store.getChanges(alice, firstPull.cursor)).rejects.toMatchObject(
+      { code: "invalid-cursor" } satisfies Partial<SyncRequestError>,
+    );
+    await expect(store.putPlan(alice, {
+      operationId: "op-plan", entityId: plan.id, baseRevision: null, value: plan,
+    })).rejects.toMatchObject({ code: "revision-conflict" } satisfies Partial<SyncConflictError>);
+    const [operations, cursors, plans] = await Promise.all([
+      pool.query("SELECT count(*)::int AS count FROM sync_operations"),
+      pool.query("SELECT count(*)::int AS count FROM sync_cursors"),
+      pool.query("SELECT count(*)::int AS count FROM learning_plans"),
+    ]);
+    expect([operations.rows[0].count, cursors.rows[0].count, plans.rows[0].count]).toEqual([0, 1, 1]);
   });
 });
