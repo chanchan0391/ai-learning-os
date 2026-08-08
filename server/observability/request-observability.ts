@@ -8,6 +8,7 @@ export interface RequestLogEvent {
   status: number;
   outcome: RequestOutcome;
   durationMs: number;
+  termination?: "client-disconnected";
 }
 
 export interface RequestLogSink {

@@ -6,7 +6,7 @@ import { DeterministicModelProvider } from "./ai/deterministic-provider";
 import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest } from "./ai/model-provider";
 import type { SubscriptionEntitlementDecision } from "./billing/subscription-entitlement";
 import type { RequestLogEvent } from "./observability/request-observability";
-import { InMemoryConcurrencyLimiter, type SecurityAuditEvent } from "./security/request-security";
+import { InMemoryConcurrencyLimiter, RollingRequestCapacityMonitor, type SecurityAuditEvent } from "./security/request-security";
 import type { SyncStore } from "./sync/sync-store";
 
 const servers: ReturnType<typeof createApp>[] = [];
@@ -417,6 +417,13 @@ describe("AI Learning OS API", () => {
     let markAborted!: () => void;
     const started = new Promise<void>((resolve) => { markStarted = resolve; });
     const aborted = new Promise<void>((resolve) => { markAborted = resolve; });
+    const requestEvents: RequestLogEvent[] = [];
+    const auditEvents: SecurityAuditEvent[] = [];
+    const capacityMonitor = new RollingRequestCapacityMonitor();
+    let markLogged!: () => void;
+    let markAudited!: () => void;
+    const logged = new Promise<void>((resolve) => { markLogged = resolve; });
+    const audited = new Promise<void>((resolve) => { markAudited = resolve; });
     const provider: ModelProvider = {
       id: "cancellation-test",
       isAiEnabled: true,
@@ -428,7 +435,11 @@ describe("AI Learning OS API", () => {
         }, { once: true });
       }),
     };
-    const baseUrl = await startApi(provider);
+    const baseUrl = await startApi(provider, {
+      capacityMonitor,
+      requestLogSink: { record: (event) => { requestEvents.push(event); markLogged(); } },
+      auditSink: { record: (event) => { auditEvents.push(event); markAudited(); } },
+    });
     const controller = new AbortController();
     const fetchResult = fetch(`${baseUrl}/api/plans`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -439,6 +450,19 @@ describe("AI Learning OS API", () => {
 
     await expect(fetchResult).rejects.toThrow();
     await expect(aborted).resolves.toBeUndefined();
+    await Promise.all([logged, audited]);
+    expect(requestEvents).toHaveLength(1);
+    expect(requestEvents[0]).toMatchObject({
+      method: "POST", path: "/api/plans", status: 499, outcome: "rejected", termination: "client-disconnected",
+    });
+    expect(auditEvents).toHaveLength(1);
+    expect(auditEvents[0]).toMatchObject({
+      action: "ai.plan.create", status: 499, outcome: "rejected", reason: "client-disconnected",
+    });
+    expect(capacityMonitor.snapshot()).toMatchObject({
+      inFlight: 0, requests: 1, rejected: 1, failed: 0,
+      byScope: { "ai-plan": { requests: 1, rejected: 1, failed: 0 } },
+    });
   });
 
   it("rejects excess concurrent Agent work before reading its body or calling the model", async () => {

@@ -56,6 +56,20 @@ function sendJson(response: ServerResponse, status: number, body: unknown, heade
   response.end(JSON.stringify(body));
 }
 
+function onResponseSettled(
+  response: ServerResponse,
+  callback: (status: number, clientDisconnected: boolean) => void,
+): void {
+  let settled = false;
+  const settle = (clientDisconnected: boolean) => {
+    if (settled) return;
+    settled = true;
+    callback(clientDisconnected ? 499 : response.statusCode, clientDisconnected);
+  };
+  response.once("finish", () => settle(false));
+  response.once("close", () => settle(!response.writableFinished));
+}
+
 export interface AppOptions {
   syncStore?: SyncStore;
   resolvePrincipal?: AuthenticatedPrincipalResolver;
@@ -214,16 +228,24 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (!response.writableEnded) controller.abort();
     });
     const url = new URL(request.url ?? "/", "http://localhost");
-    if (options.requestLogSink) {
-      response.once("finish", () => {
+    const route = protectedRoute(request.method, url.pathname);
+    let auditPrincipal: { userId: string; deviceId: string } | null = null;
+    let auditReason: string | undefined;
+    let modelUsageContext: { userId: string; action: string } | null = null;
+    const completeCapacity = route ? capacityMonitor.start(route.rateLimitScope) : null;
+    onResponseSettled(response, (status, clientDisconnected) => {
+      if (clientDisconnected) auditReason = "client-disconnected";
+      completeCapacity?.(status, auditReason === "rate-limit-exceeded");
+      if (options.requestLogSink) {
         const event: RequestLogEvent = {
           occurredAt: new Date().toISOString(),
           requestId,
           method: request.method ?? "UNKNOWN",
           path: url.pathname,
-          status: response.statusCode,
-          outcome: requestOutcome(response.statusCode),
+          status,
+          outcome: requestOutcome(status),
           durationMs: Math.max(0, Date.now() - requestStartedAt),
+          ...(clientDisconnected ? { termination: "client-disconnected" as const } : {}),
         };
         try {
           const recorded = options.requestLogSink!.record(event);
@@ -231,25 +253,15 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         } catch (error) {
           console.error("Request log sink failed", error);
         }
-      });
-    }
-    const route = protectedRoute(request.method, url.pathname);
-    let auditPrincipal: { userId: string; deviceId: string } | null = null;
-    let auditReason: string | undefined;
-    let modelUsageContext: { userId: string; action: string } | null = null;
-    const completeCapacity = route ? capacityMonitor.start(route.rateLimitScope) : null;
-    if (completeCapacity) {
-      response.once("finish", () => completeCapacity(response.statusCode, auditReason === "rate-limit-exceeded"));
-    }
-    if (route && options.auditSink) {
-      response.once("finish", () => {
+      }
+      if (route && options.auditSink) {
         const event: SecurityAuditEvent = {
           occurredAt: new Date().toISOString(),
           action: route.action,
           method: request.method ?? "UNKNOWN",
           path: url.pathname,
-          status: response.statusCode,
-          outcome: auditOutcome(response.statusCode),
+          status,
+          outcome: auditOutcome(status),
           ...(auditReason ? { reason: auditReason } : {}),
           ...principalFields(auditPrincipal),
         };
@@ -259,8 +271,8 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         } catch (error) {
           console.error("Security audit sink failed", error);
         }
-      });
-    }
+      }
+    });
     try {
       if (route) {
         const decision = await rateLimiter.consume(route.rateLimitScope, clientRateLimitKey(request), route.policy);
@@ -571,6 +583,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       }
       return sendJson(response, 404, { error: "Not found" });
     } catch (error) {
+      if (response.destroyed) return;
       if (error instanceof Error) auditReason = error.name;
       if (error instanceof SyncConflictError) {
         auditReason = error.code;
