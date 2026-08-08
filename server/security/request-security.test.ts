@@ -1,12 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   InMemoryFixedWindowRateLimiter,
+  InMemoryConcurrencyLimiter,
   JsonLineSecurityAuditSink,
   RollingRequestCapacityMonitor,
   auditOutcome,
 } from "./request-security";
 
 describe("request security", () => {
+  it("bounds concurrent work and releases capacity idempotently", () => {
+    const limiter = new InMemoryConcurrencyLimiter(1);
+    const release = limiter.tryAcquire();
+
+    expect(release).toBeTypeOf("function");
+    expect(limiter.tryAcquire()).toBeNull();
+    expect(limiter.snapshot()).toEqual({ limit: 1, inFlight: 1, rejected: 1 });
+
+    release?.();
+    release?.();
+    expect(limiter.snapshot()).toEqual({ limit: 1, inFlight: 0, rejected: 1 });
+    expect(limiter.tryAcquire()).toBeTypeOf("function");
+  });
+
+  it("rejects invalid concurrency limits", () => {
+    expect(() => new InMemoryConcurrencyLimiter(0)).toThrow(/positive integer/);
+    expect(() => new InMemoryConcurrencyLimiter(1.5)).toThrow(/positive integer/);
+  });
+
   it("limits each scope and client independently and resets expired windows", () => {
     let now = 1_000;
     const limiter = new InMemoryFixedWindowRateLimiter(() => now);

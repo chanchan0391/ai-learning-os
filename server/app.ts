@@ -18,6 +18,7 @@ import type { SubscriptionEntitlementResolver } from "./billing/subscription-ent
 import { requestOutcome, type RequestLogEvent, type RequestLogSink } from "./observability/request-observability";
 import {
   InMemoryFixedWindowRateLimiter,
+  InMemoryConcurrencyLimiter,
   RollingRequestCapacityMonitor,
   auditOutcome,
   clientRateLimitKey,
@@ -25,6 +26,7 @@ import {
   type RateLimitPolicy,
   type RequestRateLimiter,
   type RequestCapacityMonitor,
+  type RequestConcurrencyLimiter,
   type SecurityAuditEvent,
   type SecurityAuditSink,
 } from "./security/request-security";
@@ -37,6 +39,7 @@ import {
 } from "./sync/sync-store";
 
 const MAX_BODY_BYTES = 1_000_000;
+export const DEFAULT_AGENT_CONCURRENCY_LIMIT = 20;
 const BROWSER_SECURITY_HEADERS = {
   "Content-Security-Policy": "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
   "Cross-Origin-Opener-Policy": "same-origin",
@@ -62,6 +65,7 @@ export interface AppOptions {
   rateLimiter?: RequestRateLimiter;
   auditSink?: SecurityAuditSink;
   capacityMonitor?: RequestCapacityMonitor;
+  agentConcurrencyLimiter?: RequestConcurrencyLimiter;
   modelUsageLedger?: ModelUsageLedger;
   subscriptionEntitlements?: SubscriptionEntitlementResolver;
   requestLogSink?: RequestLogSink;
@@ -195,6 +199,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
   const reviewer = createReviewAgent(agentProvider);
   const rateLimiter = options.rateLimiter ?? new InMemoryFixedWindowRateLimiter();
   const capacityMonitor = options.capacityMonitor ?? new RollingRequestCapacityMonitor();
+  const agentConcurrencyLimiter = options.agentConcurrencyLimiter ?? new InMemoryConcurrencyLimiter(DEFAULT_AGENT_CONCURRENCY_LIMIT);
   return createServer(async (request, response) => {
     const requestId = randomUUID();
     const requestStartedAt = Date.now();
@@ -265,6 +270,15 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           return sendJson(response, 429, { error: "Too many requests" }, { "Retry-After": String(retryAfter) });
         }
       }
+      if (route?.rateLimitScope.startsWith("ai-")) {
+        const release = agentConcurrencyLimiter.tryAcquire();
+        if (!release) {
+          auditReason = "agent-concurrency-exceeded";
+          return sendJson(response, 503, { error: "Agent capacity is temporarily full" }, { "Retry-After": "1" });
+        }
+        response.once("finish", release);
+        response.once("close", release);
+      }
       if (request.method === "GET" && request.url === "/api/health") {
         let database: "disabled" | "ready" | "unavailable" = options.syncStore ? "ready" : "disabled";
         if (options.readinessCheck) {
@@ -283,6 +297,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           syncEnabled: Boolean(options.syncStore && options.resolvePrincipal),
           dependencies: { database },
           capacity: capacityMonitor.snapshot(),
+          agentConcurrency: agentConcurrencyLimiter.snapshot(),
           accountModelBudgetsEnabled: Boolean(options.modelUsageLedger),
           subscriptionEntitlementsRequired: Boolean(options.subscriptionEntitlements),
         });

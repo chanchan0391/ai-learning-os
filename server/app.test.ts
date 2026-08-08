@@ -5,7 +5,7 @@ import { DeterministicModelProvider } from "./ai/deterministic-provider";
 import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest } from "./ai/model-provider";
 import type { SubscriptionEntitlementDecision } from "./billing/subscription-entitlement";
 import type { RequestLogEvent } from "./observability/request-observability";
-import type { SecurityAuditEvent } from "./security/request-security";
+import { InMemoryConcurrencyLimiter, type SecurityAuditEvent } from "./security/request-security";
 import type { SyncStore } from "./sync/sync-store";
 
 const servers: ReturnType<typeof createApp>[] = [];
@@ -29,6 +29,7 @@ describe("AI Learning OS API", () => {
       status: "ok", provider: "deterministic-development", aiEnabled: false, syncEnabled: false,
       dependencies: { database: "disabled" },
       capacity: { inFlight: 0, requests: 0, rejected: 0, failed: 0, rateLimited: 0, byScope: {} },
+      agentConcurrency: { limit: 20, inFlight: 0, rejected: 0 },
     });
   });
 
@@ -405,6 +406,49 @@ describe("AI Learning OS API", () => {
 
     await expect(fetchResult).rejects.toThrow();
     await expect(aborted).resolves.toBeUndefined();
+  });
+
+  it("rejects excess concurrent Agent work before reading its body or calling the model", async () => {
+    const deterministic = new DeterministicModelProvider();
+    let allowFirst!: () => void;
+    let markStarted!: () => void;
+    const gate = new Promise<void>((resolve) => { allowFirst = resolve; });
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let modelCalls = 0;
+    const provider: ModelProvider = {
+      id: "concurrency-test",
+      isAiEnabled: true,
+      generateStructured: async <T>(request: StructuredGenerationRequest) => {
+        modelCalls += 1;
+        if (modelCalls === 1) {
+          markStarted();
+          await gate;
+        }
+        return deterministic.generateStructured<T>(request);
+      },
+    };
+    const baseUrl = await startApi(provider, { agentConcurrencyLimiter: new InMemoryConcurrencyLimiter(1) });
+    const first = fetch(`${baseUrl}/api/plans`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(goal),
+    });
+    await started;
+
+    const second = await fetch(`${baseUrl}/api/plans`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(goal),
+    });
+    expect(second.status).toBe(503);
+    expect(second.headers.get("retry-after")).toBe("1");
+    await expect(second.json()).resolves.toEqual({ error: "Agent capacity is temporarily full" });
+    expect(modelCalls).toBe(1);
+
+    await expect(fetch(`${baseUrl}/api/health`).then((response) => response.json())).resolves.toMatchObject({
+      agentConcurrency: { limit: 1, inFlight: 1, rejected: 1 },
+    });
+    allowFirst();
+    expect((await first).status).toBe(201);
+    await expect(fetch(`${baseUrl}/api/health`).then((response) => response.json())).resolves.toMatchObject({
+      agentConcurrency: { limit: 1, inFlight: 0, rejected: 1 },
+    });
   });
 
   it("reports, rotates, and revokes authenticated browser sessions", async () => {

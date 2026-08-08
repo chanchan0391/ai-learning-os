@@ -79,6 +79,8 @@ OpenAI Provider 对每次尝试设置 30 秒超时，并对网络错误、408、
 
 同一次 Agent 调用只向领域层返回一次最终结果，重试过程不会写入学习状态；OpenAI 请求继续使用 `store: false`。浏览器断开连接时，本地 API 会沿 `AbortSignal` 取消正在执行的 Agent 调用，避免无调用方的模型工作继续消耗资源。超时最终映射为 504，主动取消映射为 499，其他厂商错误保留安全状态码和可选请求 ID。此策略遵循官方的[错误处理建议](https://developers.openai.com/api/docs/guides/error-codes)与[客户端请求 ID 指南](https://developers.openai.com/api/reference/overview#supplying-your-own-request-id-with-x-client-request-id)。
 
+Agent API 还在每个进程内共享一个并发准入边界，默认最多同时执行 20 个 Planner、Teacher、Evaluator、Review 或 Coach 请求。并发满载时，新请求会在认证预算查询、正文读取和模型调用前返回带 `Retry-After` 的 `503`；请求完成、失败或客户端断开都会幂等释放名额。`/api/health` 暴露上限、当前进行中数量和累计拒绝数，不包含用户或学习内容。`AI_MAX_CONCURRENT_AGENT_REQUESTS` 可按实例容量调整；多实例总上限仍需由生产入口和厂商配额共同约束。
+
 ### 成本与容量保护
 
 所有会触发模型工作的 Agent HTTP 入口都在读取请求正文和调用 Provider 前进入限流。当前每客户端每 60 秒最多创建 10 个计划、30 个教学会话、30 个成果评估、30 个复习评估和 20 个恢复计划；启用 PostgreSQL 后配额由所有实例原子共享。拒绝事件只记录动作、路径、状态和限流原因，不记录学习目标、回答、成果正文或模型凭据。

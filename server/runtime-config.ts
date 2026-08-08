@@ -30,6 +30,11 @@ function parsePositiveInteger(value: string, name: string): number {
   return parsed;
 }
 
+export function readAgentConcurrencyLimit(env: NodeJS.ProcessEnv): number | undefined {
+  const value = env.AI_MAX_CONCURRENT_AGENT_REQUESTS?.trim();
+  return value ? parsePositiveInteger(value, "AI_MAX_CONCURRENT_AGENT_REQUESTS") : undefined;
+}
+
 function parseUsdMicros(value: string, name: string): number {
   if (!/^\d+(?:\.\d{1,6})?$/.test(value)) throw new Error(`${name} must be a positive USD amount with at most 6 decimals`);
   const [whole, fraction = ""] = value.split(".");

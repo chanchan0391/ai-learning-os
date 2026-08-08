@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
-import { createSyncRuntime, readSyncRuntimeConfig } from "./runtime-config";
+import { createSyncRuntime, readAgentConcurrencyLimit, readSyncRuntimeConfig } from "./runtime-config";
 
 describe("sync runtime configuration", () => {
+  it("loads an optional positive per-instance Agent concurrency limit", () => {
+    expect(readAgentConcurrencyLimit({})).toBeUndefined();
+    expect(readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "12" })).toBe(12);
+    expect(() => readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "0" })).toThrow(/positive integer/);
+    expect(() => readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "1.5" })).toThrow(/positive integer/);
+  });
+
   it("keeps sync disabled when no database is configured", () => {
     expect(readSyncRuntimeConfig({})).toBeNull();
   });

@@ -1,7 +1,8 @@
 import { createApp } from "./app";
 import { createModelProvider } from "./ai/provider-factory";
 import { configureHttpServer, createShutdownHandler } from "./http-server-lifecycle";
-import { createSyncRuntime } from "./runtime-config";
+import { createSyncRuntime, readAgentConcurrencyLimit } from "./runtime-config";
+import { InMemoryConcurrencyLimiter } from "./security/request-security";
 
 try {
   process.loadEnvFile(".env.local");
@@ -13,6 +14,10 @@ const port = Number(process.env.AI_API_PORT ?? 8787);
 const host = process.env.AI_API_HOST?.trim() || "127.0.0.1";
 const provider = createModelProvider();
 const syncRuntime = createSyncRuntime(process.env);
+const agentConcurrencyLimit = readAgentConcurrencyLimit(process.env);
+if (agentConcurrencyLimit) {
+  syncRuntime.appOptions.agentConcurrencyLimiter = new InMemoryConcurrencyLimiter(agentConcurrencyLimit);
+}
 const server = createApp(provider, syncRuntime.appOptions);
 configureHttpServer(server);
 

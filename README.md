@@ -48,6 +48,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - 同步安全边界：认证与同步路由按客户端限流，并输出不含原始账号/设备 ID、Cookie、令牌、查询参数和正文的结构化安全审计事件；稳定伪名引用支持短期事件关联
 - 浏览器响应安全：API 与 dev Web 入口使用 CSP、禁止跨站嵌入和 MIME 嗅探，并关闭未使用的敏感浏览器能力与 Referrer 泄露
 - AI 成本滥用保护：计划、教学、评估、复习和恢复 Agent 分别使用按客户端固定窗口配额，限流拒绝发生在读取正文和调用模型之前
+- Agent 并发保护：每个 API 实例默认只同时执行 20 个模型任务，满载时在读取正文和调用模型前安全拒绝，并通过健康端点报告容量
 - 账号模型预算：可选 PostgreSQL 用量账本按 Agent 与模型记录 token 和估算成本，并以月度 token/金额上限在调用前熔断
 - 多实例容量保护：PostgreSQL 原子共享哈希客户端限流计数，健康端点报告 60 秒滚动的 Agent、认证与同步容量和延迟
 - 响应式界面：支持桌面和移动端
@@ -81,6 +82,8 @@ cp .env.example .env.local
 ```
 
 然后在 `.env.local` 中填写 `OPENAI_API_KEY` 和 `OPENAI_MODEL`，重新运行 `npm start`。密钥文件不会被 Git 提交。所有模型响应默认最多使用 4096 个输出 token；可用 `OPENAI_MAX_OUTPUT_TOKENS` 显式调整，并应以固定评估集验证更低上限不会截断结构化结果。
+
+每个 API 实例默认最多同时执行 20 个 Agent 请求；可用正整数 `AI_MAX_CONCURRENT_AGENT_REQUESTS` 按可用内存、连接预算和模型配额调整。满载响应为可重试 `503`，并且不会读取学习正文或启动新的模型调用。
 
 如果使用 OpenAI-compatible 服务，可改为配置 `OPENAI_COMPATIBLE_API_KEY`、`OPENAI_COMPATIBLE_BASE_URL`，并通过 `OPENAI_MODEL`（或 `OPENAI_COMPATIBLE_MODEL`）指定模型。兼容模式使用 `/v1/chat/completions` 和 JSON Schema 结构化输出；base URL 可填写服务根地址或已经包含 `/v1` 的地址。远端服务必须使用 HTTPS，本机回环开发服务可使用 HTTP；不要同时配置 OpenAI 和兼容服务的两组密钥。
 

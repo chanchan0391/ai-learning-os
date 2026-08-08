@@ -18,6 +18,45 @@ export interface RequestRateLimiter {
   consume(scope: string, key: string, policy: RateLimitPolicy): RateLimitDecision | Promise<RateLimitDecision>;
 }
 
+export interface ConcurrencySnapshot {
+  limit: number;
+  inFlight: number;
+  rejected: number;
+}
+
+export interface RequestConcurrencyLimiter {
+  tryAcquire(): (() => void) | null;
+  snapshot(): ConcurrencySnapshot;
+}
+
+/** Bounds expensive in-flight work within one API instance. */
+export class InMemoryConcurrencyLimiter implements RequestConcurrencyLimiter {
+  private inFlight = 0;
+  private rejected = 0;
+
+  constructor(private readonly limit: number) {
+    if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error("Concurrency limit must be a positive integer");
+  }
+
+  tryAcquire(): (() => void) | null {
+    if (this.inFlight >= this.limit) {
+      this.rejected += 1;
+      return null;
+    }
+    this.inFlight += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.inFlight = Math.max(0, this.inFlight - 1);
+    };
+  }
+
+  snapshot(): ConcurrencySnapshot {
+    return { limit: this.limit, inFlight: this.inFlight, rejected: this.rejected };
+  }
+}
+
 interface RateLimitWindow {
   count: number;
   resetAt: number;
