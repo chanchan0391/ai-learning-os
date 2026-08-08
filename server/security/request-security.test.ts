@@ -1,11 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
+import type { IncomingMessage } from "node:http";
 import {
   InMemoryFixedWindowRateLimiter,
   InMemoryConcurrencyLimiter,
   JsonLineSecurityAuditSink,
   RollingRequestCapacityMonitor,
   auditOutcome,
+  clientRateLimitKey,
 } from "./request-security";
+
+function requestFrom(peer: string | undefined, forwardedFor?: string): IncomingMessage {
+  return {
+    socket: { remoteAddress: peer },
+    headers: forwardedFor === undefined ? {} : { "x-forwarded-for": forwardedFor },
+  } as IncomingMessage;
+}
 
 describe("request security", () => {
   it("bounds concurrent work and releases capacity idempotently", () => {
@@ -40,6 +49,21 @@ describe("request security", () => {
 
     now = 6_000;
     expect(limiter.consume("auth", "client-a", policy)).toMatchObject({ allowed: true, remaining: 1, resetAt: 11_000 });
+  });
+
+  it("ignores forwarded client addresses unless the direct proxy is trusted", () => {
+    expect(clientRateLimitKey(requestFrom("203.0.113.10", "198.51.100.20"))).toBe("203.0.113.10");
+    expect(clientRateLimitKey(requestFrom("203.0.113.10", "198.51.100.20"), ["127.0.0.1"])).toBe("203.0.113.10");
+  });
+
+  it("uses the closest valid address appended by a trusted proxy", () => {
+    const request = requestFrom("::ffff:127.0.0.1", "spoofed.example, 198.51.100.20");
+    expect(clientRateLimitKey(request, ["127.0.0.1"])).toBe("198.51.100.20");
+  });
+
+  it("falls back to the trusted peer for malformed forwarded addresses", () => {
+    expect(clientRateLimitKey(requestFrom("127.0.0.1", "unknown"), ["127.0.0.1"])).toBe("127.0.0.1");
+    expect(clientRateLimitKey(requestFrom(undefined, "198.51.100.20"), ["127.0.0.1"])).toBe("unknown");
   });
 
   it("classifies audit outcomes from HTTP status", () => {

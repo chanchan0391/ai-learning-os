@@ -1,4 +1,5 @@
 import pg, { type Pool } from "pg";
+import { isIP } from "node:net";
 import type { AppOptions } from "./app";
 import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolver";
 import { PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
@@ -53,6 +54,16 @@ function parseOrigins(value: string): string[] {
     }
   }
   return origins;
+}
+
+export function readTrustedProxyAddresses(env: NodeJS.ProcessEnv): string[] | undefined {
+  const value = env.TRUSTED_PROXY_ADDRESSES;
+  const addresses = [...new Set((value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean))];
+  if (addresses.length === 0) return undefined;
+  if (addresses.some((address) => !isIP(address))) {
+    throw new Error("TRUSTED_PROXY_ADDRESSES must contain only exact IPv4 or IPv6 addresses");
+  }
+  return addresses;
 }
 
 function parsePlanBudgets(value: string): Record<string, AccountModelBudget> {

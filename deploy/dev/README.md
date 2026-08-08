@@ -23,6 +23,8 @@ OIDC_TRANSACTION_SECRET=<at-least-32-random-characters>
 OPENAI_MAX_OUTPUT_TOKENS=4096
 # 可选：每个 API 实例同时执行的 Agent 请求上限，默认 20
 AI_MAX_CONCURRENT_AGENT_REQUESTS=20
+# 可选：仅信任这些直连反向代理追加的最右侧 X-Forwarded-For 地址
+TRUSTED_PROXY_ADDRESSES=127.0.0.1
 # 可选：四项同时配置后启用认证账号的月度模型预算
 AI_MONTHLY_TOKEN_LIMIT=250000
 AI_MONTHLY_COST_LIMIT_USD=12.50

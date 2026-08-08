@@ -86,6 +86,7 @@ export interface AppOptions {
   subscriptionEntitlements?: SubscriptionEntitlementResolver;
   requestLogSink?: RequestLogSink;
   readinessCheck?: () => Promise<void>;
+  trustedProxyAddresses?: readonly string[];
 }
 
 interface ProtectedRoute {
@@ -275,7 +276,11 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
     });
     try {
       if (route) {
-        const decision = await rateLimiter.consume(route.rateLimitScope, clientRateLimitKey(request), route.policy);
+        const decision = await rateLimiter.consume(
+          route.rateLimitScope,
+          clientRateLimitKey(request, options.trustedProxyAddresses),
+          route.policy,
+        );
         response.setHeader("RateLimit-Limit", String(decision.limit));
         response.setHeader("RateLimit-Remaining", String(decision.remaining));
         response.setHeader("RateLimit-Reset", String(Math.ceil(decision.resetAt / 1000)));

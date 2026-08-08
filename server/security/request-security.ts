@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { isIP } from "node:net";
 import type { SyncPrincipal } from "../sync/sync-store";
 
 export interface RateLimitPolicy {
@@ -233,8 +234,21 @@ export class JsonLineSecurityAuditSink implements SecurityAuditSink {
   }
 }
 
-export function clientRateLimitKey(request: IncomingMessage): string {
-  return request.socket.remoteAddress ?? "unknown";
+function normalizeIpAddress(value: string): string | null {
+  const trimmed = value.trim();
+  const normalized = trimmed.startsWith("::ffff:") && isIP(trimmed.slice(7)) === 4 ? trimmed.slice(7) : trimmed;
+  return isIP(normalized) ? normalized : null;
+}
+
+/** Uses the closest forwarded address only when the direct peer is explicitly trusted. */
+export function clientRateLimitKey(request: IncomingMessage, trustedProxyAddresses: readonly string[] = []): string {
+  const peer = request.socket.remoteAddress ? normalizeIpAddress(request.socket.remoteAddress) : null;
+  if (!peer || !trustedProxyAddresses.includes(peer)) return peer ?? "unknown";
+
+  const forwardedFor = request.headers["x-forwarded-for"];
+  if (typeof forwardedFor !== "string") return peer;
+  const closestForwardedAddress = forwardedFor.split(",").at(-1);
+  return closestForwardedAddress ? normalizeIpAddress(closestForwardedAddress) ?? peer : peer;
 }
 
 export function auditOutcome(status: number): SecurityAuditOutcome {

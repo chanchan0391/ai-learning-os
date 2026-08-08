@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
-import { createSyncRuntime, readAgentConcurrencyLimit, readSyncRuntimeConfig } from "./runtime-config";
+import { createSyncRuntime, readAgentConcurrencyLimit, readSyncRuntimeConfig, readTrustedProxyAddresses } from "./runtime-config";
 
 describe("sync runtime configuration", () => {
   it("loads an optional positive per-instance Agent concurrency limit", () => {
@@ -8,6 +8,14 @@ describe("sync runtime configuration", () => {
     expect(readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "12" })).toBe(12);
     expect(() => readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "0" })).toThrow(/positive integer/);
     expect(() => readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "1.5" })).toThrow(/positive integer/);
+  });
+
+  it("loads optional exact trusted proxy addresses independently of sync", () => {
+    expect(readTrustedProxyAddresses({})).toBeUndefined();
+    expect(readTrustedProxyAddresses({ TRUSTED_PROXY_ADDRESSES: "127.0.0.1,::1,127.0.0.1" }))
+      .toEqual(["127.0.0.1", "::1"]);
+    expect(() => readTrustedProxyAddresses({ TRUSTED_PROXY_ADDRESSES: "127.0.0.1,proxy.internal" }))
+      .toThrow(/exact IPv4 or IPv6/);
   });
 
   it("keeps sync disabled when no database is configured", () => {
