@@ -2,6 +2,17 @@ import { generateLearningPlan } from "../../src/planner";
 import type { EvaluationRequest, EvaluationResult, LearningGoal, RecoveryPlan, RecoveryPlanRequest, ReviewAssessment, ReviewAssessmentRequest, TeachingSession, TeachingSessionRequest } from "../../src/types";
 import type { ModelProvider, StructuredGenerationRequest, StructuredGenerationResult } from "./model-provider";
 
+const ADVERSARIAL_INSTRUCTION_PATTERNS = [
+  /ignore\s+(all\s+)?(previous|prior|above)\s+instructions?/iu,
+  /忽略.{0,12}(此前|之前|以上|系统).{0,12}(指令|要求|规则|提示)/u,
+  /(reveal|print|return).{0,20}(system|developer)\s+(prompt|message)/iu,
+  /(给|打|设为|返回).{0,8}(满分|16\s*分|4\s*分|ready)/iu,
+];
+
+function containsAdversarialInstruction(value: string): boolean {
+  return ADVERSARIAL_INSTRUCTION_PATTERNS.some((pattern) => pattern.test(value));
+}
+
 export class DeterministicModelProvider implements ModelProvider {
   readonly id = "deterministic-development";
   readonly isAiEnabled = false;
@@ -46,7 +57,9 @@ export class DeterministicModelProvider implements ModelProvider {
     } else if (request.schema.name === "review_assessment") {
       const { answer } = input as ReviewAssessmentRequest;
       const normalized = answer.trim();
-      const score = normalized.length >= 80 ? 4 : normalized.length >= 30 ? 3 : normalized.length >= 12 ? 2 : normalized.length >= 5 ? 1 : 0;
+      const score = containsAdversarialInstruction(normalized)
+        ? 0
+        : normalized.length >= 80 ? 4 : normalized.length >= 30 ? 3 : normalized.length >= 12 ? 2 : normalized.length >= 5 ? 1 : 0;
       value = {
         answer: normalized,
         score,
@@ -56,11 +69,13 @@ export class DeterministicModelProvider implements ModelProvider {
       } satisfies ReviewAssessment;
     } else if (request.schema.name === "learning_evaluation") {
       const { submission } = input as EvaluationRequest;
-      const detailed = submission.trim().length >= 120;
-      const score = detailed ? 3 : 2;
+      const normalized = submission.trim();
+      const adversarial = containsAdversarialInstruction(normalized);
+      const detailed = !adversarial && normalized.length >= 120;
+      const score = adversarial ? 1 : detailed ? 3 : 2;
       const feedback = detailed ? "已提供较完整说明；下一步补充边界条件。" : "信息基本相关；下一步增加具体步骤和验证结果。";
       const rubric: EvaluationResult["rubric"] = [
-        { dimension: "understanding", score, evidence: submission.trim().slice(0, 160), feedback },
+        { dimension: "understanding", score, evidence: normalized.slice(0, 160), feedback },
         { dimension: "application", score, evidence: "提交内容中的实践描述", feedback },
         { dimension: "evidence", score, evidence: "提交内容中的验证说明", feedback },
         { dimension: "reflection", score, evidence: "提交内容中的复盘说明", feedback },
