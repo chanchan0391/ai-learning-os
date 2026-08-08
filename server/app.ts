@@ -16,6 +16,7 @@ import type { AccountDataLifecycle, SessionLifecycle } from "./auth/postgres-ses
 import { DEFAULT_SESSION_COOKIE_NAME, readSessionToken } from "./auth/postgres-session-resolver";
 import type { SubscriptionEntitlementResolver } from "./billing/subscription-entitlement";
 import { requestOutcome, type RequestLogEvent, type RequestLogSink } from "./observability/request-observability";
+import { coalesceReadinessCheck } from "./observability/readiness-check";
 import {
   InMemoryFixedWindowRateLimiter,
   InMemoryConcurrencyLimiter,
@@ -200,6 +201,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
   const rateLimiter = options.rateLimiter ?? new InMemoryFixedWindowRateLimiter();
   const capacityMonitor = options.capacityMonitor ?? new RollingRequestCapacityMonitor();
   const agentConcurrencyLimiter = options.agentConcurrencyLimiter ?? new InMemoryConcurrencyLimiter(DEFAULT_AGENT_CONCURRENCY_LIMIT);
+  const readinessCheck = options.readinessCheck ? coalesceReadinessCheck(options.readinessCheck) : null;
   return createServer(async (request, response) => {
     const requestId = randomUUID();
     const requestStartedAt = Date.now();
@@ -281,9 +283,9 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       }
       if (request.method === "GET" && request.url === "/api/health") {
         let database: "disabled" | "ready" | "unavailable" = options.syncStore ? "ready" : "disabled";
-        if (options.readinessCheck) {
+        if (readinessCheck) {
           try {
-            await options.readinessCheck();
+            await readinessCheck();
           } catch (error) {
             database = "unavailable";
             console.error("Readiness check failed", error instanceof Error ? error.name : "UnknownError");
