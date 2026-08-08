@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { initializeLearningState } from "../../src/learning-state";
 import { generateLearningPlan } from "../../src/planner";
 import { PostgresSyncStore } from "./postgres-sync-store";
-import { SyncConflictError, SyncRequestError, type SyncPrincipal } from "./sync-store";
+import { MAX_SYNC_IDENTIFIER_LENGTH, SyncConflictError, SyncRequestError, type SyncPrincipal } from "./sync-store";
 
 const alice: SyncPrincipal = { userId: "user-alice", deviceId: "device-phone" };
 const aliceLaptop: SyncPrincipal = { userId: "user-alice", deviceId: "device-laptop" };
@@ -181,6 +181,18 @@ describe("PostgreSQL sync store", () => {
     })).rejects.toMatchObject({ code: "missing-plan" } satisfies Partial<SyncRequestError>);
     await expect(store.getChanges({ userId: alice.userId, deviceId: "unknown-device" }))
       .rejects.toMatchObject({ code: "unknown-principal" } satisfies Partial<SyncRequestError>);
+  });
+
+  it("rejects oversized indexed identifiers before querying sync metadata", async () => {
+    const { store, plan } = await setup();
+    const oversized = "x".repeat(MAX_SYNC_IDENTIFIER_LENGTH + 1);
+
+    await expect(store.putPlan(alice, {
+      operationId: oversized, entityId: plan.id, baseRevision: null, value: plan,
+    })).rejects.toThrow(/1-256 characters/);
+    await expect(store.getChanges(alice, oversized)).rejects.toMatchObject(
+      { code: "invalid-cursor" } satisfies Partial<SyncRequestError>,
+    );
   });
 
   it("expires cursors and idempotency records after 30 days without deleting learning data", async () => {

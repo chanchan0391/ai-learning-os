@@ -5,6 +5,7 @@ import {
   SyncConflictError,
   SyncRequestError,
   requireSyncIdentity,
+  requireSyncCursor,
   requireSyncWriteRequest,
   syncOperationFingerprint,
   type DailyRecordSyncValue,
@@ -80,6 +81,7 @@ export class PostgresSyncStore {
     await this.maybeCleanupExpiredMetadata(now);
     let afterSequence = 0;
     if (cursor) {
+      requireSyncCursor(cursor);
       const cursorResult = await this.pool.query<{ sequence: string | number }>(
         "SELECT sequence FROM sync_cursors WHERE token = $1 AND user_id = $2 AND created_at >= $3",
         [cursor, principal.userId, new Date(now.getTime() - SYNC_METADATA_RETENTION_MS)],

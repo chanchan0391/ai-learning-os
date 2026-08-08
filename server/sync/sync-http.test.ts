@@ -4,7 +4,7 @@ import { initializeLearningState } from "../../src/learning-state";
 import { generateLearningPlan } from "../../src/planner";
 import { createApp } from "../app";
 import { DeterministicModelProvider } from "../ai/deterministic-provider";
-import { InMemorySyncStore, type SyncPrincipal } from "./sync-store";
+import { InMemorySyncStore, MAX_SYNC_IDENTIFIER_LENGTH, type SyncPrincipal } from "./sync-store";
 
 const servers: ReturnType<typeof createApp>[] = [];
 const alice: SyncPrincipal = { userId: "user-alice", deviceId: "device-laptop" };
@@ -161,5 +161,24 @@ describe("authenticated sync HTTP API", () => {
     await expect(reusedKey.json()).resolves.toMatchObject({ error: "idempotency-mismatch" });
     expect(invalidCursor.status).toBe(400);
     await expect(invalidCursor.json()).resolves.toMatchObject({ error: "invalid-cursor" });
+  });
+
+  it("rejects oversized sync identifiers with stable client errors", async () => {
+    const baseUrl = await startApi();
+    const oversized = "x".repeat(MAX_SYNC_IDENTIFIER_LENGTH + 1);
+    const plan = { ...generateLearningPlan(goal, new Date("2026-08-01T10:00:00.000Z")), id: oversized };
+    const oversizedEntity = await fetch(`${baseUrl}/api/sync/plans/${oversized}`, {
+      method: "PUT",
+      headers: { ...writeOrigin, Cookie: "session=alice", "Idempotency-Key": "bounded-operation", "If-None-Match": "*" },
+      body: JSON.stringify(plan),
+    });
+    const oversizedCursor = await fetch(`${baseUrl}/api/sync/changes?cursor=${oversized}`, {
+      headers: { Cookie: "session=alice" },
+    });
+
+    expect(oversizedEntity.status).toBe(400);
+    await expect(oversizedEntity.json()).resolves.toMatchObject({ error: expect.stringContaining("1-256 characters") });
+    expect(oversizedCursor.status).toBe(400);
+    await expect(oversizedCursor.json()).resolves.toMatchObject({ error: "invalid-cursor" });
   });
 });

@@ -3,6 +3,7 @@ import { initializeLearningState } from "../../src/learning-state";
 import { generateLearningPlan } from "../../src/planner";
 import {
   InMemorySyncStore,
+  MAX_SYNC_IDENTIFIER_LENGTH,
   SyncConflictError,
   SyncRequestError,
   type SyncPrincipal,
@@ -158,6 +159,21 @@ describe("in-memory sync store", () => {
     expect(alicePull.changes).toHaveLength(1);
     expect(store.getChanges(bob).changes).toHaveLength(1);
     expect(() => store.getChanges(bob, alicePull.cursor)).toThrowError(
+      expect.objectContaining<Partial<SyncRequestError>>({ code: "invalid-cursor" }),
+    );
+  });
+
+  it("rejects oversized indexed identifiers and cursors", () => {
+    const { store, plan } = setup();
+    const oversized = "x".repeat(MAX_SYNC_IDENTIFIER_LENGTH + 1);
+
+    expect(() => store.putPlan(alice, {
+      operationId: oversized, entityId: plan.id, baseRevision: null, value: plan,
+    })).toThrow(/1-256 characters/);
+    expect(() => store.putPlan(alice, {
+      operationId: "bounded-operation", entityId: oversized, baseRevision: null, value: plan,
+    })).toThrow(/1-256 characters/);
+    expect(() => store.getChanges(alice, oversized)).toThrowError(
       expect.objectContaining<Partial<SyncRequestError>>({ code: "invalid-cursor" }),
     );
   });

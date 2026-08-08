@@ -35,6 +35,8 @@ export interface SyncChanges {
   hasMore: boolean;
 }
 
+export const MAX_SYNC_IDENTIFIER_LENGTH = 256;
+
 export interface SyncStore {
   putPlan(principal: SyncPrincipal, request: SyncWriteRequest<LearningPlan>): SyncEntity<LearningPlan> | Promise<SyncEntity<LearningPlan>>;
   putDailyRecord(principal: SyncPrincipal, request: SyncWriteRequest<DailyRecordSyncValue>): SyncEntity<DailyRecordSyncValue> | Promise<SyncEntity<DailyRecordSyncValue>>;
@@ -77,18 +79,29 @@ function clone<T>(value: T): T {
 }
 
 export function requireSyncIdentity(principal: SyncPrincipal): void {
-  if (!principal.userId.trim() || !principal.deviceId.trim()) {
+  if (!isBoundedIdentifier(principal.userId) || !isBoundedIdentifier(principal.deviceId)) {
     throw new TypeError("An authenticated user and device are required");
   }
 }
 
 export function requireSyncWriteRequest(request: SyncWriteRequest<unknown>): void {
-  if (!request.operationId.trim() || !request.entityId.trim()) {
-    throw new TypeError("Operation and entity IDs are required");
+  if (!isBoundedIdentifier(request.operationId) || !isBoundedIdentifier(request.entityId)) {
+    throw new TypeError(`Operation and entity IDs must contain 1-${MAX_SYNC_IDENTIFIER_LENGTH} characters`);
   }
   if (request.baseRevision !== null && (!Number.isInteger(request.baseRevision) || request.baseRevision < 1)) {
     throw new TypeError("Base revision must be null or a positive integer");
   }
+}
+
+export function requireSyncCursor(cursor: string): void {
+  if (!isBoundedIdentifier(cursor)) {
+    throw new SyncRequestError("invalid-cursor", `The sync cursor must contain 1-${MAX_SYNC_IDENTIFIER_LENGTH} characters`);
+  }
+}
+
+function isBoundedIdentifier(value: string): boolean {
+  const length = value.trim().length;
+  return length > 0 && length <= MAX_SYNC_IDENTIFIER_LENGTH;
 }
 
 function canonicalize(value: unknown): unknown {
@@ -146,6 +159,7 @@ export class InMemorySyncStore {
     requireSyncIdentity(principal);
     let afterSequence = 0;
     if (cursor) {
+      requireSyncCursor(cursor);
       const position = this.cursors.get(cursor);
       if (!position || position.userId !== principal.userId) {
         throw new SyncRequestError("invalid-cursor", "The sync cursor is invalid for the authenticated user");
