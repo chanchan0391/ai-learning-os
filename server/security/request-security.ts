@@ -66,23 +66,37 @@ interface RateLimitWindow {
 export class InMemoryFixedWindowRateLimiter implements RequestRateLimiter {
   private readonly windows = new Map<string, RateLimitWindow>();
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly now: () => number = Date.now,
+    private readonly maxEntries = 10_000,
+  ) {
+    if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
+      throw new Error("Rate limit entry cap must be a positive integer");
+    }
+  }
 
   consume(scope: string, key: string, policy: RateLimitPolicy): RateLimitDecision {
     const now = this.now();
     const windowKey = `${scope}:${key}`;
     let window = this.windows.get(windowKey);
-    if (!window || window.resetAt <= now) {
+    if (window?.resetAt !== undefined && window.resetAt <= now) {
+      window = { count: 0, resetAt: now + policy.windowMs };
+      this.windows.set(windowKey, window);
+    }
+    if (!window) {
+      if (this.windows.size >= this.maxEntries) this.pruneExpired(now);
+      if (this.windows.size >= this.maxEntries) {
+        return {
+          allowed: false,
+          limit: policy.limit,
+          remaining: 0,
+          resetAt: this.earliestResetAt(now + policy.windowMs),
+        };
+      }
       window = { count: 0, resetAt: now + policy.windowMs };
       this.windows.set(windowKey, window);
     }
     window.count += 1;
-
-    if (this.windows.size > 10_000) {
-      for (const [candidateKey, candidate] of this.windows) {
-        if (candidate.resetAt <= now) this.windows.delete(candidateKey);
-      }
-    }
 
     return {
       allowed: window.count <= policy.limit,
@@ -90,6 +104,18 @@ export class InMemoryFixedWindowRateLimiter implements RequestRateLimiter {
       remaining: Math.max(0, policy.limit - window.count),
       resetAt: window.resetAt,
     };
+  }
+
+  private pruneExpired(now: number): void {
+    for (const [candidateKey, candidate] of this.windows) {
+      if (candidate.resetAt <= now) this.windows.delete(candidateKey);
+    }
+  }
+
+  private earliestResetAt(fallback: number): number {
+    let earliest = fallback;
+    for (const candidate of this.windows.values()) earliest = Math.min(earliest, candidate.resetAt);
+    return earliest;
   }
 }
 

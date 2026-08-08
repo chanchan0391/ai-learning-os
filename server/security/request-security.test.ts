@@ -51,6 +51,33 @@ describe("request security", () => {
     expect(limiter.consume("auth", "client-a", policy)).toMatchObject({ allowed: true, remaining: 1, resetAt: 11_000 });
   });
 
+  it("fails closed for unseen keys when in-memory rate limit state reaches its cap", () => {
+    let now = 1_000;
+    const limiter = new InMemoryFixedWindowRateLimiter(() => now, 2);
+    const policy = { limit: 2, windowMs: 5_000 };
+
+    expect(limiter.consume("auth", "client-a", policy).allowed).toBe(true);
+    expect(limiter.consume("auth", "client-b", policy).allowed).toBe(true);
+    expect(limiter.consume("auth", "client-c", policy)).toMatchObject({
+      allowed: false,
+      remaining: 0,
+      resetAt: 6_000,
+    });
+    expect(limiter.consume("auth", "client-a", policy)).toMatchObject({ allowed: true, remaining: 0 });
+
+    now = 6_000;
+    expect(limiter.consume("auth", "client-c", policy)).toMatchObject({
+      allowed: true,
+      remaining: 1,
+      resetAt: 11_000,
+    });
+  });
+
+  it("rejects invalid in-memory rate limit entry caps", () => {
+    expect(() => new InMemoryFixedWindowRateLimiter(Date.now, 0)).toThrow(/positive integer/);
+    expect(() => new InMemoryFixedWindowRateLimiter(Date.now, 1.5)).toThrow(/positive integer/);
+  });
+
   it("ignores forwarded client addresses unless the direct proxy is trusted", () => {
     expect(clientRateLimitKey(requestFrom("203.0.113.10", "198.51.100.20"))).toBe("203.0.113.10");
     expect(clientRateLimitKey(requestFrom("203.0.113.10", "198.51.100.20"), ["127.0.0.1"])).toBe("203.0.113.10");
