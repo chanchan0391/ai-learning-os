@@ -1,3 +1,4 @@
+import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
@@ -131,7 +132,7 @@ describe("AI Learning OS API", () => {
     expect(providerCalls).toBe(0);
   });
 
-  it("rejects oversized JSON before invoking an Agent", async () => {
+  it("rejects Agent JSON above 64 KiB before invoking the model", async () => {
     let providerCalls = 0;
     const provider: ModelProvider = {
       id: "live-test",
@@ -146,11 +147,43 @@ describe("AI Learning OS API", () => {
     const response = await fetch(`${baseUrl}/api/plans`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...goal, currentLevel: "x".repeat(1_000_001) }),
+      body: JSON.stringify({ ...goal, currentLevel: "x".repeat(65_536) }),
     });
 
     expect(response.status).toBe(413);
     await expect(response.json()).resolves.toEqual({ error: "Request body is too large" });
+    expect(providerCalls).toBe(0);
+  });
+
+  it("enforces the Agent limit for chunked bodies without Content-Length", async () => {
+    let providerCalls = 0;
+    const provider: ModelProvider = {
+      id: "live-test",
+      isAiEnabled: true,
+      generateStructured: async () => {
+        providerCalls += 1;
+        throw new Error("must not run");
+      },
+    };
+    const baseUrl = await startApi(provider);
+    const body = JSON.stringify({ ...goal, currentLevel: "x".repeat(65_536) });
+
+    const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const outgoing = httpRequest(`${baseUrl}/api/plans`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Transfer-Encoding": "chunked" },
+      }, (incoming) => {
+        const chunks: Buffer[] = [];
+        incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        incoming.on("end", () => resolve({ status: incoming.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
+      });
+      outgoing.on("error", reject);
+      outgoing.write(body.slice(0, 40_000));
+      outgoing.end(body.slice(40_000));
+    });
+
+    expect(result.status).toBe(413);
+    expect(JSON.parse(result.body)).toEqual({ error: "Request body is too large" });
     expect(providerCalls).toBe(0);
   });
 

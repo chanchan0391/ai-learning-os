@@ -94,6 +94,22 @@ describe("authenticated sync HTTP API", () => {
     expect(update.headers.get("etag")).toBe('"2"');
   });
 
+  it("keeps the 1 MB sync contract for valid plans larger than the Agent limit", async () => {
+    const baseUrl = await startApi();
+    const plan = generateLearningPlan(goal, new Date("2026-08-01T10:00:00.000Z"));
+    const largePlan = { ...plan, goal: { ...plan.goal, targetOutcome: "可恢复服务".repeat(12_000) } };
+
+    const response = await fetch(`${baseUrl}/api/sync/plans/${encodeURIComponent(plan.id)}`, {
+      method: "PUT",
+      headers: { ...writeOrigin, Cookie: "session=alice", "Idempotency-Key": "create-large-plan", "If-None-Match": "*" },
+      body: JSON.stringify(largePlan),
+    });
+
+    expect(Buffer.byteLength(JSON.stringify(largePlan))).toBeGreaterThan(64 * 1_024);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ entityType: "learning-plan", revision: 1 });
+  });
+
   it("returns the current entity on revision conflicts and isolates users", async () => {
     const baseUrl = await startApi();
     const plan = generateLearningPlan(goal, new Date("2026-08-01T10:00:00.000Z"));

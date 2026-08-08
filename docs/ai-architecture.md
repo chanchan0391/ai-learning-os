@@ -116,7 +116,7 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=true
 - `.env.local` 已加入 `.gitignore`。
 - API 密钥不进入前端构建、浏览器存储、日志或 Git。
 - 模型错误只向客户端返回安全信息和可选请求 ID。
-- 请求体限制为 1 MB，响应禁止缓存。
+- 五类 Agent 请求体限制为 64 KiB，避免异常学习内容放大输入 token 成本；同步正文保留 1 MB 上限，响应禁止缓存。
 - OpenAI 请求使用 `store: false`；正式上线前仍需完成隐私、保留策略和用户告知设计。
 
 ## 开发模式与 AI 模式

@@ -40,6 +40,7 @@ import {
 } from "./sync/sync-store";
 
 const MAX_BODY_BYTES = 1_000_000;
+const MAX_AGENT_BODY_BYTES = 64 * 1_024;
 export const DEFAULT_AGENT_CONCURRENCY_LIMIT = 20;
 const BROWSER_SECURITY_HEADERS = {
   "Content-Security-Policy": "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
@@ -165,7 +166,7 @@ function entityIdFromPath(pathname: string, prefix: string): string | null {
   }
 }
 
-async function readJson(request: IncomingMessage): Promise<unknown> {
+async function readJson(request: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<unknown> {
   const contentType = request.headers["content-type"];
   if (typeof contentType !== "string" || contentType.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
     const error = new Error("Content-Type must be application/json");
@@ -173,7 +174,7 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
     throw error;
   }
   const declaredSize = request.headers["content-length"];
-  if (typeof declaredSize === "string" && Number(declaredSize) > MAX_BODY_BYTES) {
+  if (typeof declaredSize === "string" && Number(declaredSize) > maxBytes) {
     throw new RangeError("Request body is too large");
   }
   const chunks: Buffer[] = [];
@@ -181,7 +182,7 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     const buffer = Buffer.from(chunk);
     size += buffer.length;
-    if (size > MAX_BODY_BYTES) throw new RangeError("Request body is too large");
+    if (size > maxBytes) throw new RangeError("Request body is too large");
     chunks.push(buffer);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -352,23 +353,23 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         ? meteredProvider.run(modelUsageContext, callback)
         : callback();
       if (request.method === "POST" && request.url === "/api/plans") {
-        const goal = await readJson(request) as LearningGoal;
+        const goal = await readJson(request, MAX_AGENT_BODY_BYTES) as LearningGoal;
         return sendJson(response, 201, await runAgent(() => planner.createPlan(goal, new Date(), controller.signal)));
       }
       if (request.method === "POST" && request.url === "/api/teaching-sessions") {
-        const teachingRequest = await readJson(request) as TeachingSessionRequest;
+        const teachingRequest = await readJson(request, MAX_AGENT_BODY_BYTES) as TeachingSessionRequest;
         return sendJson(response, 201, await runAgent(() => teacher.createSession(teachingRequest, controller.signal)));
       }
       if (request.method === "POST" && request.url === "/api/evaluations") {
-        const evaluationRequest = await readJson(request) as EvaluationRequest;
+        const evaluationRequest = await readJson(request, MAX_AGENT_BODY_BYTES) as EvaluationRequest;
         return sendJson(response, 201, await runAgent(() => evaluator.evaluate(evaluationRequest, controller.signal)));
       }
       if (request.method === "POST" && request.url === "/api/review-assessments") {
-        const assessmentRequest = await readJson(request) as ReviewAssessmentRequest;
+        const assessmentRequest = await readJson(request, MAX_AGENT_BODY_BYTES) as ReviewAssessmentRequest;
         return sendJson(response, 201, await runAgent(() => reviewer.assess(assessmentRequest, controller.signal)));
       }
       if (request.method === "POST" && request.url === "/api/recovery-plans") {
-        const recoveryRequest = await readJson(request) as RecoveryPlanRequest;
+        const recoveryRequest = await readJson(request, MAX_AGENT_BODY_BYTES) as RecoveryPlanRequest;
         return sendJson(response, 201, await runAgent(() => coach.createRecoveryPlan(recoveryRequest, controller.signal)));
       }
       if (url.pathname.startsWith("/api/auth/")) {

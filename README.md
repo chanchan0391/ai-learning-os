@@ -48,6 +48,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 - 同步安全边界：认证与同步路由按客户端限流，并输出不含原始账号/设备 ID、Cookie、令牌、查询参数和正文的结构化安全审计事件；稳定伪名引用支持短期事件关联
 - 浏览器响应安全：API 与 dev Web 入口使用 CSP、禁止跨站嵌入和 MIME 嗅探，并关闭未使用的敏感浏览器能力与 Referrer 泄露
 - AI 成本滥用保护：计划、教学、评估、复习和恢复 Agent 分别使用按客户端固定窗口配额，限流拒绝发生在读取正文和调用模型之前
+- Agent 输入成本边界：五类模型请求最多接收 64 KiB JSON，并同时覆盖声明长度和分块传输，避免异常学习内容放大输入 token 成本
 - Agent 并发保护：每个 API 实例默认只同时执行 20 个模型任务，满载时在读取正文和调用模型前安全拒绝，并通过健康端点报告容量
 - 账号模型预算：可选 PostgreSQL 用量账本按 Agent 与模型记录 token 和估算成本，并以月度 token/金额上限在调用前熔断
 - 多实例容量保护：PostgreSQL 原子共享哈希客户端限流计数，健康端点报告 60 秒滚动的 Agent、认证与同步容量和延迟
@@ -97,7 +98,7 @@ npm run eval:agents
 
 开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。迁移也会创建多实例共享限流表；缺少最新迁移时受保护路由会拒绝服务，不会退回不安全的单实例配额。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。启用登录还需同时配置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`；配置完成后，页面会显示登录与“立即同步”控制。身份方案和 HTTP 契约见 [`docs/authentication-design.md`](docs/authentication-design.md)。
 
-要启用账号模型成本熔断，必须同时配置 `AI_MONTHLY_TOKEN_LIMIT`、`AI_MONTHLY_COST_LIMIT_USD`、`AI_INPUT_COST_PER_MILLION_USD` 和 `AI_OUTPUT_COST_PER_MILLION_USD`。启用后 Agent API 要求登录；费率应与实际模型价格一致。可再配置 `AI_GLOBAL_MONTHLY_COST_LIMIT_USD`，让所有账号的已入账估算成本达到应用总上限后统一停止新调用。若启用 `AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED`，还必须用 `AI_PLAN_BUDGETS_JSON` 显式定义每个可用套餐的月度 token 与金额配额；未知套餐默认拒绝。账本按厂商返回的成功调用用量记账，不保存 Prompt 或模型输出；单次输出上限缩小在途调用的最大输出成本，但不消除并发检查窗口，生产仍需配置模型厂商侧的独立硬上限。
+要启用账号模型成本熔断，必须同时配置 `AI_MONTHLY_TOKEN_LIMIT`、`AI_MONTHLY_COST_LIMIT_USD`、`AI_INPUT_COST_PER_MILLION_USD` 和 `AI_OUTPUT_COST_PER_MILLION_USD`。启用后 Agent API 要求登录；费率应与实际模型价格一致。可再配置 `AI_GLOBAL_MONTHLY_COST_LIMIT_USD`，让所有账号的已入账估算成本达到应用总上限后统一停止新调用。若启用 `AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED`，还必须用 `AI_PLAN_BUDGETS_JSON` 显式定义每个可用套餐的月度 token 与金额配额；未知套餐默认拒绝。账本按厂商返回的成功调用用量记账，不保存 Prompt 或模型输出；Agent 单次 JSON 输入限制为 64 KiB，单次输出默认限制为 4096 token，两者共同缩小在途调用成本，但不消除并发检查窗口，生产仍需配置模型厂商侧的独立硬上限。
 
 数据收集边界、导出/删除控制和恢复演练见 [`docs/privacy-and-recovery.md`](docs/privacy-and-recovery.md)。Agent 质量、成本评估集和实时运行门禁见 [`docs/agent-evaluation.md`](docs/agent-evaluation.md)。
 
