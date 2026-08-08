@@ -165,6 +165,47 @@ describe("browser sync client", () => {
     expect(requested).toEqual(["/api/sync/changes", "/api/sync/changes?cursor=page-1"]);
   });
 
+  it("rejects a cloud page that exceeds the documented entity limit", async () => {
+    const request = vi.fn(async () => Response.json({
+      changes: Array.from({ length: 251 }, (_, index) => ({
+        entityType: "learning-plan",
+        entityId: `plan-${index}`,
+        revision: 1,
+        updatedAt: "2026-08-01T10:00:00.000Z",
+        value: {},
+      })),
+      cursor: "oversized-page",
+      hasMore: false,
+    })) as typeof fetch;
+
+    await expect(new BrowserSyncClient(localStorage, request).sync(null))
+      .rejects.toThrow("云端同步分页超过安全上限，请稍后重试");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops a snapshot after the total distinct entity limit", async () => {
+    let page = 0;
+    const request = vi.fn(async () => {
+      const offset = page * 250;
+      page += 1;
+      return Response.json({
+        changes: Array.from({ length: 250 }, (_, index) => ({
+          entityType: "learning-plan",
+          entityId: `plan-${offset + index}`,
+          revision: 1,
+          updatedAt: "2026-08-01T10:00:00.000Z",
+          value: {},
+        })),
+        cursor: `page-${page}`,
+        hasMore: true,
+      });
+    }) as typeof fetch;
+
+    await expect(new BrowserSyncClient(localStorage, request).sync(null))
+      .rejects.toThrow("云端学习记录过多，无法在单次同步中安全读取");
+    expect(request).toHaveBeenCalledTimes(100);
+  });
+
   it("marks a completed goal as archived and does not treat it as a competing active plan", async () => {
     const server = fakeServer();
     const client = new BrowserSyncClient(localStorage, server.request);

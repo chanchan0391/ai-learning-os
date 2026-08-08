@@ -4,7 +4,9 @@ import type { DailyLearningRecord, LearningPlan, LearningState } from "./types";
 
 export const SYNC_METADATA_KEY = "ai-learning-os-sync-v1";
 const RESTORED_ARCHIVE_PLAN_KEY = "ai-learning-os-restored-archive-v1";
-const MAX_SYNC_PAGES = 1_000;
+const MAX_SYNC_PAGE_ENTITIES = 250;
+const MAX_SYNC_ENTITIES = 25_000;
+const MAX_SYNC_PAGES = MAX_SYNC_ENTITIES / MAX_SYNC_PAGE_ENTITIES;
 
 interface SyncEntity<T = unknown> {
   entityType: "learning-plan" | "daily-record";
@@ -429,7 +431,13 @@ export class BrowserSyncClient {
       const response = await this.request(`/api/sync/changes${query}`, { credentials: "same-origin" });
       const body = await response.json() as { changes?: SyncEntity[]; cursor?: string; hasMore?: boolean; error?: string };
       if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, fallbackError));
+      if (body.changes.length > MAX_SYNC_PAGE_ENTITIES) {
+        throw new Error("云端同步分页超过安全上限，请稍后重试");
+      }
       for (const entity of body.changes) entities.set(metadataKey(entity), entity);
+      if (entities.size >= MAX_SYNC_ENTITIES && body.hasMore === true) {
+        throw new Error("云端学习记录过多，无法在单次同步中安全读取");
+      }
       if (body.hasMore !== true) return [...entities.values()];
       if (!body.cursor || seenCursors.has(body.cursor)) throw new Error("云端同步分页游标无效，请稍后重试");
       seenCursors.add(body.cursor);

@@ -131,10 +131,12 @@ describe("learning data controls", () => {
 
   it("opens the goal prioritized by the cross-goal weekly review", async () => {
     const user = userEvent.setup();
-    let first = initializeLearningState(generateLearningPlan(goal, new Date("2026-08-02T08:00:00.000Z")));
+    const completedAt = new Date();
+    const startedAt = new Date(completedAt.getTime() - 2 * 60 * 60 * 1_000);
+    let first = initializeLearningState(generateLearningPlan(goal, startedAt));
     for (const task of getCurrentRecord(first).tasks) first = toggleCurrentTask(first, task.id);
-    first = completeCurrentDay(first, { difficulty: "just-right", reflection: "完成闭环" }, new Date("2026-08-02T10:00:00.000Z"));
-    const second = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统" }, new Date("2026-08-02T08:00:00.000Z")));
+    first = completeCurrentDay(first, { difficulty: "just-right", reflection: "完成闭环" }, completedAt);
+    const second = initializeLearningState(generateLearningPlan({ ...goal, subject: "分布式系统" }, startedAt));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(first));
     localStorage.setItem(ACTIVE_STATES_KEY, JSON.stringify({ selectedPlanId: first.plan.id, states: [first, second] }));
     render(<App />);
