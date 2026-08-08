@@ -20,6 +20,18 @@ import type {
 
 export type AgentEvaluationName = "planner" | "teacher" | "evaluator" | "review" | "coach";
 
+export interface AgentEvaluationLimits {
+  maxCaseDurationMs: number;
+  maxCaseOutputTokens: number;
+  maxTotalTokens: number;
+}
+
+export const DEFAULT_AGENT_EVALUATION_LIMITS: AgentEvaluationLimits = {
+  maxCaseDurationMs: 30_000,
+  maxCaseOutputTokens: 4_096,
+  maxTotalTokens: 100_000,
+};
+
 export interface AgentEvaluationResult {
   id: string;
   agent: AgentEvaluationName;
@@ -36,6 +48,9 @@ export interface AgentEvaluationReport {
   aiEnabled: boolean;
   generatedAt: string;
   passed: boolean;
+  limits: AgentEvaluationLimits & {
+    breaches: string[];
+  };
   cases: AgentEvaluationResult[];
   summary: {
     passed: number;
@@ -43,6 +58,12 @@ export interface AgentEvaluationReport {
     durationMs: number;
     usage: ModelTokenUsage;
   };
+}
+
+function validateLimits(limits: AgentEvaluationLimits): void {
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new TypeError(`${name} must be a positive integer`);
+  }
 }
 
 interface ProviderObservation {
@@ -168,7 +189,12 @@ interface EvaluationCase {
 }
 
 /** Runs a release-gate set through production Agent orchestration without reporting prompts or outputs. */
-export async function runAgentEvaluation(provider: ModelProvider, now = new Date()): Promise<AgentEvaluationReport> {
+export async function runAgentEvaluation(
+  provider: ModelProvider,
+  now = new Date(),
+  limits: AgentEvaluationLimits = DEFAULT_AGENT_EVALUATION_LIMITS,
+): Promise<AgentEvaluationReport> {
+  validateLimits(limits);
   const observed = new ObservedProvider(provider);
   const planner = createPlannerAgent(observed);
   const teacher = createTeacherAgent(observed);
@@ -264,13 +290,19 @@ export async function runAgentEvaluation(provider: ModelProvider, now = new Date
     try {
       await evaluationCase.run();
       const observation = observed.latest();
+      const durationMs = Math.round(performance.now() - started);
+      let errorType: string | undefined;
+      if (provider.isAiEnabled && !observation?.usage) errorType = "AgentEvaluationUsageMissingError";
+      else if (durationMs > limits.maxCaseDurationMs) errorType = "AgentEvaluationLatencyLimitError";
+      else if ((observation?.usage?.outputTokens ?? 0) > limits.maxCaseOutputTokens) errorType = "AgentEvaluationOutputTokenLimitError";
       results.push({
         id: evaluationCase.id,
         agent: evaluationCase.agent,
-        passed: true,
-        durationMs: Math.round(performance.now() - started),
+        passed: errorType === undefined,
+        durationMs,
         ...(observation?.model ? { model: observation.model } : {}),
         ...(observation?.usage ? { usage: observation.usage } : {}),
+        ...(errorType ? { errorType } : {}),
       });
     } catch (error) {
       const observation = observed.latest();
@@ -292,11 +324,15 @@ export async function runAgentEvaluation(provider: ModelProvider, now = new Date
     totalTokens: total.totalTokens + (result.usage?.totalTokens ?? 0),
   }), { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
   const passed = results.filter((result) => result.passed).length;
+  const breaches = [
+    ...(usage.totalTokens > limits.maxTotalTokens ? ["total-token-limit"] : []),
+  ];
   return {
     provider: provider.id,
     aiEnabled: provider.isAiEnabled,
     generatedAt: now.toISOString(),
-    passed: passed === results.length,
+    passed: passed === results.length && breaches.length === 0,
+    limits: { ...limits, breaches },
     cases: results,
     summary: {
       passed,
