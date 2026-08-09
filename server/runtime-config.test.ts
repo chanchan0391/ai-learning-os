@@ -73,6 +73,7 @@ describe("sync runtime configuration", () => {
 
   it("fails fast for incomplete or unsafe sync configuration", () => {
     expect(() => readSyncRuntimeConfig({ SYNC_ALLOWED_ORIGINS: "https://learn.example" })).toThrow(/DATABASE_URL/);
+    expect(() => readSyncRuntimeConfig({ OIDC_UPSTREAM_TIMEOUT_MS: "5000" })).toThrow(/DATABASE_URL/);
     expect(() => readSyncRuntimeConfig({ DATABASE_POOL_MAX: "20" })).toThrow(/DATABASE_URL/);
     expect(() => readSyncRuntimeConfig({ AUTH_MAX_ACTIVE_DEVICES: "20" })).toThrow(/DATABASE_URL/);
     expect(() => readSyncRuntimeConfig({ DATABASE_URL: "postgres://localhost/learning" })).toThrow(/SYNC_ALLOWED_ORIGINS/);
@@ -85,6 +86,10 @@ describe("sync runtime configuration", () => {
     expect(() => readSyncRuntimeConfig({
       DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
       OIDC_ISSUER: "https://identity.example",
+    })).toThrow(/configured together/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      OIDC_UPSTREAM_TIMEOUT_MS: "5000",
     })).toThrow(/configured together/);
   });
 
@@ -115,6 +120,20 @@ describe("sync runtime configuration", () => {
       redirectUri: "https://learn.example/api/auth/callback",
       transactionSecret: "a-secure-random-value-with-32-characters",
     });
+  });
+
+  it("loads a bounded OIDC upstream timeout", () => {
+    const base = {
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      OIDC_ISSUER: "https://identity.example",
+      OIDC_CLIENT_ID: "learning-client",
+      OIDC_REDIRECT_URI: "https://learn.example/api/auth/callback",
+      OIDC_TRANSACTION_SECRET: "a-secure-random-value-with-32-characters",
+    };
+    expect(readSyncRuntimeConfig({ ...base, OIDC_UPSTREAM_TIMEOUT_MS: "7500" })?.oidc?.upstreamTimeoutMs).toBe(7_500);
+    expect(() => readSyncRuntimeConfig({ ...base, OIDC_UPSTREAM_TIMEOUT_MS: "0" })).toThrow(/positive integer/);
+    expect(() => readSyncRuntimeConfig({ ...base, OIDC_UPSTREAM_TIMEOUT_MS: "60001" })).toThrow(/no greater than 60000/);
   });
 
   it("loads explicit monthly token and USD account budgets", () => {

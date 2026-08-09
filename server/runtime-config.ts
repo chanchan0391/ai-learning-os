@@ -3,7 +3,7 @@ import { isIP } from "node:net";
 import type { AppOptions } from "./app";
 import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolver";
 import { DEFAULT_MAX_ACTIVE_DEVICES, PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
-import { StandardOidcClient, type OidcConfig } from "./auth/oidc-client";
+import { MAX_OIDC_UPSTREAM_TIMEOUT_MS, StandardOidcClient, type OidcConfig } from "./auth/oidc-client";
 import { PostgresModelUsageLedger, type AccountModelBudget, type ModelUsagePolicy } from "./ai/model-usage";
 import { PostgresSubscriptionEntitlementResolver } from "./billing/subscription-entitlement";
 import { JsonLineRequestLogSink } from "./observability/request-observability";
@@ -175,13 +175,15 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
   const globalBudgetValue = env.AI_GLOBAL_MONTHLY_COST_LIMIT_USD;
   const planBudgetsValue = env.AI_PLAN_BUDGETS_JSON?.trim();
   const entitlementValue = env.AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED?.trim();
+  const oidcUpstreamTimeoutValue = env.OIDC_UPSTREAM_TIMEOUT_MS?.trim();
   if (entitlementValue && entitlementValue !== "true" && entitlementValue !== "false") {
     throw new Error("AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED must be true or false");
   }
   const requireSubscriptionEntitlement = entitlementValue === "true";
   if (!connectionString) {
     if (configuredOrigins || globalBudgetValue?.trim() || planBudgetsValue || requireSubscriptionEntitlement
-      || budgetValues.some((value) => value?.trim()) || databasePoolValues.some((value) => value?.trim())) {
+      || oidcUpstreamTimeoutValue || budgetValues.some((value) => value?.trim())
+      || databasePoolValues.some((value) => value?.trim())) {
       throw new Error("DATABASE_URL is required when database-dependent settings are configured");
     }
     return null;
@@ -192,7 +194,7 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
   }
   const allowedOrigins = parseOrigins(configuredOrigins ?? "");
   const oidcValues = [env.OIDC_ISSUER, env.OIDC_CLIENT_ID, env.OIDC_REDIRECT_URI, env.OIDC_TRANSACTION_SECRET];
-  const hasOidc = oidcValues.some((value) => Boolean(value?.trim()));
+  const hasOidc = Boolean(oidcUpstreamTimeoutValue) || oidcValues.some((value) => Boolean(value?.trim()));
   let oidc: OidcConfig | undefined;
   if (hasOidc) {
     if (oidcValues.some((value) => !value?.trim())) {
@@ -213,7 +215,19 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     }
     const transactionSecret = env.OIDC_TRANSACTION_SECRET!.trim();
     if (transactionSecret.length < 32) throw new Error("OIDC_TRANSACTION_SECRET must be at least 32 characters");
-    oidc = { issuer, clientId: env.OIDC_CLIENT_ID!.trim(), redirectUri, transactionSecret };
+    const upstreamTimeoutMs = oidcUpstreamTimeoutValue
+      ? parsePositiveInteger(oidcUpstreamTimeoutValue, "OIDC_UPSTREAM_TIMEOUT_MS")
+      : undefined;
+    if (upstreamTimeoutMs !== undefined && upstreamTimeoutMs > MAX_OIDC_UPSTREAM_TIMEOUT_MS) {
+      throw new Error(`OIDC_UPSTREAM_TIMEOUT_MS must be no greater than ${MAX_OIDC_UPSTREAM_TIMEOUT_MS}`);
+    }
+    oidc = {
+      issuer,
+      clientId: env.OIDC_CLIENT_ID!.trim(),
+      redirectUri,
+      transactionSecret,
+      ...(upstreamTimeoutMs === undefined ? {} : { upstreamTimeoutMs }),
+    };
   }
   const hasModelBudget = budgetValues.some((value) => Boolean(value?.trim()));
   let modelUsagePolicy: ModelUsagePolicy | undefined;

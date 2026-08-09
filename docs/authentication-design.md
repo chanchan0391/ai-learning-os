@@ -23,6 +23,7 @@
 ```
 
 - `GET /api/auth/login` 通过 issuer discovery 发起授权码流程，生成短期签名事务 Cookie，并绑定随机 `state`、`nonce` 和 S256 PKCE verifier。`GET /api/auth/callback` 交换授权码，通过提供商 JWKS 验证 ID Token 的签名、issuer、audience、nonce 和 subject。
+- OIDC discovery、授权码交换和 JWKS 密钥获取共享可配置的上游请求时限，默认 10 秒且不允许超过 60 秒；响应仍分别受独立字节上限保护，避免身份提供商异常长期占用 API 连接或进程内存。
 - 已实现的会话生命周期只在上述验证全部通过后接收 OIDC issuer + subject，并于事务中创建 `users`、`oidc_identities` 和 `sync_devices` 记录；访问令牌和 ID Token 不写入应用会话或学习记录。
 - 会话以高熵不透明令牌签发，数据库只保存 SHA-256 哈希；解析器同时检查会话有效期、会话撤销、账号删除和设备撤销。
 - `PostgresSyncStore` 只接受已存在、未删除的用户和未撤销设备。
@@ -54,4 +55,4 @@ Cookie 固定使用 `Path=/; HttpOnly; Secure; SameSite=Lax`。数据库只保�
 
 ## 运行配置
 
-启用登录需要在数据库和同步来源配置之外，同时设置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`。issuer 和生产回调必须使用 HTTPS；通过 SSH 隧道进行本地开发时，issuer 和回调可以使用 `http://localhost` 或 `http://127.0.0.1`。四项配置不完整时服务会拒绝启动，避免运行一个部分可信的登录流程。
+启用登录需要在数据库和同步来源配置之外，同时设置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`。issuer 和生产回调必须使用 HTTPS；通过 SSH 隧道进行本地开发时，issuer 和回调可以使用 `http://localhost` 或 `http://127.0.0.1`。四项配置不完整时服务会拒绝启动，避免运行一个部分可信的登录流程。`OIDC_UPSTREAM_TIMEOUT_MS` 可在 1–60,000 毫秒内调整 discovery、令牌交换和 JWKS 请求时限，未配置时使用 10,000 毫秒。

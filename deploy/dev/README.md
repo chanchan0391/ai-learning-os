@@ -27,6 +27,8 @@ OIDC_ISSUER=http://127.0.0.1:5556/dex
 OIDC_CLIENT_ID=ai-learning-os
 OIDC_REDIRECT_URI=http://127.0.0.1:5173/api/auth/callback
 OIDC_TRANSACTION_SECRET=<at-least-32-random-characters>
+# 可选：OIDC discovery、令牌交换和 JWKS 请求时限（毫秒），默认 10000，最大 60000
+OIDC_UPSTREAM_TIMEOUT_MS=10000
 # 可选：每次结构化模型响应的输出 token 上限，默认 4096
 OPENAI_MAX_OUTPUT_TOKENS=4096
 # 可选：一次模型调用跨全部重试和退避的总时限（毫秒），默认 60000

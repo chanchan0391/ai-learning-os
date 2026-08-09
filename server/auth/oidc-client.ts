@@ -7,6 +7,8 @@ const TRANSACTION_TTL_MS = 10 * 60 * 1000;
 const DISCOVERY_TTL_MS = 60 * 60 * 1000;
 const MAX_OIDC_DISCOVERY_BYTES = 64 * 1_024;
 const MAX_OIDC_TOKEN_RESPONSE_BYTES = 256 * 1_024;
+export const DEFAULT_OIDC_UPSTREAM_TIMEOUT_MS = 10_000;
+export const MAX_OIDC_UPSTREAM_TIMEOUT_MS = 60_000;
 
 export interface OidcConfig {
   issuer: string;
@@ -14,6 +16,7 @@ export interface OidcConfig {
   redirectUri: string;
   transactionSecret: string;
   transactionCookieName?: string;
+  upstreamTimeoutMs?: number;
 }
 
 interface OidcDiscovery {
@@ -88,6 +91,7 @@ function isSafeProviderUrl(value: string, issuer: string): boolean {
 
 export class StandardOidcClient implements OidcAuthenticator {
   readonly transactionCookieName: string;
+  private readonly upstreamTimeoutMs: number;
   private discoveryCache?: { value: OidcDiscovery; expiresAt: number };
   private readonly jwks = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
@@ -99,7 +103,7 @@ export class StandardOidcClient implements OidcAuthenticator {
     private readonly verifyToken: IdTokenVerifier = async (token, discovery, config, nonce) => {
       let keySet = this.jwks.get(discovery.jwks_uri);
       if (!keySet) {
-        keySet = createRemoteJWKSet(new URL(discovery.jwks_uri));
+        keySet = createRemoteJWKSet(new URL(discovery.jwks_uri), { timeoutDuration: this.upstreamTimeoutMs });
         this.jwks.set(discovery.jwks_uri, keySet);
       }
       const verified = await jwtVerify(token, keySet, {
@@ -112,7 +116,12 @@ export class StandardOidcClient implements OidcAuthenticator {
     },
   ) {
     this.transactionCookieName = config.transactionCookieName ?? "ai_learning_oidc";
+    this.upstreamTimeoutMs = config.upstreamTimeoutMs ?? DEFAULT_OIDC_UPSTREAM_TIMEOUT_MS;
     if (config.transactionSecret.length < 32) throw new TypeError("OIDC transaction secret must be at least 32 characters");
+    if (!Number.isSafeInteger(this.upstreamTimeoutMs) || this.upstreamTimeoutMs <= 0
+      || this.upstreamTimeoutMs > MAX_OIDC_UPSTREAM_TIMEOUT_MS) {
+      throw new TypeError(`OIDC upstream timeout must be a positive integer no greater than ${MAX_OIDC_UPSTREAM_TIMEOUT_MS} milliseconds`);
+    }
   }
 
   async begin(returnTo?: string): Promise<OidcAuthorization> {
@@ -162,7 +171,7 @@ export class StandardOidcClient implements OidcAuthenticator {
         redirect_uri: this.config.redirectUri,
         code_verifier: transaction.verifier,
       }),
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(this.upstreamTimeoutMs),
     });
     if (!tokenResponse.ok) throw new Error(`OIDC token exchange failed with status ${tokenResponse.status}`);
     const tokens = await readBoundedJson<{ id_token?: unknown }>(tokenResponse, MAX_OIDC_TOKEN_RESPONSE_BYTES);
@@ -178,7 +187,7 @@ export class StandardOidcClient implements OidcAuthenticator {
     if (this.discoveryCache && this.discoveryCache.expiresAt > this.now()) return this.discoveryCache.value;
     const issuer = this.config.issuer.replace(/\/$/, "");
     const response = await this.fetcher(`${issuer}/.well-known/openid-configuration`, {
-      headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000),
+      headers: { Accept: "application/json" }, signal: AbortSignal.timeout(this.upstreamTimeoutMs),
     });
     if (!response.ok) throw new Error(`OIDC discovery failed with status ${response.status}`);
     const value = await readBoundedJson<Partial<OidcDiscovery>>(response, MAX_OIDC_DISCOVERY_BYTES);
