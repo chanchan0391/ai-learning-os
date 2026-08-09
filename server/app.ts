@@ -51,6 +51,33 @@ const BROWSER_SECURITY_HEADERS = {
   "X-Frame-Options": "DENY",
 } as const;
 
+const STATIC_OBSERVABILITY_PATHS = new Set([
+  "/api/health",
+  "/api/plans",
+  "/api/teaching-sessions",
+  "/api/evaluations",
+  "/api/review-assessments",
+  "/api/recovery-plans",
+  "/api/auth/login",
+  "/api/auth/callback",
+  "/api/auth/session",
+  "/api/auth/session/refresh",
+  "/api/auth/logout",
+  "/api/auth/logout-all",
+  "/api/auth/devices",
+  "/api/auth/account",
+  "/api/sync/changes",
+]);
+
+/** Returns a bounded route label without retaining user-controlled path segments. */
+export function observabilityPath(pathname: string): string {
+  if (STATIC_OBSERVABILITY_PATHS.has(pathname)) return pathname;
+  if (pathname.startsWith("/api/auth/devices/")) return "/api/auth/devices/:deviceId";
+  if (pathname.startsWith("/api/sync/plans/")) return "/api/sync/plans/:planId";
+  if (pathname.startsWith("/api/sync/daily-records/")) return "/api/sync/daily-records/:recordId";
+  return "/unmatched";
+}
+
 function sendJson(response: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers });
   response.end(JSON.stringify(body));
@@ -229,6 +256,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (!response.writableEnded) controller.abort();
     });
     const url = new URL(request.url ?? "/", "http://localhost");
+    const loggedPath = observabilityPath(url.pathname);
     const route = protectedRoute(request.method, url.pathname);
     let auditPrincipal: { userId: string; deviceId: string } | null = null;
     let auditReason: string | undefined;
@@ -242,7 +270,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           occurredAt: new Date().toISOString(),
           requestId,
           method: request.method ?? "UNKNOWN",
-          path: url.pathname,
+          path: loggedPath,
           status,
           outcome: requestOutcome(status),
           durationMs: Math.max(0, Date.now() - requestStartedAt),
@@ -260,7 +288,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           occurredAt: new Date().toISOString(),
           action: route.action,
           method: request.method ?? "UNKNOWN",
-          path: url.pathname,
+          path: loggedPath,
           status,
           outcome: auditOutcome(status),
           ...(auditReason ? { reason: auditReason } : {}),

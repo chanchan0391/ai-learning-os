@@ -98,6 +98,38 @@ describe("AI Learning OS API", () => {
     expect(JSON.stringify(events[0])).not.toMatch(/do-not-log|secret-token|private learner context|cookie/i);
   });
 
+  it("templates dynamic paths and suppresses unknown path content in telemetry", async () => {
+    const requestEvents: RequestLogEvent[] = [];
+    const auditEvents: SecurityAuditEvent[] = [];
+    const privatePlanId = "private-course-and-learner-id";
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      syncStore: {} as SyncStore,
+      resolvePrincipal: async () => null,
+      requestLogSink: { record: (event) => { requestEvents.push(event); } },
+      auditSink: { record: (event) => { auditEvents.push(event); } },
+    });
+
+    const syncResponse = await fetch(`${baseUrl}/api/sync/plans/${privatePlanId}`);
+    expect(syncResponse.status).toBe(401);
+    await syncResponse.json();
+    const unknownResponse = await fetch(`${baseUrl}/private-notes/${privatePlanId}`);
+    expect(unknownResponse.status).toBe(404);
+    await unknownResponse.json();
+
+    expect(requestEvents.map((event) => event.path)).toEqual([
+      "/api/sync/plans/:planId",
+      "/unmatched",
+    ]);
+    expect(auditEvents).toHaveLength(1);
+    expect(auditEvents[0]).toMatchObject({
+      action: "sync.read",
+      path: "/api/sync/plans/:planId",
+      status: 401,
+      reason: "authentication-required",
+    });
+    expect(JSON.stringify({ requestEvents, auditEvents })).not.toContain(privatePlanId);
+  });
+
   it("creates a validated plan through the Agent boundary", async () => {
     const baseUrl = await startApi();
     const response = await fetch(`${baseUrl}/api/plans`, {
