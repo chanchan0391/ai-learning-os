@@ -101,6 +101,8 @@ PUT  /api/sync/daily-records/:id
 2. `task_artifacts.schema_version`：Agent 产物形状版本。
 3. 数据库迁移版本：由迁移工具维护，只描述物理结构。
 
+`npm run db:migrate` 会先获取数据库级 advisory lock，同一数据库已有迁移运行时立即失败，避免并发发布重复执行。`schema_migrations` 同时保存迁移文件的 SHA-256；旧记录首次运行时回填，后续任何已应用 SQL 的变化都会阻断执行。已发布迁移必须保持不可变，结构调整只能通过新的 expand/contract 迁移完成。
+
 导入旧快照时先在应用层升级并完整校验，再拆分写入服务端表。服务端读取旧 Agent 产物时使用显式升级器；未知版本不得静默丢字段。
 
 ## 隐私、保留与恢复

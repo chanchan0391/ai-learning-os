@@ -60,7 +60,7 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=false
 
 1. 接收不可变的提交归档，在解压前校验 SHA-256 完整性。
 2. 执行 `npm ci` 和 `npm run check`。
-3. 在迁移前创建 PostgreSQL 备份，再执行幂等迁移。
+3. 在迁移前创建 PostgreSQL 备份，再在数据库 advisory lock 下执行带 SHA-256 完整性验证的幂等迁移。
 4. 原子切换 `current` 符号链接并重启 Web 与 API。
 5. 验证两个用户服务、Web 首页和 API 健康端点，同时确认实时模型、同步和 PostgreSQL 就绪检查均通过；失败时恢复上一 release。
 6. 只保留最近三个 release，避免服务器磁盘持续增长。
