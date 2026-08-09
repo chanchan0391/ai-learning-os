@@ -39,6 +39,7 @@ export function createShutdownHandler(
 ): () => void {
   let shuttingDown = false;
   let finished = false;
+  let closingDependencies = false;
   const timeoutMs = options.timeoutMs ?? HTTP_SERVER_LIMITS.shutdownTimeoutMs;
   const setTimer = options.setTimer ?? setTimeout;
 
@@ -56,12 +57,21 @@ export function createShutdownHandler(
     deadline.unref?.();
 
     server.close((error) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(deadline);
+      if (finished || closingDependencies) return;
+      closingDependencies = true;
       void closeDependencies()
-        .then(() => exit(error ? 1 : 0))
-        .catch(() => exit(1));
+        .then(() => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(deadline);
+          exit(error ? 1 : 0);
+        })
+        .catch(() => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(deadline);
+          exit(1);
+        });
     });
     server.closeIdleConnections();
   };
