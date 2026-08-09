@@ -66,7 +66,15 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=false
 6. 健康后用已验证 release 中的版本原子更新远程 `deploy-main.sh`，避免后续部署继续使用旧运行时或逻辑。
 7. 只保留最近三个 release，避免服务器磁盘持续增长。
 
-用户服务 unit 属于 dev 主机控制面配置。变更 `deploy/dev/*.service` 时，必须先在远程备份现有 unit，再安装新版本并执行 `systemctl --user daemon-reload`；部署健康门会拒绝服务实际 Node 路径与选定运行时不一致的 release。
+用户服务 unit 属于 dev 主机控制面配置。`control-plane.sh` 会比较 release 与已安装 unit、服务启用/运行状态及实际 Node 进程路径。安装模式会串行化操作、备份既有 unit、原子替换、reload/restart，并在验证失败时自动恢复备份；部署健康门也会拒绝服务实际 Node 路径与选定运行时不一致的 release。
+
+```sh
+# 只读检查；任一 unit 漂移、禁用、停止或运行时不符都会返回非零
+ssh dev '~/services/ai-learning-os/current/deploy/dev/control-plane.sh status'
+
+# 有意更新 repo 中的 unit 后执行；成功输出可回滚备份目录
+ssh dev '~/services/ai-learning-os/current/deploy/dev/control-plane.sh install'
+```
 
 Web 服务同时发送仅允许同源脚本、样式、连接和资源的 CSP，并禁止跨站嵌入、MIME 嗅探、Referrer 泄露及未使用的敏感浏览器能力。dev 只通过回环地址和 SSH 隧道提供 HTTP；未来公网 TLS 终止层必须另外配置 HSTS。
 
@@ -78,6 +86,7 @@ Web 服务同时发送仅允许同源脚本、样式、连接和资源的 CSP，
 launchctl print gui/$(id -u)/com.ai-learning-os.deploy-main
 tail -n 100 ~/Library/Logs/ai-learning-os-deploy.log
 cat ~/services/ai-learning-os/current/DEPLOYED_COMMIT
+~/services/ai-learning-os/current/deploy/dev/control-plane.sh status
 ```
 
 数据库迁移必须遵守 expand/contract：激活新版本前运行的迁移必须与上一应用版本兼容，确保健康检查失败后可以安全回滚应用。
