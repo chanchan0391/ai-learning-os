@@ -7,6 +7,9 @@
     "type": "git",
     "url": "https://github.com/chanchan0391/ai-learning-os.git"
   },
+  "engines": {
+    "node": ">=22.21.1 <23"
+  },
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n web,api \"vite\" \"tsx watch server/index.ts\"",
@@ -21,26 +24,26 @@
     "check": "npm run test && npm run build"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "jose": "^6.2.6",
-    "pg": "^8.22.0",
-    "react": "latest",
-    "react-dom": "latest",
-    "vite": "latest"
+    "@vitejs/plugin-react": "^6.0.5",
+    "jose": "^6.2.8",
+    "pg": "^8.23.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "vite": "^8.2.1"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.1",
-    "@types/node": "latest",
-    "@types/pg": "^8.20.2",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "axe-core": "^4.12.1",
-    "concurrently": "latest",
+    "@testing-library/user-event": "^14.6.3",
+    "@types/node": "^22.20.1",
+    "@types/pg": "^8.21.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "axe-core": "^4.13.0",
+    "concurrently": "^10.0.4",
     "jsdom": "^29.1.1",
     "pg-mem": "^3.0.14",
-    "tsx": "latest",
-    "typescript": "latest",
-    "vitest": "latest"
+    "tsx": "^4.23.11",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }
