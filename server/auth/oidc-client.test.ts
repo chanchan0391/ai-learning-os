@@ -101,4 +101,22 @@ describe("standard OIDC client", () => {
       "Browser",
     )).rejects.toThrow(/missing or expired/);
   });
+
+  it("rejects oversized discovery responses before parsing them", async () => {
+    const oversizedDiscovery = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(40_000));
+        controller.enqueue(new Uint8Array(30_000));
+        controller.close();
+      },
+    }));
+    const client = new StandardOidcClient(
+      config,
+      () => 1_000,
+      undefined,
+      vi.fn(async () => oversizedDiscovery) as typeof fetch,
+    );
+
+    await expect(client.begin()).rejects.toThrow(/65536 byte limit/);
+  });
 });

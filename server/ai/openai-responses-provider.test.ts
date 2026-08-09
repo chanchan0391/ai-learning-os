@@ -33,6 +33,26 @@ describe("OpenAI Responses provider", () => {
     });
     await expect(provider.generateStructured(request)).resolves.toMatchObject({ value: { ok: true } });
     expect(() => new OpenAIResponsesProvider({ apiKey: "secret", model: "test", maxOutputTokens: 0 })).toThrow(/positive safe integer/);
+    expect(() => new OpenAIResponsesProvider({ apiKey: "secret", model: "test", maxResponseBytes: 0 })).toThrow(/positive safe integer/);
+  });
+
+  it("rejects oversized chunked provider responses without retrying", async () => {
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{" + " ".repeat(39)));
+        controller.enqueue(new TextEncoder().encode(" ".repeat(40) + "}"));
+        controller.close();
+      },
+    })));
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "secret", model: "test-model", maxResponseBytes: 64,
+      fetchImplementation: fetchMock as typeof fetch,
+    });
+
+    await expect(provider.generateStructured(request)).rejects.toEqual(
+      new ModelProviderError("Model provider response was too large", 502),
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("normalizes Responses and compatible token usage for account metering", async () => {

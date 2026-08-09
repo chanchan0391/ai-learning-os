@@ -1,4 +1,5 @@
 import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest, type StructuredGenerationResult } from "./model-provider";
+import { readBoundedJson, UpstreamResponseTooLargeError } from "../http/bounded-json-response";
 
 interface OpenAIProviderConfig {
   apiKey: string;
@@ -10,9 +11,11 @@ interface OpenAIProviderConfig {
   maxRetries?: number;
   retryDelayMs?: number;
   maxOutputTokens?: number;
+  maxResponseBytes?: number;
 }
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
+export const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
 
 interface OpenAIResponseBody {
   id?: string;
@@ -88,6 +91,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
   private readonly maxRetries: number;
   private readonly retryDelayMs: number;
   private readonly maxOutputTokens: number;
+  private readonly maxResponseBytes: number;
 
   constructor(private readonly config: OpenAIProviderConfig) {
     if (!config.apiKey.trim()) throw new Error("OpenAI API key is required");
@@ -99,10 +103,14 @@ export class OpenAIResponsesProvider implements ModelProvider {
     this.maxRetries = config.maxRetries ?? 2;
     this.retryDelayMs = config.retryDelayMs ?? 250;
     this.maxOutputTokens = config.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    this.maxResponseBytes = config.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) throw new Error("OpenAI timeout must be positive");
     if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) throw new Error("OpenAI max retries must be a non-negative integer");
     if (!Number.isSafeInteger(this.maxOutputTokens) || this.maxOutputTokens <= 0) {
       throw new Error("OpenAI max output tokens must be a positive safe integer");
+    }
+    if (!Number.isSafeInteger(this.maxResponseBytes) || this.maxResponseBytes <= 0) {
+      throw new Error("OpenAI response byte limit must be a positive safe integer");
     }
   }
 
@@ -157,7 +165,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
           body,
           signal,
         });
-        const responseBody = await response.json() as OpenAIResponseBody;
+        const responseBody = await readBoundedJson<OpenAIResponseBody>(response, this.maxResponseBytes);
         const requestId = response.headers.get("x-request-id") ?? responseBody.id;
         if (!response.ok) {
           if (attempt < this.maxRetries && isRetryableStatus(response.status)) {
@@ -182,6 +190,9 @@ export class OpenAIResponsesProvider implements ModelProvider {
         }
       } catch (error) {
         if (error instanceof ModelProviderError) throw error;
+        if (error instanceof UpstreamResponseTooLargeError) {
+          throw new ModelProviderError("Model provider response was too large", 502, response?.headers.get("x-request-id") ?? undefined);
+        }
         if (request.signal?.aborted) throw new ModelProviderError("Model request was cancelled", 499);
         if (timeoutController.signal.aborted) {
           if (attempt >= this.maxRetries) throw new ModelProviderError(`Model request timed out after ${this.timeoutMs}ms`, 504);

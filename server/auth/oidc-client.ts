@@ -1,9 +1,12 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { VerifiedOidcIdentity } from "./postgres-session-lifecycle";
+import { readBoundedJson } from "../http/bounded-json-response";
 
 const TRANSACTION_TTL_MS = 10 * 60 * 1000;
 const DISCOVERY_TTL_MS = 60 * 60 * 1000;
+const MAX_OIDC_DISCOVERY_BYTES = 64 * 1_024;
+const MAX_OIDC_TOKEN_RESPONSE_BYTES = 256 * 1_024;
 
 export interface OidcConfig {
   issuer: string;
@@ -162,7 +165,7 @@ export class StandardOidcClient implements OidcAuthenticator {
       signal: AbortSignal.timeout(10_000),
     });
     if (!tokenResponse.ok) throw new Error(`OIDC token exchange failed with status ${tokenResponse.status}`);
-    const tokens = await tokenResponse.json() as { id_token?: unknown };
+    const tokens = await readBoundedJson<{ id_token?: unknown }>(tokenResponse, MAX_OIDC_TOKEN_RESPONSE_BYTES);
     if (typeof tokens.id_token !== "string") throw new Error("OIDC token response is missing id_token");
     const verified = await this.verifyToken(tokens.id_token, discovery, this.config, transaction.nonce);
     return {
@@ -178,7 +181,7 @@ export class StandardOidcClient implements OidcAuthenticator {
       headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) throw new Error(`OIDC discovery failed with status ${response.status}`);
-    const value = await response.json() as Partial<OidcDiscovery>;
+    const value = await readBoundedJson<Partial<OidcDiscovery>>(response, MAX_OIDC_DISCOVERY_BYTES);
     if (value.issuer?.replace(/\/$/, "") !== issuer) throw new Error("OIDC discovery issuer mismatch");
     for (const key of ["authorization_endpoint", "token_endpoint", "jwks_uri"] as const) {
       if (typeof value[key] !== "string" || !isSafeProviderUrl(value[key], issuer)) {
