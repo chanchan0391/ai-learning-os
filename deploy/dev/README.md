@@ -21,6 +21,8 @@ OIDC_REDIRECT_URI=http://127.0.0.1:5173/api/auth/callback
 OIDC_TRANSACTION_SECRET=<at-least-32-random-characters>
 # 可选：每次结构化模型响应的输出 token 上限，默认 4096
 OPENAI_MAX_OUTPUT_TOKENS=4096
+# 可选：一次模型调用跨全部重试和退避的总时限（毫秒），默认 60000
+OPENAI_TOTAL_TIMEOUT_MS=60000
 # 可选：每个 API 实例同时执行的 Agent 请求上限，默认 20
 AI_MAX_CONCURRENT_AGENT_REQUESTS=20
 # 可选：仅信任这些直连反向代理追加的最右侧 X-Forwarded-For 地址

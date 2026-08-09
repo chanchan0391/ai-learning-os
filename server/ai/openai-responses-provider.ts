@@ -8,6 +8,7 @@ interface OpenAIProviderConfig {
   apiMode?: "responses" | "chat-completions";
   fetchImplementation?: typeof fetch;
   timeoutMs?: number;
+  totalTimeoutMs?: number;
   maxRetries?: number;
   retryDelayMs?: number;
   maxOutputTokens?: number;
@@ -16,6 +17,7 @@ interface OpenAIProviderConfig {
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
 export const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
+export const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 
 interface OpenAIResponseBody {
   id?: string;
@@ -88,6 +90,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
   private readonly baseUrl: string;
   private readonly fetchImplementation: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly totalTimeoutMs: number;
   private readonly maxRetries: number;
   private readonly retryDelayMs: number;
   private readonly maxOutputTokens: number;
@@ -100,11 +103,13 @@ export class OpenAIResponsesProvider implements ModelProvider {
     this.baseUrl = (config.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
     this.fetchImplementation = config.fetchImplementation ?? fetch;
     this.timeoutMs = config.timeoutMs ?? 30_000;
+    this.totalTimeoutMs = config.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS;
     this.maxRetries = config.maxRetries ?? 2;
     this.retryDelayMs = config.retryDelayMs ?? 250;
     this.maxOutputTokens = config.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     this.maxResponseBytes = config.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) throw new Error("OpenAI timeout must be positive");
+    if (!Number.isFinite(this.totalTimeoutMs) || this.totalTimeoutMs <= 0) throw new Error("OpenAI total timeout must be positive");
     if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) throw new Error("OpenAI max retries must be a non-negative integer");
     if (!Number.isSafeInteger(this.maxOutputTokens) || this.maxOutputTokens <= 0) {
       throw new Error("OpenAI max output tokens must be a positive safe integer");
@@ -147,63 +152,84 @@ export class OpenAIResponsesProvider implements ModelProvider {
       store: false,
     });
 
-    for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
-      if (request.signal?.aborted) throw new ModelProviderError("Model request was cancelled", 499);
-      const timeoutController = new AbortController();
-      const timeout = setTimeout(() => timeoutController.abort("timeout"), this.timeoutMs);
-      const signal = request.signal ? AbortSignal.any([request.signal, timeoutController.signal]) : timeoutController.signal;
-      let response: Response | undefined;
-      try {
-        const endpoint = chatCompletions ? "chat/completions" : "responses";
-        response = await this.fetchImplementation(`${this.baseUrl}/${endpoint}`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.config.apiKey}`,
-            "Content-Type": "application/json",
-            "X-Client-Request-Id": crypto.randomUUID(),
-          },
-          body,
-          signal,
-        });
-        const responseBody = await readBoundedJson<OpenAIResponseBody>(response, this.maxResponseBytes);
-        const requestId = response.headers.get("x-request-id") ?? responseBody.id;
-        if (!response.ok) {
-          if (attempt < this.maxRetries && isRetryableStatus(response.status)) {
-            await wait(retryDelay(response, attempt, this.retryDelayMs), request.signal);
+    const totalTimeoutController = new AbortController();
+    const totalTimeout = setTimeout(() => totalTimeoutController.abort("total-timeout"), this.totalTimeoutMs);
+    const requestSignal = request.signal
+      ? AbortSignal.any([request.signal, totalTimeoutController.signal])
+      : totalTimeoutController.signal;
+    try {
+      for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
+        if (request.signal?.aborted) throw new ModelProviderError("Model request was cancelled", 499);
+        if (totalTimeoutController.signal.aborted) {
+          throw new ModelProviderError(`Model request exceeded the ${this.totalTimeoutMs}ms total deadline`, 504);
+        }
+        const timeoutController = new AbortController();
+        const timeout = setTimeout(() => timeoutController.abort("attempt-timeout"), this.timeoutMs);
+        const signal = AbortSignal.any([requestSignal, timeoutController.signal]);
+        let response: Response | undefined;
+        try {
+          const endpoint = chatCompletions ? "chat/completions" : "responses";
+          response = await this.fetchImplementation(`${this.baseUrl}/${endpoint}`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${this.config.apiKey}`,
+              "Content-Type": "application/json",
+              "X-Client-Request-Id": crypto.randomUUID(),
+            },
+            body,
+            signal,
+          });
+          const responseBody = await readBoundedJson<OpenAIResponseBody>(response, this.maxResponseBytes);
+          const requestId = response.headers.get("x-request-id") ?? responseBody.id;
+          if (!response.ok) {
+            if (attempt < this.maxRetries && isRetryableStatus(response.status)) {
+              await wait(retryDelay(response, attempt, this.retryDelayMs), requestSignal);
+              continue;
+            }
+            throw new ModelProviderError(responseBody.error?.message ?? "OpenAI request failed", response.status, requestId);
+          }
+
+          const outputText = extractOutputText(responseBody);
+          if (!outputText) throw new ModelProviderError("OpenAI response did not contain structured output", 502, requestId);
+          try {
+            const usage = extractUsage(responseBody);
+            return {
+              value: JSON.parse(outputText) as T,
+              model: this.config.model,
+              requestId,
+              ...(usage ? { usage } : {}),
+            };
+          } catch {
+            throw new ModelProviderError("OpenAI response contained invalid JSON", 502, requestId);
+          }
+        } catch (error) {
+          if (error instanceof ModelProviderError) throw error;
+          if (error instanceof UpstreamResponseTooLargeError) {
+            throw new ModelProviderError("Model provider response was too large", 502, response?.headers.get("x-request-id") ?? undefined);
+          }
+          if (request.signal?.aborted) throw new ModelProviderError("Model request was cancelled", 499);
+          if (totalTimeoutController.signal.aborted) {
+            throw new ModelProviderError(`Model request exceeded the ${this.totalTimeoutMs}ms total deadline`, 504);
+          }
+          if (timeoutController.signal.aborted) {
+            if (attempt >= this.maxRetries) throw new ModelProviderError(`Model request timed out after ${this.timeoutMs}ms`, 504);
+            await wait(retryDelay(response, attempt, this.retryDelayMs), requestSignal);
             continue;
           }
-          throw new ModelProviderError(responseBody.error?.message ?? "OpenAI request failed", response.status, requestId);
+          if (attempt >= this.maxRetries) throw new ModelProviderError("OpenAI request failed due to a network error", 502);
+          await wait(retryDelay(response, attempt, this.retryDelayMs), requestSignal);
+        } finally {
+          clearTimeout(timeout);
         }
-
-        const outputText = extractOutputText(responseBody);
-        if (!outputText) throw new ModelProviderError("OpenAI response did not contain structured output", 502, requestId);
-        try {
-          const usage = extractUsage(responseBody);
-          return {
-            value: JSON.parse(outputText) as T,
-            model: this.config.model,
-            requestId,
-            ...(usage ? { usage } : {}),
-          };
-        } catch {
-          throw new ModelProviderError("OpenAI response contained invalid JSON", 502, requestId);
-        }
-      } catch (error) {
-        if (error instanceof ModelProviderError) throw error;
-        if (error instanceof UpstreamResponseTooLargeError) {
-          throw new ModelProviderError("Model provider response was too large", 502, response?.headers.get("x-request-id") ?? undefined);
-        }
-        if (request.signal?.aborted) throw new ModelProviderError("Model request was cancelled", 499);
-        if (timeoutController.signal.aborted) {
-          if (attempt >= this.maxRetries) throw new ModelProviderError(`Model request timed out after ${this.timeoutMs}ms`, 504);
-          await wait(retryDelay(response, attempt, this.retryDelayMs), request.signal);
-          continue;
-        }
-        if (attempt >= this.maxRetries) throw new ModelProviderError("OpenAI request failed due to a network error", 502);
-        await wait(retryDelay(response, attempt, this.retryDelayMs), request.signal);
-      } finally {
-        clearTimeout(timeout);
       }
+    } catch (error) {
+      if (request.signal?.aborted) throw new ModelProviderError("Model request was cancelled", 499);
+      if (totalTimeoutController.signal.aborted) {
+        throw new ModelProviderError(`Model request exceeded the ${this.totalTimeoutMs}ms total deadline`, 504);
+      }
+      throw error;
+    } finally {
+      clearTimeout(totalTimeout);
     }
     throw new ModelProviderError("OpenAI request failed", 502);
   }

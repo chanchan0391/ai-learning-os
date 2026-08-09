@@ -83,4 +83,15 @@ describe("createModelProvider", () => {
     expect(() => createModelProvider({ OPENAI_MAX_OUTPUT_TOKENS: "0" })).toThrow(/positive integer/);
     expect(() => createModelProvider({ OPENAI_MAX_OUTPUT_TOKENS: "512" })).toThrow(/requires a configured model provider/);
   });
+
+  it("accepts a total request deadline only with a configured provider", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ output_text: "{\"ok\":true}" })));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createModelProvider({
+      OPENAI_API_KEY: "openai-key", OPENAI_MODEL: "model", OPENAI_TOTAL_TIMEOUT_MS: "12000",
+    });
+    await expect(provider.generateStructured({ instructions: "Return JSON", input: "test", schema: { name: "result", value: {} } })).resolves.toMatchObject({ value: { ok: true } });
+    expect(() => createModelProvider({ OPENAI_TOTAL_TIMEOUT_MS: "0" })).toThrow(/positive integer/);
+    expect(() => createModelProvider({ OPENAI_TOTAL_TIMEOUT_MS: "12000" })).toThrow(/requires a configured model provider/);
+  });
 });

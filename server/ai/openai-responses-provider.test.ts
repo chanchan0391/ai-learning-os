@@ -123,6 +123,21 @@ describe("OpenAI Responses provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds the complete request across retries and retry delays", async () => {
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "secret", model: "test-model", timeoutMs: 100, totalTimeoutMs: 8, maxRetries: 10, retryDelayMs: 50,
+      fetchImplementation: fetchMock as typeof fetch,
+    });
+
+    await expect(provider.generateStructured(request)).rejects.toEqual(
+      new ModelProviderError("Model request exceeded the 8ms total deadline", 504),
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("cancels immediately when the caller aborts", async () => {
     const fetchMock = vi.fn();
     const provider = new OpenAIResponsesProvider({ apiKey: "secret", model: "test-model", fetchImplementation: fetchMock as typeof fetch });
@@ -131,5 +146,9 @@ describe("OpenAI Responses provider", () => {
 
     await expect(provider.generateStructured({ ...request, signal: controller.signal })).rejects.toEqual(new ModelProviderError("Model request was cancelled", 499));
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("validates the total request deadline", () => {
+    expect(() => new OpenAIResponsesProvider({ apiKey: "secret", model: "test", totalTimeoutMs: 0 })).toThrow(/total timeout/);
   });
 });
