@@ -120,6 +120,38 @@ describe("standard OIDC client", () => {
     await expect(client.begin()).rejects.toThrow(/65536 byte limit/);
   });
 
+  it("rejects oversized JWKS responses before parsing or verifying them", async () => {
+    const token = [
+      Buffer.from(JSON.stringify({ alg: "RS256", kid: "key-1" })).toString("base64url"),
+      Buffer.from(JSON.stringify({ iss: config.issuer, aud: config.clientId, sub: "subject-123" })).toString("base64url"),
+      "invalid-signature",
+    ].join(".");
+    const oversizedJwks = () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(200_000));
+        controller.enqueue(new Uint8Array(100_000));
+        controller.close();
+      },
+    }), { status: 200 });
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/token")) return Response.json({ id_token: token });
+      if (url.endsWith("/keys")) return oversizedJwks();
+      return discovery();
+    });
+    const randomValues = [Buffer.alloc(32, 1), Buffer.alloc(24, 2), Buffer.alloc(24, 3)];
+    const client = new StandardOidcClient(config, () => 1_000, () => randomValues.shift()!, fetcher);
+    const started = await client.begin();
+    const state = new URL(started.authorizationUrl).searchParams.get("state");
+
+    await expect(client.complete(
+      new URL(`https://learn.example/api/auth/callback?code=auth-code&state=${state}`),
+      `${client.transactionCookieName}=${started.transactionCookie}`,
+      "Browser",
+    )).rejects.toThrow(/262144 byte limit/);
+    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith("/keys"))).toBe(true);
+  });
+
   it("applies the configured timeout to discovery and token exchange", async () => {
     const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
     const signals: AbortSignal[] = [];

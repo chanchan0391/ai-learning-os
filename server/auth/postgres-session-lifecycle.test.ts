@@ -147,7 +147,7 @@ describe("PostgreSQL session lifecycle", () => {
     for (const migration of ["001-initial-sync-schema.sql", "002-auth-sessions.sql", "003-oidc-identities.sql"]) {
       await pool.query(await readFile(new URL(`../sync/migrations/${migration}`, import.meta.url), "utf8"));
     }
-    let now = new Date("2026-08-09T12:00:00.000Z");
+    let now = new Date("2099-08-09T12:00:00.000Z");
     const tokens = ["token-1", "token-2", "token-3"];
     const ids = ["user-1", "device-1", "device-2", "device-3"];
     const lifecycle = new PostgresSessionLifecycle(
@@ -167,7 +167,7 @@ describe("PostgreSQL session lifecycle", () => {
 
   it("prunes authentication metadata older than the retention window without removing active devices", async () => {
     const { pool } = await setup();
-    const currentTime = new Date("2026-08-08T12:00:00.000Z");
+    const currentTime = new Date("2099-08-08T12:00:00.000Z");
     const oldTime = new Date(currentTime.getTime() - AUTH_METADATA_RETENTION_MS - 1_000).toISOString();
     await pool.query("INSERT INTO users (id) VALUES ('old-user')");
     await pool.query(

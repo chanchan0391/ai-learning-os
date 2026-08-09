@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, customFetch, jwtVerify } from "jose";
 import type { VerifiedOidcIdentity } from "./postgres-session-lifecycle";
 import { readBoundedJson } from "../http/bounded-json-response";
 
@@ -7,6 +7,7 @@ const TRANSACTION_TTL_MS = 10 * 60 * 1000;
 const DISCOVERY_TTL_MS = 60 * 60 * 1000;
 const MAX_OIDC_DISCOVERY_BYTES = 64 * 1_024;
 const MAX_OIDC_TOKEN_RESPONSE_BYTES = 256 * 1_024;
+const MAX_OIDC_JWKS_RESPONSE_BYTES = 256 * 1_024;
 export const DEFAULT_OIDC_UPSTREAM_TIMEOUT_MS = 10_000;
 export const MAX_OIDC_UPSTREAM_TIMEOUT_MS = 60_000;
 
@@ -103,7 +104,15 @@ export class StandardOidcClient implements OidcAuthenticator {
     private readonly verifyToken: IdTokenVerifier = async (token, discovery, config, nonce) => {
       let keySet = this.jwks.get(discovery.jwks_uri);
       if (!keySet) {
-        keySet = createRemoteJWKSet(new URL(discovery.jwks_uri), { timeoutDuration: this.upstreamTimeoutMs });
+        keySet = createRemoteJWKSet(new URL(discovery.jwks_uri), {
+          timeoutDuration: this.upstreamTimeoutMs,
+          [customFetch]: async (url, options) => {
+            const response = await this.fetcher(url, options);
+            if (!response.ok) return response;
+            const value = await readBoundedJson<unknown>(response, MAX_OIDC_JWKS_RESPONSE_BYTES);
+            return Response.json(value, { status: response.status, statusText: response.statusText });
+          },
+        });
         this.jwks.set(discovery.jwks_uri, keySet);
       }
       const verified = await jwtVerify(token, keySet, {
