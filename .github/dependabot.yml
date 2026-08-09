@@ -8,6 +8,11 @@ updates:
     groups:
       development-dependencies:
         dependency-type: development
+    ignore:
+      # jsdom 30 requires a newer Node 22 minor than the current dev runtime.
+      - dependency-name: jsdom
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: github-actions
     directory: /
