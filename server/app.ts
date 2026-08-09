@@ -15,6 +15,7 @@ import type { OidcAuthenticator } from "./auth/oidc-client";
 import type { AccountDataLifecycle, SessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { DEFAULT_SESSION_COOKIE_NAME, readSessionToken } from "./auth/postgres-session-resolver";
 import type { SubscriptionEntitlementResolver } from "./billing/subscription-entitlement";
+import type { DatabasePoolCapacityMonitor } from "./observability/database-capacity";
 import { requestOutcome, type RequestLogEvent, type RequestLogSink } from "./observability/request-observability";
 import { coalesceReadinessCheck } from "./observability/readiness-check";
 import {
@@ -113,6 +114,7 @@ export interface AppOptions {
   subscriptionEntitlements?: SubscriptionEntitlementResolver;
   requestLogSink?: RequestLogSink;
   readinessCheck?: () => Promise<void>;
+  databasePoolCapacity?: DatabasePoolCapacityMonitor;
   trustedProxyAddresses?: readonly string[];
 }
 
@@ -344,6 +346,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           aiEnabled: provider.isAiEnabled,
           syncEnabled: Boolean(options.syncStore && options.resolvePrincipal),
           dependencies: { database },
+          databasePool: options.databasePoolCapacity?.snapshot() ?? null,
           capacity: capacityMonitor.snapshot(),
           agentConcurrency: agentConcurrencyLimiter.snapshot(),
           accountModelBudgetsEnabled: Boolean(options.modelUsageLedger),

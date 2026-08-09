@@ -7,6 +7,7 @@ import { StandardOidcClient, type OidcConfig } from "./auth/oidc-client";
 import { PostgresModelUsageLedger, type AccountModelBudget, type ModelUsagePolicy } from "./ai/model-usage";
 import { PostgresSubscriptionEntitlementResolver } from "./billing/subscription-entitlement";
 import { JsonLineRequestLogSink } from "./observability/request-observability";
+import { PostgresPoolCapacityMonitor } from "./observability/database-capacity";
 import { PostgresFixedWindowRateLimiter } from "./security/postgres-rate-limiter";
 import { JsonLineSecurityAuditSink, RollingRequestCapacityMonitor } from "./security/request-security";
 import { PostgresSyncStore } from "./sync/postgres-sync-store";
@@ -254,7 +255,8 @@ export function createSyncRuntime(
   const config = readSyncRuntimeConfig(env);
   if (!config) return { appOptions: {}, close: async () => undefined };
 
-  const pool = createPool(config.connectionString, toPoolConfig(config.connectionString, readDatabasePoolConfig(env)));
+  const databasePoolConfig = readDatabasePoolConfig(env);
+  const pool = createPool(config.connectionString, toPoolConfig(config.connectionString, databasePoolConfig));
   const sessions = new PostgresSessionPrincipalResolver(pool, config.sessionCookieName);
   const sessionLifecycle = new PostgresSessionLifecycle(pool);
   return {
@@ -269,6 +271,7 @@ export function createSyncRuntime(
       rateLimiter: new PostgresFixedWindowRateLimiter(pool),
       auditSink: new JsonLineSecurityAuditSink(),
       requestLogSink: new JsonLineRequestLogSink(),
+      databasePoolCapacity: new PostgresPoolCapacityMonitor(pool, databasePoolConfig.max),
       capacityMonitor: new RollingRequestCapacityMonitor(),
       modelUsageLedger: config.modelUsagePolicy ? new PostgresModelUsageLedger(pool, config.modelUsagePolicy) : undefined,
       subscriptionEntitlements: config.requireSubscriptionEntitlement

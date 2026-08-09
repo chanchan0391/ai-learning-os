@@ -198,6 +198,9 @@ describe("sync runtime configuration", () => {
     const pool = {
       query: async (query: unknown) => { queries.push(query); return { rows: [{ "?column?": 1 }] }; },
       end: async () => undefined,
+      totalCount: 10,
+      idleCount: 0,
+      waitingCount: 2,
     } as unknown as Pool;
     const runtime = createSyncRuntime({
       DATABASE_URL: "postgres://localhost/learning",
@@ -217,6 +220,14 @@ describe("sync runtime configuration", () => {
       query_timeout: DATABASE_POOL_DEFAULTS.queryTimeoutMillis,
       idle_in_transaction_session_timeout: DATABASE_POOL_DEFAULTS.idleInTransactionSessionTimeoutMillis,
       maxLifetimeSeconds: DATABASE_POOL_DEFAULTS.maxLifetimeSeconds,
+    });
+    expect(runtime.appOptions.databasePoolCapacity?.snapshot()).toEqual({
+      limit: DATABASE_POOL_DEFAULTS.max,
+      total: 10,
+      idle: 0,
+      inUse: 10,
+      waiting: 2,
+      saturated: true,
     });
     await runtime.close();
   });

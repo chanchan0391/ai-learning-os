@@ -29,8 +29,25 @@ describe("AI Learning OS API", () => {
     await expect(fetch(`${baseUrl}/api/health`).then((response) => response.json())).resolves.toMatchObject({
       status: "ok", provider: "deterministic-development", aiEnabled: false, syncEnabled: false,
       dependencies: { database: "disabled" },
+      databasePool: null,
       capacity: { inFlight: 0, requests: 0, rejected: 0, failed: 0, rateLimited: 0, byScope: {} },
       agentConcurrency: { limit: 20, inFlight: 0, rejected: 0 },
+    });
+  });
+
+  it("reports identifier-free database pool saturation", async () => {
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      syncStore: {} as SyncStore,
+      resolvePrincipal: async () => null,
+      readinessCheck: async () => undefined,
+      databasePoolCapacity: {
+        snapshot: () => ({ limit: 10, total: 10, idle: 0, inUse: 10, waiting: 2, saturated: true }),
+      },
+    });
+
+    await expect(fetch(`${baseUrl}/api/health`).then((response) => response.json())).resolves.toMatchObject({
+      status: "ok",
+      databasePool: { limit: 10, total: 10, idle: 0, inUse: 10, waiting: 2, saturated: true },
     });
   });
 
