@@ -1,4 +1,4 @@
-import pg, { type Pool } from "pg";
+import pg, { type Pool, type PoolConfig } from "pg";
 import { isIP } from "node:net";
 import type { AppOptions } from "./app";
 import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolver";
@@ -25,6 +25,26 @@ export interface SyncRuntimeConfig {
   requireSubscriptionEntitlement?: boolean;
 }
 
+export const DATABASE_POOL_DEFAULTS = {
+  max: 10,
+  connectionTimeoutMillis: 5_000,
+  idleTimeoutMillis: 30_000,
+  statementTimeoutMillis: 15_000,
+  queryTimeoutMillis: 20_000,
+  idleInTransactionSessionTimeoutMillis: 15_000,
+  maxLifetimeSeconds: 300,
+} as const;
+
+export interface DatabasePoolRuntimeConfig {
+  max: number;
+  connectionTimeoutMillis: number;
+  idleTimeoutMillis: number;
+  statementTimeoutMillis: number;
+  queryTimeoutMillis: number;
+  idleInTransactionSessionTimeoutMillis: number;
+  maxLifetimeSeconds: number;
+}
+
 function parsePositiveInteger(value: string, name: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer`);
@@ -34,6 +54,42 @@ function parsePositiveInteger(value: string, name: string): number {
 export function readAgentConcurrencyLimit(env: NodeJS.ProcessEnv): number | undefined {
   const value = env.AI_MAX_CONCURRENT_AGENT_REQUESTS?.trim();
   return value ? parsePositiveInteger(value, "AI_MAX_CONCURRENT_AGENT_REQUESTS") : undefined;
+}
+
+export function readDatabasePoolConfig(env: NodeJS.ProcessEnv): DatabasePoolRuntimeConfig {
+  const read = (name: string, fallback: number) => {
+    const value = env[name]?.trim();
+    return value ? parsePositiveInteger(value, name) : fallback;
+  };
+  const config = {
+    max: read("DATABASE_POOL_MAX", DATABASE_POOL_DEFAULTS.max),
+    connectionTimeoutMillis: read("DATABASE_CONNECTION_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.connectionTimeoutMillis),
+    idleTimeoutMillis: read("DATABASE_IDLE_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.idleTimeoutMillis),
+    statementTimeoutMillis: read("DATABASE_STATEMENT_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.statementTimeoutMillis),
+    queryTimeoutMillis: read("DATABASE_QUERY_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.queryTimeoutMillis),
+    idleInTransactionSessionTimeoutMillis: read(
+      "DATABASE_IDLE_TRANSACTION_TIMEOUT_MS",
+      DATABASE_POOL_DEFAULTS.idleInTransactionSessionTimeoutMillis,
+    ),
+    maxLifetimeSeconds: read("DATABASE_MAX_LIFETIME_SECONDS", DATABASE_POOL_DEFAULTS.maxLifetimeSeconds),
+  };
+  if (config.queryTimeoutMillis <= config.statementTimeoutMillis) {
+    throw new Error("DATABASE_QUERY_TIMEOUT_MS must be greater than DATABASE_STATEMENT_TIMEOUT_MS");
+  }
+  return config;
+}
+
+function toPoolConfig(connectionString: string, config: DatabasePoolRuntimeConfig): PoolConfig {
+  return {
+    connectionString,
+    max: config.max,
+    connectionTimeoutMillis: config.connectionTimeoutMillis,
+    idleTimeoutMillis: config.idleTimeoutMillis,
+    statement_timeout: config.statementTimeoutMillis,
+    query_timeout: config.queryTimeoutMillis,
+    idle_in_transaction_session_timeout: config.idleInTransactionSessionTimeoutMillis,
+    maxLifetimeSeconds: config.maxLifetimeSeconds,
+  };
 }
 
 function parseUsdMicros(value: string, name: string): number {
@@ -98,6 +154,15 @@ function parsePlanBudgets(value: string): Record<string, AccountModelBudget> {
 export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig | null {
   const connectionString = env.DATABASE_URL?.trim();
   const configuredOrigins = env.SYNC_ALLOWED_ORIGINS?.trim();
+  const databasePoolValues = [
+    env.DATABASE_POOL_MAX,
+    env.DATABASE_CONNECTION_TIMEOUT_MS,
+    env.DATABASE_IDLE_TIMEOUT_MS,
+    env.DATABASE_STATEMENT_TIMEOUT_MS,
+    env.DATABASE_QUERY_TIMEOUT_MS,
+    env.DATABASE_IDLE_TRANSACTION_TIMEOUT_MS,
+    env.DATABASE_MAX_LIFETIME_SECONDS,
+  ];
   const budgetValues = [
     env.AI_MONTHLY_TOKEN_LIMIT,
     env.AI_MONTHLY_COST_LIMIT_USD,
@@ -112,8 +177,9 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
   }
   const requireSubscriptionEntitlement = entitlementValue === "true";
   if (!connectionString) {
-    if (configuredOrigins || globalBudgetValue?.trim() || planBudgetsValue || requireSubscriptionEntitlement || budgetValues.some((value) => value?.trim())) {
-      throw new Error("DATABASE_URL is required when sync or AI account budgets are configured");
+    if (configuredOrigins || globalBudgetValue?.trim() || planBudgetsValue || requireSubscriptionEntitlement
+      || budgetValues.some((value) => value?.trim()) || databasePoolValues.some((value) => value?.trim())) {
+      throw new Error("DATABASE_URL is required when database-dependent settings are configured");
     }
     return null;
   }
@@ -183,15 +249,12 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
 
 export function createSyncRuntime(
   env: NodeJS.ProcessEnv,
-  createPool: (connectionString: string) => Pool = (connectionString) => new pg.Pool({
-    connectionString,
-    connectionTimeoutMillis: 5_000,
-  }),
+  createPool: (connectionString: string, config: PoolConfig) => Pool = (_connectionString, config) => new pg.Pool(config),
 ): SyncRuntime {
   const config = readSyncRuntimeConfig(env);
   if (!config) return { appOptions: {}, close: async () => undefined };
 
-  const pool = createPool(config.connectionString);
+  const pool = createPool(config.connectionString, toPoolConfig(config.connectionString, readDatabasePoolConfig(env)));
   const sessions = new PostgresSessionPrincipalResolver(pool, config.sessionCookieName);
   const sessionLifecycle = new PostgresSessionLifecycle(pool);
   return {

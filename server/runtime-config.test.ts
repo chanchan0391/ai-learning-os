@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
-import { createSyncRuntime, readAgentConcurrencyLimit, readSyncRuntimeConfig, readTrustedProxyAddresses } from "./runtime-config";
+import {
+  createSyncRuntime,
+  DATABASE_POOL_DEFAULTS,
+  readAgentConcurrencyLimit,
+  readDatabasePoolConfig,
+  readSyncRuntimeConfig,
+  readTrustedProxyAddresses,
+} from "./runtime-config";
 
 describe("sync runtime configuration", () => {
   it("loads an optional positive per-instance Agent concurrency limit", () => {
@@ -8,6 +15,35 @@ describe("sync runtime configuration", () => {
     expect(readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "12" })).toBe(12);
     expect(() => readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "0" })).toThrow(/positive integer/);
     expect(() => readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "1.5" })).toThrow(/positive integer/);
+  });
+
+  it("loads bounded PostgreSQL pool defaults and explicit overrides", () => {
+    expect(readDatabasePoolConfig({})).toEqual(DATABASE_POOL_DEFAULTS);
+    expect(readDatabasePoolConfig({
+      DATABASE_POOL_MAX: "24",
+      DATABASE_CONNECTION_TIMEOUT_MS: "3000",
+      DATABASE_IDLE_TIMEOUT_MS: "12000",
+      DATABASE_STATEMENT_TIMEOUT_MS: "8000",
+      DATABASE_QUERY_TIMEOUT_MS: "9000",
+      DATABASE_IDLE_TRANSACTION_TIMEOUT_MS: "7000",
+      DATABASE_MAX_LIFETIME_SECONDS: "120",
+    })).toEqual({
+      max: 24,
+      connectionTimeoutMillis: 3_000,
+      idleTimeoutMillis: 12_000,
+      statementTimeoutMillis: 8_000,
+      queryTimeoutMillis: 9_000,
+      idleInTransactionSessionTimeoutMillis: 7_000,
+      maxLifetimeSeconds: 120,
+    });
+  });
+
+  it("rejects unsafe PostgreSQL pool bounds", () => {
+    expect(() => readDatabasePoolConfig({ DATABASE_POOL_MAX: "0" })).toThrow(/positive integer/);
+    expect(() => readDatabasePoolConfig({ DATABASE_STATEMENT_TIMEOUT_MS: "20000" }))
+      .toThrow(/QUERY_TIMEOUT_MS must be greater/);
+    expect(() => readDatabasePoolConfig({ DATABASE_QUERY_TIMEOUT_MS: "15000" }))
+      .toThrow(/QUERY_TIMEOUT_MS must be greater/);
   });
 
   it("loads optional exact trusted proxy addresses independently of sync", () => {
@@ -36,6 +72,7 @@ describe("sync runtime configuration", () => {
 
   it("fails fast for incomplete or unsafe sync configuration", () => {
     expect(() => readSyncRuntimeConfig({ SYNC_ALLOWED_ORIGINS: "https://learn.example" })).toThrow(/DATABASE_URL/);
+    expect(() => readSyncRuntimeConfig({ DATABASE_POOL_MAX: "20" })).toThrow(/DATABASE_URL/);
     expect(() => readSyncRuntimeConfig({ DATABASE_URL: "postgres://localhost/learning" })).toThrow(/SYNC_ALLOWED_ORIGINS/);
     expect(() => readSyncRuntimeConfig({
       DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "http://learn.example",
@@ -157,6 +194,7 @@ describe("sync runtime configuration", () => {
 
   it("wires PostgreSQL into the application readiness check", async () => {
     const queries: unknown[] = [];
+    let poolConfig: unknown;
     const pool = {
       query: async (query: unknown) => { queries.push(query); return { rows: [{ "?column?": 1 }] }; },
       end: async () => undefined,
@@ -164,11 +202,22 @@ describe("sync runtime configuration", () => {
     const runtime = createSyncRuntime({
       DATABASE_URL: "postgres://localhost/learning",
       SYNC_ALLOWED_ORIGINS: "https://learn.example",
-    }, () => pool);
+    }, (_connectionString, config) => {
+      poolConfig = config;
+      return pool;
+    });
 
     await runtime.appOptions.readinessCheck?.();
 
     expect(queries).toEqual(["SELECT 1"]);
+    expect(poolConfig).toMatchObject({
+      connectionString: "postgres://localhost/learning",
+      max: DATABASE_POOL_DEFAULTS.max,
+      statement_timeout: DATABASE_POOL_DEFAULTS.statementTimeoutMillis,
+      query_timeout: DATABASE_POOL_DEFAULTS.queryTimeoutMillis,
+      idle_in_transaction_session_timeout: DATABASE_POOL_DEFAULTS.idleInTransactionSessionTimeoutMillis,
+      maxLifetimeSeconds: DATABASE_POOL_DEFAULTS.maxLifetimeSeconds,
+    });
     await runtime.close();
   });
 });
