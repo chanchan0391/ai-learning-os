@@ -2,7 +2,7 @@ import pg, { type Pool, type PoolConfig } from "pg";
 import { isIP } from "node:net";
 import type { AppOptions } from "./app";
 import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolver";
-import { PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
+import { DEFAULT_MAX_ACTIVE_DEVICES, PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { StandardOidcClient, type OidcConfig } from "./auth/oidc-client";
 import { PostgresModelUsageLedger, type AccountModelBudget, type ModelUsagePolicy } from "./ai/model-usage";
 import { PostgresSubscriptionEntitlementResolver } from "./billing/subscription-entitlement";
@@ -24,6 +24,7 @@ export interface SyncRuntimeConfig {
   oidc?: OidcConfig;
   modelUsagePolicy?: ModelUsagePolicy;
   requireSubscriptionEntitlement?: boolean;
+  maxActiveDevices: number;
 }
 
 export const DATABASE_POOL_DEFAULTS = {
@@ -163,6 +164,7 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     env.DATABASE_QUERY_TIMEOUT_MS,
     env.DATABASE_IDLE_TRANSACTION_TIMEOUT_MS,
     env.DATABASE_MAX_LIFETIME_SECONDS,
+    env.AUTH_MAX_ACTIVE_DEVICES,
   ];
   const budgetValues = [
     env.AI_MONTHLY_TOKEN_LIMIT,
@@ -241,6 +243,9 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
   return {
     connectionString,
     allowedOrigins,
+    maxActiveDevices: env.AUTH_MAX_ACTIVE_DEVICES?.trim()
+      ? parsePositiveInteger(env.AUTH_MAX_ACTIVE_DEVICES.trim(), "AUTH_MAX_ACTIVE_DEVICES")
+      : DEFAULT_MAX_ACTIVE_DEVICES,
     ...(sessionCookieName ? { sessionCookieName } : {}),
     ...(oidc ? { oidc } : {}),
     ...(modelUsagePolicy ? { modelUsagePolicy } : {}),
@@ -258,7 +263,7 @@ export function createSyncRuntime(
   const databasePoolConfig = readDatabasePoolConfig(env);
   const pool = createPool(config.connectionString, toPoolConfig(config.connectionString, databasePoolConfig));
   const sessions = new PostgresSessionPrincipalResolver(pool, config.sessionCookieName);
-  const sessionLifecycle = new PostgresSessionLifecycle(pool);
+  const sessionLifecycle = new PostgresSessionLifecycle(pool, undefined, undefined, undefined, undefined, config.maxActiveDevices);
   return {
     appOptions: {
       syncStore: new PostgresSyncStore(pool),

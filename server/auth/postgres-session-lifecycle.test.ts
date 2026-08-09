@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { DataType, newDb } from "pg-mem";
 import { afterEach, describe, expect, it } from "vitest";
 import { hashSessionToken } from "./postgres-session-resolver";
-import { AUTH_METADATA_RETENTION_MS, PostgresSessionLifecycle } from "./postgres-session-lifecycle";
+import { AUTH_METADATA_RETENTION_MS, AuthDeviceLimitError, PostgresSessionLifecycle } from "./postgres-session-lifecycle";
 
 const pools: Array<{ end(): Promise<void> }> = [];
 
@@ -134,6 +134,35 @@ describe("PostgreSQL session lifecycle", () => {
     await expect(lifecycle.establishFromOidc({
       issuer: "not-a-url", subject: "subject", deviceLabel: "Laptop",
     })).rejects.toThrow(/Invalid URL|issuer/);
+  });
+
+  it("bounds active devices per account and admits a new login after one expires", async () => {
+    const memory = newDb({ autoCreateForeignKeyIndices: true });
+    memory.public.registerFunction({
+      name: "length", args: [DataType.text], returns: DataType.integer, implementation: (value: string) => value.length,
+    });
+    const adapter = memory.adapters.createPg();
+    const pool = new adapter.Pool();
+    pools.push(pool);
+    for (const migration of ["001-initial-sync-schema.sql", "002-auth-sessions.sql", "003-oidc-identities.sql"]) {
+      await pool.query(await readFile(new URL(`../sync/migrations/${migration}`, import.meta.url), "utf8"));
+    }
+    let now = new Date("2026-08-09T12:00:00.000Z");
+    const tokens = ["token-1", "token-2", "token-3"];
+    const ids = ["user-1", "device-1", "device-2", "device-3"];
+    const lifecycle = new PostgresSessionLifecycle(
+      pool, () => now, () => tokens.shift()!, () => ids.shift()!, 60_000, 2,
+    );
+    const identity = { issuer: "https://identity.example", subject: "subject-123", deviceLabel: "Browser" };
+
+    await lifecycle.establishFromOidc(identity);
+    await lifecycle.establishFromOidc(identity);
+    await expect(lifecycle.establishFromOidc(identity)).rejects.toBeInstanceOf(AuthDeviceLimitError);
+
+    now = new Date(now.getTime() + 60_001);
+    await expect(lifecycle.establishFromOidc(identity)).resolves.toMatchObject({ deviceId: "device-3" });
+    const devices = await pool.query("SELECT id FROM sync_devices ORDER BY id");
+    expect(devices.rows).toEqual([{ id: "device-3" }]);
   });
 
   it("prunes authentication metadata older than the retention window without removing active devices", async () => {

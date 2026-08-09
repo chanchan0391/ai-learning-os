@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
 import { DeterministicModelProvider } from "./ai/deterministic-provider";
 import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest } from "./ai/model-provider";
+import { AuthDeviceLimitError } from "./auth/postgres-session-lifecycle";
 import type { SubscriptionEntitlementDecision } from "./billing/subscription-entitlement";
 import type { RequestLogEvent } from "./observability/request-observability";
 import { InMemoryConcurrencyLimiter, RollingRequestCapacityMonitor, type SecurityAuditEvent } from "./security/request-security";
@@ -684,6 +685,33 @@ describe("AI Learning OS API", () => {
     expect(callback.headers.get("location")).toBe("/progress");
     expect(callback.headers.get("set-cookie")).toContain("ai_learning_os_session=application-token");
     expect(established).toHaveLength(1);
+  });
+
+  it("returns a retryable response when an account reaches its active device limit", async () => {
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      resolvePrincipal: async () => null,
+      oidcAuthenticator: {
+        transactionCookieName: "oidc_txn",
+        begin: async () => ({ authorizationUrl: "https://identity.example/authorize", transactionCookie: "transaction" }),
+        complete: async () => ({
+          identity: { issuer: "https://identity.example", subject: "subject-1", deviceLabel: "Browser" },
+          returnTo: "/",
+        }),
+      },
+      sessionLifecycle: {
+        establishFromOidc: async () => { throw new AuthDeviceLimitError("Active device limit reached"); },
+        rotate: async () => null,
+        revoke: async () => false,
+        revokeAll: async () => false,
+        listActiveDevices: async () => null,
+        revokeDevice: async () => false,
+      },
+    });
+
+    const response = await fetch(`${baseUrl}/api/auth/callback?code=code&state=state`, { redirect: "manual" });
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("3600");
+    await expect(response.json()).resolves.toEqual({ error: "Active device limit reached" });
   });
 
   it("rate limits protected routes before auth work and emits privacy-safe audit metadata", async () => {

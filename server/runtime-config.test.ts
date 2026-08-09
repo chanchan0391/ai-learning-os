@@ -67,12 +67,14 @@ describe("sync runtime configuration", () => {
       connectionString: "postgres://localhost/learning",
       allowedOrigins: ["http://127.0.0.1:5173", "https://learn.example"],
       sessionCookieName: "learning_session",
+      maxActiveDevices: 100,
     });
   });
 
   it("fails fast for incomplete or unsafe sync configuration", () => {
     expect(() => readSyncRuntimeConfig({ SYNC_ALLOWED_ORIGINS: "https://learn.example" })).toThrow(/DATABASE_URL/);
     expect(() => readSyncRuntimeConfig({ DATABASE_POOL_MAX: "20" })).toThrow(/DATABASE_URL/);
+    expect(() => readSyncRuntimeConfig({ AUTH_MAX_ACTIVE_DEVICES: "20" })).toThrow(/DATABASE_URL/);
     expect(() => readSyncRuntimeConfig({ DATABASE_URL: "postgres://localhost/learning" })).toThrow(/SYNC_ALLOWED_ORIGINS/);
     expect(() => readSyncRuntimeConfig({
       DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "http://learn.example",
@@ -84,6 +86,19 @@ describe("sync runtime configuration", () => {
       DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
       OIDC_ISSUER: "https://identity.example",
     })).toThrow(/configured together/);
+  });
+
+  it("loads a bounded per-account active device limit", () => {
+    expect(readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AUTH_MAX_ACTIVE_DEVICES: "12",
+    })?.maxActiveDevices).toBe(12);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AUTH_MAX_ACTIVE_DEVICES: "0",
+    })).toThrow(/positive integer/);
   });
 
   it("loads a complete provider-neutral OIDC configuration", () => {

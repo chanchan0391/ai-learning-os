@@ -12,7 +12,7 @@ import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
 import { MeteredModelProvider, type ModelUsageLedger } from "./ai/model-usage";
 import type { AuthenticatedPrincipalResolver } from "./auth/authenticated-principal";
 import type { OidcAuthenticator } from "./auth/oidc-client";
-import type { AccountDataLifecycle, SessionLifecycle } from "./auth/postgres-session-lifecycle";
+import { AuthDeviceLimitError, type AccountDataLifecycle, type SessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { DEFAULT_SESSION_COOKIE_NAME, readSessionToken } from "./auth/postgres-session-resolver";
 import type { SubscriptionEntitlementResolver } from "./billing/subscription-entitlement";
 import type { DatabasePoolCapacityMonitor } from "./observability/database-capacity";
@@ -636,6 +636,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (error instanceof Error && error.name === "ForbiddenOriginError") return sendJson(response, 403, { error: error.message });
       if (error instanceof Error && error.name === "UnsupportedMediaTypeError") return sendJson(response, 415, { error: error.message });
       if (error instanceof Error && error.name === "PreconditionRequiredError") return sendJson(response, 428, { error: error.message });
+      if (error instanceof AuthDeviceLimitError) return sendJson(response, 429, { error: error.message }, { "Retry-After": "3600" });
       if (error instanceof SyntaxError || error instanceof TypeError) return sendJson(response, 400, { error: error.message });
       if (error instanceof RangeError) return sendJson(response, 413, { error: error.message });
       if (error instanceof AgentOutputError) return sendJson(response, 502, { error: error.message });

@@ -4,7 +4,12 @@ import { hashSessionToken } from "./postgres-session-resolver";
 
 const DEFAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 export const AUTH_METADATA_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+export const DEFAULT_MAX_ACTIVE_DEVICES = 100;
 const AUTH_METADATA_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+
+export class AuthDeviceLimitError extends Error {
+  readonly name = "AuthDeviceLimitError";
+}
 
 export interface VerifiedOidcIdentity {
   issuer: string;
@@ -74,8 +79,12 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
     private readonly tokenFactory: () => string = () => randomBytes(32).toString("base64url"),
     private readonly idFactory: () => string = () => randomUUID(),
     private readonly ttlMs = DEFAULT_SESSION_TTL_MS,
+    private readonly maxActiveDevices = DEFAULT_MAX_ACTIVE_DEVICES,
   ) {
     if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new TypeError("Session TTL must be positive");
+    if (!Number.isSafeInteger(maxActiveDevices) || maxActiveDevices <= 0) {
+      throw new TypeError("Active device limit must be a positive integer");
+    }
   }
 
   async establishFromOidc(identity: VerifiedOidcIdentity): Promise<IssuedSession> {
@@ -95,8 +104,18 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
           "INSERT INTO oidc_identities (issuer, subject, user_id) VALUES ($1, $2, $3)",
           [identity.issuer.replace(/\/$/, ""), identity.subject, userId],
         );
+      } else {
+        // Serialize logins for one account so concurrent callbacks cannot bypass the cap.
+        await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId]);
       }
-      await this.cleanupAbandonedDevices(client, userId, this.now());
+      await this.cleanupInactiveDevices(client, userId, this.now());
+      const activeDevices = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM sync_devices WHERE user_id = $1 AND revoked_at IS NULL",
+        [userId],
+      );
+      if ((activeDevices.rows[0]?.count ?? 0) >= this.maxActiveDevices) {
+        throw new AuthDeviceLimitError("Active device limit reached; revoke an existing device or wait for a session to expire");
+      }
       const deviceId = this.idFactory();
       await client.query(
         "INSERT INTO sync_devices (user_id, id, label) VALUES ($1, $2, $3)",
@@ -132,7 +151,7 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
         await client.query("ROLLBACK");
         return null;
       }
-      await this.cleanupAbandonedDevices(client, current.rows[0].user_id, this.now());
+      await this.cleanupInactiveDevices(client, current.rows[0].user_id, this.now());
       await client.query("UPDATE auth_sessions SET revoked_at = $2 WHERE token_hash = $1", [hashSessionToken(token), this.now().toISOString()]);
       const session = await this.insertSession(client, current.rows[0].user_id, current.rows[0].device_id);
       await client.query("UPDATE sync_devices SET last_seen_at = $3 WHERE user_id = $1 AND id = $2", [session.userId, session.deviceId, this.now().toISOString()]);
@@ -302,13 +321,15 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
     return { token, userId, deviceId, expiresAt };
   }
 
-  private async cleanupAbandonedDevices(client: PoolClient, userId: string, now: Date): Promise<void> {
-    const cutoff = new Date(now.getTime() - AUTH_METADATA_RETENTION_MS);
+  private async cleanupInactiveDevices(client: PoolClient, userId: string, now: Date): Promise<void> {
     await client.query(
       `DELETE FROM sync_devices
-        WHERE user_id = $1 AND last_seen_at < $2
-          AND id NOT IN (SELECT device_id FROM auth_sessions WHERE user_id = $1)`,
-      [userId, cutoff],
+        WHERE user_id = $1
+          AND id NOT IN (
+            SELECT device_id FROM auth_sessions
+             WHERE user_id = $1 AND expires_at > $2 AND revoked_at IS NULL
+          )`,
+      [userId, now.toISOString()],
     );
   }
 
