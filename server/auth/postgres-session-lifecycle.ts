@@ -3,6 +3,8 @@ import type { Pool, PoolClient, QueryResultRow } from "pg";
 import { hashSessionToken } from "./postgres-session-resolver";
 
 const DEFAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+export const AUTH_METADATA_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const AUTH_METADATA_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 
 export interface VerifiedOidcIdentity {
   issuer: string;
@@ -64,6 +66,8 @@ function assertIdentity(identity: VerifiedOidcIdentity): void {
 }
 
 export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLifecycle {
+  private nextMetadataCleanupAt = 0;
+
   constructor(
     private readonly pool: Pool,
     private readonly now: () => Date = () => new Date(),
@@ -76,6 +80,7 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
 
   async establishFromOidc(identity: VerifiedOidcIdentity): Promise<IssuedSession> {
     assertIdentity(identity);
+    await this.maybeCleanupExpiredMetadata(this.now());
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -91,6 +96,7 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
           [identity.issuer.replace(/\/$/, ""), identity.subject, userId],
         );
       }
+      await this.cleanupAbandonedDevices(client, userId, this.now());
       const deviceId = this.idFactory();
       await client.query(
         "INSERT INTO sync_devices (user_id, id, label) VALUES ($1, $2, $3)",
@@ -108,6 +114,7 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
   }
 
   async rotate(token: string): Promise<IssuedSession | null> {
+    await this.maybeCleanupExpiredMetadata(this.now());
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -125,6 +132,7 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
         await client.query("ROLLBACK");
         return null;
       }
+      await this.cleanupAbandonedDevices(client, current.rows[0].user_id, this.now());
       await client.query("UPDATE auth_sessions SET revoked_at = $2 WHERE token_hash = $1", [hashSessionToken(token), this.now().toISOString()]);
       const session = await this.insertSession(client, current.rows[0].user_id, current.rows[0].device_id);
       await client.query("UPDATE sync_devices SET last_seen_at = $3 WHERE user_id = $1 AND id = $2", [session.userId, session.deviceId, this.now().toISOString()]);
@@ -292,5 +300,28 @@ export class PostgresSessionLifecycle implements SessionLifecycle, AccountDataLi
       [hashSessionToken(token), userId, deviceId, expiresAt],
     );
     return { token, userId, deviceId, expiresAt };
+  }
+
+  private async cleanupAbandonedDevices(client: PoolClient, userId: string, now: Date): Promise<void> {
+    const cutoff = new Date(now.getTime() - AUTH_METADATA_RETENTION_MS);
+    await client.query(
+      `DELETE FROM sync_devices
+        WHERE user_id = $1 AND last_seen_at < $2
+          AND id NOT IN (SELECT device_id FROM auth_sessions WHERE user_id = $1)`,
+      [userId, cutoff],
+    );
+  }
+
+  /** Opportunistically bounds expired session metadata without blocking authentication on maintenance failure. */
+  private async maybeCleanupExpiredMetadata(now: Date): Promise<void> {
+    if (now.getTime() < this.nextMetadataCleanupAt) return;
+    this.nextMetadataCleanupAt = now.getTime() + AUTH_METADATA_CLEANUP_INTERVAL_MS;
+    const cutoff = new Date(now.getTime() - AUTH_METADATA_RETENTION_MS);
+    try {
+      await this.pool.query("DELETE FROM auth_sessions WHERE expires_at < $1", [cutoff]);
+    } catch (error) {
+      this.nextMetadataCleanupAt = 0;
+      console.error("Authentication metadata cleanup failed", error instanceof Error ? error.name : "UnknownError");
+    }
   }
 }

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { DataType, newDb } from "pg-mem";
 import { afterEach, describe, expect, it } from "vitest";
 import { hashSessionToken } from "./postgres-session-resolver";
-import { PostgresSessionLifecycle } from "./postgres-session-lifecycle";
+import { AUTH_METADATA_RETENTION_MS, PostgresSessionLifecycle } from "./postgres-session-lifecycle";
 
 const pools: Array<{ end(): Promise<void> }> = [];
 
@@ -134,5 +134,48 @@ describe("PostgreSQL session lifecycle", () => {
     await expect(lifecycle.establishFromOidc({
       issuer: "not-a-url", subject: "subject", deviceLabel: "Laptop",
     })).rejects.toThrow(/Invalid URL|issuer/);
+  });
+
+  it("prunes authentication metadata older than the retention window without removing active devices", async () => {
+    const { pool } = await setup();
+    const currentTime = new Date("2026-08-08T12:00:00.000Z");
+    const oldTime = new Date(currentTime.getTime() - AUTH_METADATA_RETENTION_MS - 1_000).toISOString();
+    await pool.query("INSERT INTO users (id) VALUES ('old-user')");
+    await pool.query(
+      "INSERT INTO oidc_identities (issuer, subject, user_id) VALUES ('https://identity.example', 'old-subject', 'old-user')",
+    );
+    await pool.query(
+      `INSERT INTO sync_devices (user_id, id, label, created_at, last_seen_at)
+       VALUES ('old-user', 'abandoned-device', 'Old phone', $1, $1),
+              ('old-user', 'active-device', 'Current phone', $1, $1)`,
+      [oldTime],
+    );
+    await pool.query(
+      `INSERT INTO auth_sessions (token_hash, user_id, device_id, created_at, expires_at)
+       VALUES ($1, 'old-user', 'abandoned-device', $2, $3),
+              ($4, 'old-user', 'active-device', $2, $5)`,
+      [
+        hashSessionToken("expired-token"),
+        new Date(new Date(oldTime).getTime() - 60_000).toISOString(),
+        oldTime,
+        hashSessionToken("active-token"),
+        new Date(currentTime.getTime() + 60_000).toISOString(),
+      ],
+    );
+    const lifecycle = new PostgresSessionLifecycle(
+      pool,
+      () => currentTime,
+      () => "new-token",
+      () => "new-device",
+    );
+
+    await lifecycle.establishFromOidc({
+      issuer: "https://identity.example", subject: "old-subject", deviceLabel: "New laptop",
+    });
+
+    const devices = await pool.query("SELECT id FROM sync_devices WHERE user_id = 'old-user' ORDER BY id");
+    const sessions = await pool.query("SELECT device_id FROM auth_sessions WHERE user_id = 'old-user' ORDER BY device_id");
+    expect(devices.rows).toEqual([{ id: "active-device" }, { id: "new-device" }]);
+    expect(sessions.rows).toEqual([{ device_id: "active-device" }, { device_id: "new-device" }]);
   });
 });
