@@ -6,6 +6,10 @@ base_dir=${AI_LEARNING_DEPLOY_DIR:-"$HOME/services/ai-learning-os"}
 source_dir=${AI_LEARNING_CONTROL_PLANE_SOURCE_DIR:-"$base_dir/current/deploy/dev"}
 unit_dir=${AI_LEARNING_SYSTEMD_USER_DIR:-"$HOME/.config/systemd/user"}
 node_bin=${AI_LEARNING_NODE_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/node"}
+case "$node_bin" in
+  "$HOME"/*) unit_node_bin="%h/${node_bin#"$HOME"/}" ;;
+  *) unit_node_bin=$node_bin ;;
+esac
 systemctl_bin=${AI_LEARNING_SYSTEMCTL_BIN:-systemctl}
 proc_root=${AI_LEARNING_PROC_ROOT:-/proc}
 units="ai-learning-os-api.service ai-learning-os-web.service"
@@ -28,7 +32,8 @@ validate_sources() {
       echo "Missing or unsafe control-plane source: $source_unit" >&2
       return 1
     fi
-    if ! grep -Fq "ExecStart=$node_bin " "$source_unit"; then
+    if ! grep -Fq "ExecStart=$node_bin " "$source_unit" \
+      && ! grep -Fq "ExecStart=$unit_node_bin " "$source_unit"; then
       echo "$unit does not use the selected Node binary" >&2
       return 1
     fi

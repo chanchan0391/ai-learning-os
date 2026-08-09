@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
@@ -11,6 +11,7 @@ const temporaryDirectories: string[] = [];
 interface Fixture {
   baseDir: string;
   env: NodeJS.ProcessEnv;
+  sourceDir: string;
   unitDir: string;
 }
 
@@ -40,6 +41,7 @@ function makeFixture(): Fixture {
 
   return {
     baseDir,
+    sourceDir,
     unitDir,
     env: {
       ...process.env,
@@ -93,6 +95,21 @@ describe("dev control-plane management", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("ai-learning-os-api.service: drifted");
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
+  });
+
+  it("accepts systemd home placeholders for the selected runtime", () => {
+    const fixture = makeFixture();
+    const fakeHome = dirname(process.execPath);
+    const placeholderNode = `%h/${process.execPath.slice(fakeHome.length + 1)}`;
+    for (const unit of ["ai-learning-os-api.service", "ai-learning-os-web.service"]) {
+      writeFileSync(join(fixture.sourceDir, unit), `[Service]\nExecStart=${placeholderNode} app.js\n`);
+      writeFileSync(join(fixture.unitDir, unit), `[Service]\nExecStart=${placeholderNode} app.js\n`);
+    }
+
+    const result = runControlPlane(fixture, "status", { HOME: fakeHome });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("selected runtime");
   });
 
   it("restores prior units when post-install verification fails", () => {
