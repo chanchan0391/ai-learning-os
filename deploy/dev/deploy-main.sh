@@ -9,6 +9,24 @@ requested_revision=${1:-}
 provided_archive=${2:-}
 provided_checksum=${3:-}
 
+update_deploy_runner() {
+  candidate=$current_link/deploy/dev/deploy-main.sh
+  if [ ! -f "$candidate" ]; then
+    echo "Active release does not contain the deploy runner" >&2
+    return 1
+  fi
+  staged_runner="$base_dir/.deploy-main.next"
+  install -m 0755 "$candidate" "$staged_runner"
+  mv -f "$staged_runner" "$base_dir/deploy-main.sh"
+}
+
+service_uses_selected_node() {
+  service_name=$1
+  service_pid=$(systemctl --user show --property MainPID --value "$service_name")
+  [ "$service_pid" -gt 0 ] 2>/dev/null \
+    && [ "$(readlink -f "/proc/$service_pid/exe")" = "$(readlink -f "$node_bin")" ]
+}
+
 case "$requested_revision" in
   "") revision=$(git ls-remote "$repository" refs/heads/main | awk 'NR == 1 { print $1 }') ;;
   *[!0-9a-f]* ) echo "Revision must be a full lowercase Git commit SHA" >&2; exit 2 ;;
@@ -33,6 +51,7 @@ if [ -f "$current_link/DEPLOYED_COMMIT" ]; then
   current_revision=$(cat "$current_link/DEPLOYED_COMMIT")
 fi
 if [ "$current_revision" = "$revision" ]; then
+  update_deploy_runner
   echo "Revision $revision is already deployed"
   exit 0
 fi
@@ -84,6 +103,11 @@ fi
 cd "$temporary_dir"
 PATH=$(dirname "$node_bin"):$PATH
 export PATH
+if [ "$(command -v node)" != "$node_bin" ]; then
+  echo "Selected Node binary is not first on PATH" >&2
+  exit 1
+fi
+echo "Using $("$node_bin" --version) with $("$npm_bin" --version)"
 "$npm_bin" ci
 "$npm_bin" run check
 
@@ -107,6 +131,8 @@ healthy=false
 attempt=1
 while [ "$attempt" -le 30 ]; do
   if systemctl --user is-active --quiet ai-learning-os-api.service ai-learning-os-web.service \
+    && service_uses_selected_node ai-learning-os-api.service \
+    && service_uses_selected_node ai-learning-os-web.service \
     && curl --fail --silent --show-error http://127.0.0.1:8088/ >/dev/null \
     && curl --fail --silent --show-error http://127.0.0.1:8787/api/health \
     | "$node_bin" -e '
@@ -153,4 +179,5 @@ find "$base_dir/releases" -mindepth 1 -maxdepth 1 -type d ! -name '.deploy-*' -p
       fi
     done
 
+update_deploy_runner
 echo "Deployed $revision successfully"
