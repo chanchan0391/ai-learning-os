@@ -79,6 +79,26 @@ describe("OpenAI Responses provider", () => {
     });
   });
 
+  it("conservatively estimates usage when a compatible provider omits it", async () => {
+    let requestBytes = 0;
+    const output = "{\"ok\":true}";
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "secret", model: "compatible-model", apiMode: "chat-completions",
+      fetchImplementation: (async (_url, init) => {
+        requestBytes = Buffer.byteLength(String(init?.body), "utf8");
+        return new Response(JSON.stringify({ choices: [{ message: { content: output } }] }));
+      }) as typeof fetch,
+    });
+
+    await expect(provider.generateStructured(request)).resolves.toMatchObject({
+      usage: {
+        inputTokens: requestBytes,
+        outputTokens: Buffer.byteLength(output, "utf8"),
+        totalTokens: requestBytes + Buffer.byteLength(output, "utf8"),
+      },
+    });
+  });
+
   it("converts provider failures to safe typed errors", async () => {
     const provider = new OpenAIResponsesProvider({
       apiKey: "secret", model: "test-model",

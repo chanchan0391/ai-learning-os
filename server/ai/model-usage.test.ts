@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { DataType, newDb } from "pg-mem";
 import { afterEach, describe, expect, it } from "vitest";
 import { MeteredModelProvider, PostgresModelUsageLedger } from "./model-usage";
+import { ModelProviderError } from "./model-provider";
 import type { ModelProvider } from "./model-provider";
 
 const pools: Array<{ end(): Promise<void> }> = [];
@@ -174,5 +175,21 @@ describe("account model usage", () => {
     await metered.generateStructured({ instructions: "x", input: "x", schema: { name: "x", value: {} } });
     await metered.run({ userId: "user-1", action: "ai.plan.create" }, () => metered.generateStructured({ instructions: "x", input: "x", schema: { name: "x", value: {} } }));
     expect(entries).toEqual([{ userId: "user-1", action: "ai.plan.create", provider: "live", model: "model-a", requestId: "req-1", inputTokens: 5, outputTokens: 3 }]);
+  });
+
+  it("fails closed when an authenticated live provider omits billable usage", async () => {
+    const provider: ModelProvider = {
+      id: "live", isAiEnabled: true,
+      generateStructured: async <T>() => ({ value: { ok: true } as T, model: "model-a", requestId: "req-missing-usage" }),
+    };
+    const metered = new MeteredModelProvider(provider, {
+      checkBudget: async () => ({ allowed: true, exceeded: null, resetAt: 0, remainingTokens: 1, remainingCostMicros: 1 }),
+      record: async () => undefined,
+    });
+
+    await expect(metered.run(
+      { userId: "user-1", action: "ai.plan.create" },
+      () => metered.generateStructured({ instructions: "x", input: "x", schema: { name: "x", value: {} } }),
+    )).rejects.toEqual(new ModelProviderError("Model provider did not report billable usage", 502, "req-missing-usage"));
   });
 });

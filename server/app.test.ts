@@ -344,7 +344,10 @@ describe("AI Learning OS API", () => {
       id: "live-test", isAiEnabled: true,
       generateStructured: async <T>(request: StructuredGenerationRequest) => {
         providerCalls += 1;
-        return new DeterministicModelProvider().generateStructured<T>(request);
+        return {
+          ...(await new DeterministicModelProvider().generateStructured<T>(request)),
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        };
       },
     };
     const baseUrl = await startApi(provider, {

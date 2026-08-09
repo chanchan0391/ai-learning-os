@@ -395,3 +395,8 @@
 
 - [ ] 由仓库管理员在 Advanced Security 设置中启用 Dependency Graph，使依赖变更审查不再以“不支持此仓库”失败
 - [ ] 重新运行并通过 Dependabot PR #7 的 dependency-review job，再合并固定到不可变提交的 v5 Action 升级
+
+### P65：模型用量缺失保护
+
+- [x] 在 Responses 或兼容 Provider 缺少 token 用量时按请求与结构化输出 UTF-8 字节数保守记账
+- [x] 让其他实时 Provider 在认证预算上下文缺少用量时安全失败，避免新增适配器静默绕过成本熔断

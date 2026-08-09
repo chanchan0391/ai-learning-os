@@ -42,6 +42,12 @@ function extractUsage(body: OpenAIResponseBody) {
   return { inputTokens: inputTokens!, outputTokens: outputTokens!, totalTokens };
 }
 
+function conservativeUsage(requestBody: string, outputText: string) {
+  const inputTokens = Buffer.byteLength(requestBody, "utf8");
+  const outputTokens = Buffer.byteLength(outputText, "utf8");
+  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
+}
+
 function extractOutputText(body: OpenAIResponseBody): string | undefined {
   if (body.output_text) return body.output_text;
   const chatContent = body.choices?.[0]?.message?.content;
@@ -193,12 +199,15 @@ export class OpenAIResponsesProvider implements ModelProvider {
           const outputText = extractOutputText(responseBody);
           if (!outputText) throw new ModelProviderError("OpenAI response did not contain structured output", 502, requestId);
           try {
-            const usage = extractUsage(responseBody);
+            // A UTF-8 byte is a conservative token proxy for the supported APIs:
+            // it keeps account and global budgets fail-closed when a compatible
+            // provider omits usage metadata instead of silently recording nothing.
+            const usage = extractUsage(responseBody) ?? conservativeUsage(body, outputText);
             return {
               value: JSON.parse(outputText) as T,
               model: this.config.model,
               requestId,
-              ...(usage ? { usage } : {}),
+              usage,
             };
           } catch {
             throw new ModelProviderError("OpenAI response contained invalid JSON", 502, requestId);

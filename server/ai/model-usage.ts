@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Pool } from "pg";
+import { ModelProviderError } from "./model-provider";
 import type { ModelProvider, StructuredGenerationRequest, StructuredGenerationResult } from "./model-provider";
 
 export interface ModelBudgetDecision {
@@ -150,6 +151,9 @@ export class MeteredModelProvider implements ModelProvider {
   async generateStructured<T>(request: StructuredGenerationRequest): Promise<StructuredGenerationResult<T>> {
     const result = await this.provider.generateStructured<T>(request);
     const context = this.context.getStore();
+    if (context && this.provider.isAiEnabled && !result.usage) {
+      throw new ModelProviderError("Model provider did not report billable usage", 502, result.requestId);
+    }
     if (context && result.usage) {
       await this.ledger.record({
         ...context,
