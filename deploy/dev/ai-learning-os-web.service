@@ -6,7 +6,7 @@ Requires=ai-learning-os-api.service
 [Service]
 Type=simple
 WorkingDirectory=%h/services/ai-learning-os/current
-ExecStart=%h/.nvm/versions/node/v22.21.1/bin/node node_modules/vite/bin/vite.js preview
+ExecStart=%h/.nvm/versions/node/v22.23.1/bin/node node_modules/vite/bin/vite.js preview
 Restart=on-failure
 RestartSec=3
 

@@ -3,8 +3,8 @@ set -eu
 
 base_dir=${AI_LEARNING_DEPLOY_DIR:-"$HOME/services/ai-learning-os"}
 repository=${AI_LEARNING_REPOSITORY:-"https://github.com/chanchan0391/ai-learning-os.git"}
-node_bin=${AI_LEARNING_NODE_BIN:-"$HOME/.nvm/versions/node/v22.21.1/bin/node"}
-npm_bin=${AI_LEARNING_NPM_BIN:-"$HOME/.nvm/versions/node/v22.21.1/bin/npm"}
+node_bin=${AI_LEARNING_NODE_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/node"}
+npm_bin=${AI_LEARNING_NPM_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/npm"}
 requested_revision=${1:-}
 provided_archive=${2:-}
 provided_checksum=${3:-}

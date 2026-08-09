@@ -8,7 +8,7 @@
     "url": "https://github.com/chanchan0391/ai-learning-os.git"
   },
   "engines": {
-    "node": ">=22.21.1 <23"
+    "node": ">=22.22.2 <23"
   },
   "type": "module",
   "scripts": {
@@ -40,7 +40,7 @@
     "@types/react-dom": "^19.2.4",
     "axe-core": "^4.13.0",
     "concurrently": "^10.0.4",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "pg-mem": "^3.0.14",
     "tsx": "^4.23.11",
     "typescript": "^7.0.2",

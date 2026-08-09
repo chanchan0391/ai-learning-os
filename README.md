@@ -63,7 +63,7 @@ AI Learning OS 是一个 AI 原生个人学习操作系统。当前版本实现�
 
 ## 本地运行
 
-需要 Node.js 22.21.1 或同一主版本的更高版本。`package.json` 会拒绝不受支持的主版本，CI 与 dev 部署也统一使用 Node.js 22。
+需要 Node.js 22.22.2 或同一主版本的更高版本。NVM 用户可在仓库目录执行 `nvm use`，`.nvmrc` 会选择已验证的 22.23.1。`package.json` 会拒绝不受支持的主版本，CI 与 dev 部署也统一使用 Node.js 22。
 
 ### 最简单方式（macOS）
 
