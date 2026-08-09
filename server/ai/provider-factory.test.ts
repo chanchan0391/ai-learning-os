@@ -59,6 +59,14 @@ describe("createModelProvider", () => {
     })).toThrow("must be HTTPS");
   });
 
+  it("rejects compatible endpoints with embedded credentials", () => {
+    expect(() => createModelProvider({
+      OPENAI_COMPATIBLE_API_KEY: "compatible-key",
+      OPENAI_COMPATIBLE_BASE_URL: "https://operator:secret@models.example/v1",
+      OPENAI_COMPATIBLE_MODEL: "model",
+    })).toThrow(/without credentials/);
+  });
+
   it("allows a loopback HTTP compatible endpoint for development", () => {
     expect(createModelProvider({
       OPENAI_COMPATIBLE_API_KEY: "compatible-key",

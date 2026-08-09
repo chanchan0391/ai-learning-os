@@ -23,8 +23,9 @@ function parseTotalTimeout(value: string | undefined): number {
 function normalizeCompatibleBaseUrl(value: string): string {
   const parsed = new URL(value);
   const local = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
-  if ((parsed.protocol !== "https:" && !(local && parsed.protocol === "http:")) || parsed.search || parsed.hash) {
-    throw new Error("OPENAI_COMPATIBLE_BASE_URL must be HTTPS (or local HTTP) without query or fragment");
+  if ((parsed.protocol !== "https:" && !(local && parsed.protocol === "http:"))
+    || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error("OPENAI_COMPATIBLE_BASE_URL must be HTTPS (or local HTTP) without credentials, query, or fragment");
   }
   if (parsed.pathname === "/" || parsed.pathname === "") parsed.pathname = "/v1";
   return parsed.toString().replace(/\/$/, "");

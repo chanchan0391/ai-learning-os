@@ -226,6 +226,25 @@ describe("sync runtime configuration", () => {
     })).toThrow(/exact HTTPS/);
   });
 
+  it("rejects embedded credentials in OIDC application URLs", () => {
+    const base = {
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      OIDC_CLIENT_ID: "learning-client",
+      OIDC_TRANSACTION_SECRET: "a-secure-random-value-with-32-characters",
+    };
+    expect(() => readSyncRuntimeConfig({
+      ...base,
+      OIDC_ISSUER: "https://operator:secret@identity.example",
+      OIDC_REDIRECT_URI: "https://learn.example/api/auth/callback",
+    })).toThrow(/OIDC_ISSUER.*without credentials/);
+    expect(() => readSyncRuntimeConfig({
+      ...base,
+      OIDC_ISSUER: "https://identity.example",
+      OIDC_REDIRECT_URI: "https://operator:secret@learn.example/api/auth/callback",
+    })).toThrow(/OIDC_REDIRECT_URI.*no credentials/);
+  });
+
   it("wires PostgreSQL into the application readiness check", async () => {
     const queries: unknown[] = [];
     let poolConfig: unknown;

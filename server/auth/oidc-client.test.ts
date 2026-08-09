@@ -120,6 +120,26 @@ describe("standard OIDC client", () => {
     await expect(client.begin()).rejects.toThrow(/65536 byte limit/);
   });
 
+  it("rejects discovered endpoints with embedded credentials", async () => {
+    for (const key of ["authorization_endpoint", "token_endpoint", "jwks_uri"] as const) {
+      const unsafeDiscovery = () => new Response(JSON.stringify({
+        issuer: config.issuer,
+        authorization_endpoint: `${config.issuer}/authorize`,
+        token_endpoint: `${config.issuer}/token`,
+        jwks_uri: `${config.issuer}/keys`,
+        [key]: `https://operator:secret@identity.example/${key}`,
+      }));
+      const client = new StandardOidcClient(
+        config,
+        () => 1_000,
+        undefined,
+        vi.fn(async () => unsafeDiscovery()) as typeof fetch,
+      );
+
+      await expect(client.begin()).rejects.toThrow(new RegExp(`${key}.*without credentials`));
+    }
+  });
+
   it("rejects oversized JWKS responses before parsing or verifying them", async () => {
     const token = [
       Buffer.from(JSON.stringify({ alg: "RS256", kid: "key-1" })).toString("base64url"),

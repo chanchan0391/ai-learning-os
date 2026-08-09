@@ -204,14 +204,16 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     const issuerUrl = new URL(issuer);
     const localIssuer = issuerUrl.hostname === "127.0.0.1" || issuerUrl.hostname === "localhost";
     if ((issuerUrl.protocol !== "https:" && !(localIssuer && issuerUrl.protocol === "http:"))
+      || issuerUrl.username || issuerUrl.password
       || issuerUrl.origin + issuerUrl.pathname.replace(/\/$/, "") !== issuer) {
-      throw new Error("OIDC_ISSUER must be an exact HTTPS URL (or local HTTP development URL) without query or fragment");
+      throw new Error("OIDC_ISSUER must be an exact HTTPS URL (or local HTTP development URL) without credentials, query, or fragment");
     }
     const redirectUri = env.OIDC_REDIRECT_URI!.trim();
     const redirectUrl = new URL(redirectUri);
     const localRedirect = redirectUrl.hostname === "127.0.0.1" || redirectUrl.hostname === "localhost";
-    if ((redirectUrl.protocol !== "https:" && !localRedirect) || redirectUrl.hash || redirectUrl.search || !redirectUrl.pathname.endsWith("/api/auth/callback")) {
-      throw new Error("OIDC_REDIRECT_URI must be HTTPS (or local development), end with /api/auth/callback, and have no query or fragment");
+    if ((redirectUrl.protocol !== "https:" && !localRedirect) || redirectUrl.username || redirectUrl.password
+      || redirectUrl.hash || redirectUrl.search || !redirectUrl.pathname.endsWith("/api/auth/callback")) {
+      throw new Error("OIDC_REDIRECT_URI must be HTTPS (or local development), end with /api/auth/callback, and have no credentials, query, or fragment");
     }
     const transactionSecret = env.OIDC_TRANSACTION_SECRET!.trim();
     if (transactionSecret.length < 32) throw new Error("OIDC_TRANSACTION_SECRET must be at least 32 characters");
