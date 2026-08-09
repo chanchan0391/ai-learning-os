@@ -1,11 +1,13 @@
 import { parseLearningState } from "./learning-state";
 import type { ArchivedLearningState } from "./learning-storage";
 import type { DailyLearningRecord, LearningPlan, LearningState } from "./types";
+import { readBoundedJson } from "./bounded-json-response";
 
 export const SYNC_METADATA_KEY = "ai-learning-os-sync-v1";
 const RESTORED_ARCHIVE_PLAN_KEY = "ai-learning-os-restored-archive-v1";
 const MAX_SYNC_PAGE_ENTITIES = 250;
 const MAX_SYNC_RESPONSE_BYTES = 9 * 1024 * 1024;
+const MAX_AUTH_RESPONSE_BYTES = 64 * 1024;
 const MAX_SYNC_ENTITIES = 25_000;
 const MAX_SYNC_PAGES = MAX_SYNC_ENTITIES / MAX_SYNC_PAGE_ENTITIES;
 
@@ -121,30 +123,6 @@ function responseError(body: unknown, fallback: string): string {
   return body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : fallback;
 }
 
-async function readBoundedSyncResponse(response: Response): Promise<unknown> {
-  const declaredLength = response.headers.get("Content-Length");
-  if (declaredLength && Number(declaredLength) > MAX_SYNC_RESPONSE_BYTES) {
-    throw new Error("云端同步响应超过安全上限，请稍后重试");
-  }
-  if (!response.body) return response.json();
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let bytes = 0;
-  let text = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    if (bytes > MAX_SYNC_RESPONSE_BYTES) {
-      await reader.cancel();
-      throw new Error("云端同步响应超过安全上限，请稍后重试");
-    }
-    text += decoder.decode(value, { stream: true });
-  }
-  text += decoder.decode();
-  return JSON.parse(text);
-}
-
 export class BrowserSyncClient {
   constructor(
     private readonly storage: Storage,
@@ -157,7 +135,9 @@ export class BrowserSyncClient {
       if (response.status === 401) return { status: "signed-out" };
       if (response.status === 503) return { status: "local-only" };
       if (!response.ok) return { status: "local-only" };
-      const body = await response.json() as { authenticated?: boolean; principal?: { userId?: string; deviceId?: string } };
+      const body = await readBoundedJson<{ authenticated?: boolean; principal?: { userId?: string; deviceId?: string } }>(
+        response, MAX_AUTH_RESPONSE_BYTES, "账号响应超过安全上限，请稍后重试",
+      );
       return body.authenticated && body.principal?.userId && body.principal.deviceId
         ? { status: "signed-in", userId: body.principal.userId, deviceId: body.principal.deviceId }
         : { status: "signed-out" };
@@ -178,7 +158,9 @@ export class BrowserSyncClient {
 
   async getActiveDevices(): Promise<ActiveDevice[]> {
     const response = await this.request("/api/auth/devices", { credentials: "same-origin" });
-    const body = await response.json() as { devices?: ActiveDevice[]; error?: string };
+    const body = await readBoundedJson<{ devices?: ActiveDevice[]; error?: string }>(
+      response, MAX_AUTH_RESPONSE_BYTES, "账号响应超过安全上限，请稍后重试",
+    );
     if (!response.ok || !Array.isArray(body.devices)) throw new Error(responseError(body, "无法读取登录设备"));
     return body.devices.filter((device) => (
       typeof device.id === "string"
@@ -194,7 +176,9 @@ export class BrowserSyncClient {
       method: "DELETE",
       credentials: "same-origin",
     });
-    const body = await response.json().catch(() => ({})) as { error?: string };
+    const body = await readBoundedJson<{ error?: string }>(
+      response, MAX_AUTH_RESPONSE_BYTES, "账号响应超过安全上限，请稍后重试",
+    ).catch(() => ({}));
     if (!response.ok) throw new Error(responseError(body, "设备退出失败，请稍后重试"));
   }
 
@@ -454,7 +438,9 @@ export class BrowserSyncClient {
     for (let page = 0; page < MAX_SYNC_PAGES; page += 1) {
       const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
       const response = await this.request(`/api/sync/changes${query}`, { credentials: "same-origin" });
-      const body = await readBoundedSyncResponse(response) as { changes?: SyncEntity[]; cursor?: string; hasMore?: boolean; error?: string };
+      const body = await readBoundedJson<{ changes?: SyncEntity[]; cursor?: string; hasMore?: boolean; error?: string }>(
+        response, MAX_SYNC_RESPONSE_BYTES, "云端同步响应超过安全上限，请稍后重试",
+      );
       if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, fallbackError));
       if (body.changes.length > MAX_SYNC_PAGE_ENTITIES) {
         throw new Error("云端同步分页超过安全上限，请稍后重试");
@@ -507,7 +493,9 @@ export class BrowserSyncClient {
       },
       body: JSON.stringify(local.value),
     });
-    const body = await response.json();
+    const body = await readBoundedJson<unknown>(
+      response, MAX_SYNC_RESPONSE_BYTES, "云端同步响应超过安全上限，请稍后重试",
+    );
     if (response.status === 409) throw new SyncConflictError();
     if (!response.ok) throw new Error(responseError(body, "云端写入失败"));
     return body as SyncEntity;

@@ -87,6 +87,16 @@ describe("browser sync client", () => {
     ]);
   });
 
+  it("rejects an oversized authentication response before retaining device data", async () => {
+    const request = vi.fn(async () => new Response("{}", {
+      headers: { "Content-Length": String(64 * 1024 + 1), "Content-Type": "application/json" },
+    })) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request);
+
+    await expect(client.getActiveDevices()).rejects.toThrow("账号响应超过安全上限，请稍后重试");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("uploads a new local plan and its daily record with revision metadata", async () => {
     const server = fakeServer();
     const state = learningState();
