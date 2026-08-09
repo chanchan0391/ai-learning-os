@@ -3,7 +3,9 @@ import type { Pool, PoolClient, QueryResultRow } from "pg";
 import type { LearningPlan } from "../../src/types";
 import {
   SyncConflictError,
+  MAX_SYNC_PAGE_BYTES,
   SyncRequestError,
+  boundedSyncPage,
   requireSyncIdentity,
   requireSyncCursor,
   requireSyncWriteRequest,
@@ -59,8 +61,10 @@ export class PostgresSyncStore {
     private readonly now: () => Date = () => new Date(),
     private readonly createCursor: () => string = () => randomUUID(),
     private readonly pageSize = 250,
+    private readonly pageByteLimit = MAX_SYNC_PAGE_BYTES,
   ) {
     if (!Number.isSafeInteger(pageSize) || pageSize <= 0) throw new TypeError("Sync page size must be a positive integer");
+    if (!Number.isSafeInteger(pageByteLimit) || pageByteLimit <= 0) throw new TypeError("Sync page byte limit must be a positive integer");
   }
 
   putPlan(principal: SyncPrincipal, request: SyncWriteRequest<LearningPlan>): Promise<SyncEntity<LearningPlan>> {
@@ -106,14 +110,17 @@ export class PostgresSyncStore {
        LIMIT $3`,
       [principal.userId, afterSequence, this.pageSize + 1],
     );
-    const page = rows.rows.slice(0, this.pageSize);
+    const candidateRows = rows.rows.slice(0, this.pageSize);
+    const candidates = candidateRows.map((row) => entityFromRow(row));
+    const changes = boundedSyncPage(candidates, this.pageSize, this.pageByteLimit);
+    const page = candidateRows.slice(0, changes.length);
     const latestSequence = page.length > 0 ? Number(page.at(-1)!.change_sequence) : afterSequence;
     const nextCursor = this.createCursor();
     await this.pool.query(
       "INSERT INTO sync_cursors (token, user_id, sequence) VALUES ($1, $2, $3)",
       [nextCursor, principal.userId, latestSequence],
     );
-    return { changes: page.map((row) => entityFromRow(row)), cursor: nextCursor, hasMore: rows.rows.length > page.length };
+    return { changes, cursor: nextCursor, hasMore: rows.rows.length > changes.length };
   }
 
   private async write<T extends SyncEntityValue>(

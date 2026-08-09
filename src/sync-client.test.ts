@@ -183,6 +183,17 @@ describe("browser sync client", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it("cancels a streamed cloud page that exceeds the response byte limit", async () => {
+    const oversized = `{"changes":[],"padding":"${"x".repeat(9 * 1024 * 1024)}"}`;
+    const request = vi.fn(async () => new Response(oversized, {
+      headers: { "Content-Type": "application/json" },
+    })) as typeof fetch;
+
+    await expect(new BrowserSyncClient(localStorage, request).sync(null))
+      .rejects.toThrow("云端同步响应超过安全上限，请稍后重试");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("stops a snapshot after the total distinct entity limit", async () => {
     let page = 0;
     const request = vi.fn(async () => {

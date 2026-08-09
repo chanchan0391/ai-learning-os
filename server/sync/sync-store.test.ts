@@ -150,6 +150,32 @@ describe("in-memory sync store", () => {
     ]);
   });
 
+  it("paginates by encoded bytes without skipping entities", () => {
+    let cursor = 0;
+    const store = new InMemorySyncStore(
+      () => new Date("2026-07-31T12:00:00.000Z"),
+      () => `bytes-${++cursor}`,
+      250,
+      2_000,
+    );
+    const plan = generateLearningPlan(goal, new Date("2026-07-31T10:00:00.000Z"));
+    const state = initializeLearningState(plan);
+    store.putPlan(alice, { operationId: "bytes-plan", entityId: plan.id, baseRevision: null, value: plan });
+    store.putDailyRecord(alice, {
+      operationId: "bytes-day", entityId: `${plan.id}:day-1`, baseRevision: null,
+      value: { planId: plan.id, record: state.days[0] },
+    });
+
+    const first = store.getChanges(alice);
+    const second = store.getChanges(alice, first.cursor);
+
+    expect(first).toMatchObject({ hasMore: true });
+    expect(first.changes).toHaveLength(1);
+    expect(second).toMatchObject({ hasMore: false });
+    expect([...first.changes, ...second.changes].map((entity) => entity.entityType))
+      .toEqual(["learning-plan", "daily-record"]);
+  });
+
   it("isolates entities, operations, and cursors by authenticated user", () => {
     const { store, plan } = setup();
     store.putPlan(alice, { operationId: "same-operation", entityId: plan.id, baseRevision: null, value: plan });

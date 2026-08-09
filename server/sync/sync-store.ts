@@ -36,6 +36,7 @@ export interface SyncChanges {
 }
 
 export const MAX_SYNC_IDENTIFIER_LENGTH = 256;
+export const MAX_SYNC_PAGE_BYTES = 8 * 1024 * 1024;
 
 export interface SyncStore {
   putPlan(principal: SyncPrincipal, request: SyncWriteRequest<LearningPlan>): SyncEntity<LearningPlan> | Promise<SyncEntity<LearningPlan>>;
@@ -53,10 +54,31 @@ export class SyncConflictError extends Error {
 }
 
 export class SyncRequestError extends Error {
-  constructor(readonly code: "invalid-cursor" | "idempotency-mismatch" | "missing-plan" | "unknown-principal", message: string) {
+  constructor(readonly code: "invalid-cursor" | "idempotency-mismatch" | "missing-plan" | "unknown-principal" | "entity-too-large", message: string) {
     super(message);
     this.name = "SyncRequestError";
   }
+}
+
+/** Selects a cursor-safe prefix whose encoded entities fit the response budget. */
+export function boundedSyncPage<T extends SyncEntity>(
+  candidates: readonly T[],
+  pageSize: number,
+  maxBytes = MAX_SYNC_PAGE_BYTES,
+): T[] {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new TypeError("Sync page byte limit must be a positive integer");
+  const page: T[] = [];
+  let encodedBytes = 0;
+  for (const entity of candidates.slice(0, pageSize)) {
+    const entityBytes = Buffer.byteLength(JSON.stringify(entity), "utf8") + (page.length > 0 ? 1 : 0);
+    if (entityBytes > maxBytes && page.length === 0) {
+      throw new SyncRequestError("entity-too-large", "A synchronized entity exceeds the response size limit");
+    }
+    if (encodedBytes + entityBytes > maxBytes) break;
+    page.push(entity);
+    encodedBytes += entityBytes;
+  }
+  return page;
 }
 
 interface StoredEntity extends SyncEntity {
@@ -138,8 +160,10 @@ export class InMemorySyncStore {
     private readonly now: () => Date = () => new Date(),
     private readonly createCursor: () => string = () => randomUUID(),
     private readonly pageSize = 250,
+    private readonly pageByteLimit = MAX_SYNC_PAGE_BYTES,
   ) {
     if (!Number.isSafeInteger(pageSize) || pageSize <= 0) throw new TypeError("Sync page size must be a positive integer");
+    if (!Number.isSafeInteger(pageByteLimit) || pageByteLimit <= 0) throw new TypeError("Sync page byte limit must be a positive integer");
   }
 
   putPlan(principal: SyncPrincipal, request: SyncWriteRequest<LearningPlan>): SyncEntity<LearningPlan> {
@@ -170,13 +194,14 @@ export class InMemorySyncStore {
     const matching = [...this.entities.values()]
       .filter((entity) => entity.userId === principal.userId && entity.sequence > afterSequence)
       .sort((left, right) => left.sequence - right.sequence);
-    const page = matching.slice(0, this.pageSize);
-    const changes = page
+    const candidates = matching.slice(0, this.pageSize)
       .map(({ userId: _userId, sequence: _sequence, ...entity }) => clone(entity));
+    const changes = boundedSyncPage(candidates, this.pageSize, this.pageByteLimit);
+    const page = matching.slice(0, changes.length);
     const latestSequence = page.at(-1)?.sequence ?? afterSequence;
     const nextCursor = this.createCursor();
     this.cursors.set(nextCursor, { userId: principal.userId, sequence: latestSequence });
-    return { changes, cursor: nextCursor, hasMore: matching.length > page.length };
+    return { changes, cursor: nextCursor, hasMore: matching.length > changes.length };
   }
 
   private write<T>(principal: SyncPrincipal, entityType: SyncEntityType, request: SyncWriteRequest<T>): SyncEntity<T> {

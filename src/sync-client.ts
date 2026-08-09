@@ -5,6 +5,7 @@ import type { DailyLearningRecord, LearningPlan, LearningState } from "./types";
 export const SYNC_METADATA_KEY = "ai-learning-os-sync-v1";
 const RESTORED_ARCHIVE_PLAN_KEY = "ai-learning-os-restored-archive-v1";
 const MAX_SYNC_PAGE_ENTITIES = 250;
+const MAX_SYNC_RESPONSE_BYTES = 9 * 1024 * 1024;
 const MAX_SYNC_ENTITIES = 25_000;
 const MAX_SYNC_PAGES = MAX_SYNC_ENTITIES / MAX_SYNC_PAGE_ENTITIES;
 
@@ -118,6 +119,30 @@ function operationId(): string {
 
 function responseError(body: unknown, fallback: string): string {
   return body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : fallback;
+}
+
+async function readBoundedSyncResponse(response: Response): Promise<unknown> {
+  const declaredLength = response.headers.get("Content-Length");
+  if (declaredLength && Number(declaredLength) > MAX_SYNC_RESPONSE_BYTES) {
+    throw new Error("云端同步响应超过安全上限，请稍后重试");
+  }
+  if (!response.body) return response.json();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_SYNC_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error("云端同步响应超过安全上限，请稍后重试");
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  text += decoder.decode();
+  return JSON.parse(text);
 }
 
 export class BrowserSyncClient {
@@ -429,7 +454,7 @@ export class BrowserSyncClient {
     for (let page = 0; page < MAX_SYNC_PAGES; page += 1) {
       const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
       const response = await this.request(`/api/sync/changes${query}`, { credentials: "same-origin" });
-      const body = await response.json() as { changes?: SyncEntity[]; cursor?: string; hasMore?: boolean; error?: string };
+      const body = await readBoundedSyncResponse(response) as { changes?: SyncEntity[]; cursor?: string; hasMore?: boolean; error?: string };
       if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, fallbackError));
       if (body.changes.length > MAX_SYNC_PAGE_ENTITIES) {
         throw new Error("云端同步分页超过安全上限，请稍后重试");

@@ -171,6 +171,32 @@ describe("PostgreSQL sync store", () => {
     ]);
   });
 
+  it("paginates account snapshots by encoded bytes without skipping entities", async () => {
+    const { pool, plan, state } = await setup();
+    let cursor = 0;
+    const store = new PostgresSyncStore(
+      pool,
+      () => new Date("2026-07-31T12:00:00.000Z"),
+      () => `bytes-${++cursor}`,
+      250,
+      2_000,
+    );
+    await store.putPlan(alice, { operationId: "bytes-plan", entityId: plan.id, baseRevision: null, value: plan });
+    await store.putDailyRecord(alice, {
+      operationId: "bytes-day", entityId: `${plan.id}:day-1`, baseRevision: null,
+      value: { planId: plan.id, record: state.days[0] },
+    });
+
+    const first = await store.getChanges(alice);
+    const second = await store.getChanges(alice, first.cursor);
+
+    expect(first).toMatchObject({ hasMore: true });
+    expect(first.changes).toHaveLength(1);
+    expect(second).toMatchObject({ hasMore: false });
+    expect([...first.changes, ...second.changes].map((entity) => entity.entityType))
+      .toEqual(["learning-plan", "daily-record"]);
+  });
+
   it("requires an active provisioned device and an owned plan", async () => {
     const { store, plan, state } = await setup();
     await store.putPlan(alice, { operationId: "op-plan", entityId: plan.id, baseRevision: null, value: plan });
