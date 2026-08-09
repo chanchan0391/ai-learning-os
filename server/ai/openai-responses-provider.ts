@@ -177,6 +177,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
               "X-Client-Request-Id": crypto.randomUUID(),
             },
             body,
+            redirect: "error",
             signal,
           });
           const responseBody = await readBoundedJson<OpenAIResponseBody>(response, this.maxResponseBytes);

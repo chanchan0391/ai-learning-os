@@ -149,7 +149,8 @@ describe("standard OIDC client", () => {
       `${client.transactionCookieName}=${started.transactionCookie}`,
       "Browser",
     )).rejects.toThrow(/262144 byte limit/);
-    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith("/keys"))).toBe(true);
+    const jwksRequest = fetcher.mock.calls.find(([input]) => String(input).endsWith("/keys"));
+    expect(jwksRequest?.[1]?.redirect).toBe("error");
   });
 
   it("applies the configured timeout to discovery and token exchange", async () => {
@@ -182,6 +183,34 @@ describe("standard OIDC client", () => {
     expect(timeoutSpy).toHaveBeenNthCalledWith(1, 250);
     expect(timeoutSpy).toHaveBeenNthCalledWith(2, 250);
     timeoutSpy.mockRestore();
+  });
+
+  it("refuses redirects for discovery and authorization-code exchange", async () => {
+    const requests: RequestInit[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      requests.push(init ?? {});
+      return String(input).endsWith("/token")
+        ? Response.json({ id_token: "signed-id-token" })
+        : discovery();
+    });
+    const randomValues = [Buffer.alloc(32, 1), Buffer.alloc(24, 2), Buffer.alloc(24, 3)];
+    const client = new StandardOidcClient(
+      config,
+      () => 1_000,
+      () => randomValues.shift()!,
+      fetcher,
+      async () => ({ issuer: config.issuer, subject: "subject-123" }),
+    );
+    const started = await client.begin();
+    const state = new URL(started.authorizationUrl).searchParams.get("state");
+    await client.complete(
+      new URL(`https://learn.example/api/auth/callback?code=auth-code&state=${state}`),
+      `${client.transactionCookieName}=${started.transactionCookie}`,
+      "Browser",
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(requests.every((init) => init.redirect === "error")).toBe(true);
   });
 
   it("rejects an unbounded OIDC upstream timeout", () => {

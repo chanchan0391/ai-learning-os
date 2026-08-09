@@ -107,7 +107,7 @@ export class StandardOidcClient implements OidcAuthenticator {
         keySet = createRemoteJWKSet(new URL(discovery.jwks_uri), {
           timeoutDuration: this.upstreamTimeoutMs,
           [customFetch]: async (url, options) => {
-            const response = await this.fetcher(url, options);
+            const response = await this.fetcher(url, { ...options, redirect: "error" });
             if (!response.ok) return response;
             const value = await readBoundedJson<unknown>(response, MAX_OIDC_JWKS_RESPONSE_BYTES);
             return Response.json(value, { status: response.status, statusText: response.statusText });
@@ -180,6 +180,7 @@ export class StandardOidcClient implements OidcAuthenticator {
         redirect_uri: this.config.redirectUri,
         code_verifier: transaction.verifier,
       }),
+      redirect: "error",
       signal: AbortSignal.timeout(this.upstreamTimeoutMs),
     });
     if (!tokenResponse.ok) throw new Error(`OIDC token exchange failed with status ${tokenResponse.status}`);
@@ -196,7 +197,9 @@ export class StandardOidcClient implements OidcAuthenticator {
     if (this.discoveryCache && this.discoveryCache.expiresAt > this.now()) return this.discoveryCache.value;
     const issuer = this.config.issuer.replace(/\/$/, "");
     const response = await this.fetcher(`${issuer}/.well-known/openid-configuration`, {
-      headers: { Accept: "application/json" }, signal: AbortSignal.timeout(this.upstreamTimeoutMs),
+      headers: { Accept: "application/json" },
+      redirect: "error",
+      signal: AbortSignal.timeout(this.upstreamTimeoutMs),
     });
     if (!response.ok) throw new Error(`OIDC discovery failed with status ${response.status}`);
     const value = await readBoundedJson<Partial<OidcDiscovery>>(response, MAX_OIDC_DISCOVERY_BYTES);

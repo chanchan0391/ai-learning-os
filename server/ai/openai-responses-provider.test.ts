@@ -13,6 +13,7 @@ describe("OpenAI Responses provider", () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
       expect(init?.headers).toMatchObject({ Authorization: "Bearer secret", "Content-Type": "application/json" });
+      expect(init?.redirect).toBe("error");
       expect((init?.headers as Record<string, string>)["X-Client-Request-Id"]).toMatch(/^[0-9a-f-]{36}$/);
       expect(body).toMatchObject({ model: "test-model", max_output_tokens: 4_096, store: false, text: { format: { type: "json_schema", name: "plan", strict: true } } });
       return new Response(JSON.stringify({ id: "resp_1", output: [{ content: [{ type: "output_text", text: "{\"ok\":true}" }] }] }), { status: 200 });
