@@ -3,6 +3,7 @@ export type RequestOutcome = "success" | "rejected" | "failed";
 export interface RequestLogEvent {
   occurredAt: string;
   requestId: string;
+  releaseRevision: string | null;
   method: string;
   path: string;
   status: number;

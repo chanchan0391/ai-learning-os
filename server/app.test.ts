@@ -103,7 +103,9 @@ describe("AI Learning OS API", () => {
 
   it("adds a correlation ID and records privacy-safe request metadata", async () => {
     const events: RequestLogEvent[] = [];
+    const releaseRevision = "c".repeat(40);
     const baseUrl = await startApi(new DeterministicModelProvider(), {
+      releaseRevision,
       requestLogSink: { record: (event) => { events.push(event); } },
     });
     const response = await fetch(`${baseUrl}/api/plans?private=do-not-log`, {
@@ -116,6 +118,7 @@ describe("AI Learning OS API", () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       requestId: response.headers.get("x-request-id"),
+      releaseRevision,
       method: "POST",
       path: "/api/plans",
       status: 404,
@@ -124,6 +127,48 @@ describe("AI Learning OS API", () => {
     expect(events[0].occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(events[0].durationMs).toBeGreaterThanOrEqual(0);
     expect(JSON.stringify(events[0])).not.toMatch(/do-not-log|secret-token|private learner context|cookie/i);
+  });
+
+  it("correlates audit events and redacts unexpected exception details", async () => {
+    const auditEvents: SecurityAuditEvent[] = [];
+    const loggedErrors: unknown[][] = [];
+    const consoleError = console.error;
+    console.error = (...values: unknown[]) => { loggedErrors.push(values); };
+    try {
+      const releaseRevision = "d".repeat(40);
+      const baseUrl = await startApi(new DeterministicModelProvider(), {
+        releaseRevision,
+        rateLimiter: { consume: () => { throw new Error("postgres://secret@private-host/learning"); } },
+        auditSink: { record: (event) => { auditEvents.push(event); } },
+      });
+
+      const response = await fetch(`${baseUrl}/api/plans`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(goal),
+      });
+      await response.json();
+
+      expect(response.status).toBe(500);
+      expect(auditEvents).toHaveLength(1);
+      expect(auditEvents[0]).toMatchObject({
+        requestId: response.headers.get("x-request-id"),
+        releaseRevision,
+        path: "/api/plans",
+        status: 500,
+      });
+      const errorLog = JSON.stringify(loggedErrors);
+      expect(JSON.parse(String(loggedErrors[0]?.[0]))).toMatchObject({
+        category: "api",
+        requestId: response.headers.get("x-request-id"),
+        releaseRevision,
+        path: "/api/plans",
+        errorType: "Error",
+      });
+      expect(errorLog).not.toMatch(/secret|private-host|learning/);
+    } finally {
+      console.error = consoleError;
+    }
   });
 
   it("templates dynamic paths and suppresses unknown path content in telemetry", async () => {

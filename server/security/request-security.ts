@@ -230,6 +230,8 @@ export type SecurityAuditOutcome = "success" | "rejected" | "failed";
 
 export interface SecurityAuditEvent {
   occurredAt: string;
+  requestId: string;
+  releaseRevision: string | null;
   action: string;
   method: string;
   path: string;

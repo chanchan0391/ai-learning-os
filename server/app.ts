@@ -98,6 +98,24 @@ function onResponseSettled(
   response.once("close", () => settle(!response.writableFinished));
 }
 
+/** Emits only bounded diagnostic labels; raw exceptions may contain private request or dependency data. */
+function reportInternalError(
+  category: "api" | "request-log-sink" | "security-audit-sink",
+  requestId: string,
+  path: string,
+  releaseRevision: string | null,
+  error: unknown,
+): void {
+  console.error(JSON.stringify({
+    type: "internal_error",
+    category,
+    requestId,
+    path,
+    releaseRevision,
+    errorType: error instanceof Error ? error.name : "UnknownError",
+  }));
+}
+
 export interface AppOptions {
   releaseRevision?: string | null;
   syncStore?: SyncStore;
@@ -260,6 +278,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
     });
     const url = new URL(request.url ?? "/", "http://localhost");
     const loggedPath = observabilityPath(url.pathname);
+    const releaseRevision = options.releaseRevision ?? null;
     const route = protectedRoute(request.method, url.pathname);
     let auditPrincipal: { userId: string; deviceId: string } | null = null;
     let auditReason: string | undefined;
@@ -272,6 +291,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         const event: RequestLogEvent = {
           occurredAt: new Date().toISOString(),
           requestId,
+          releaseRevision,
           method: request.method ?? "UNKNOWN",
           path: loggedPath,
           status,
@@ -281,14 +301,18 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         };
         try {
           const recorded = options.requestLogSink!.record(event);
-          if (recorded && "catch" in recorded) void recorded.catch((error) => console.error("Request log sink failed", error));
+          if (recorded && "catch" in recorded) {
+            void recorded.catch((error) => reportInternalError("request-log-sink", requestId, loggedPath, releaseRevision, error));
+          }
         } catch (error) {
-          console.error("Request log sink failed", error);
+          reportInternalError("request-log-sink", requestId, loggedPath, releaseRevision, error);
         }
       }
       if (route && options.auditSink) {
         const event: SecurityAuditEvent = {
           occurredAt: new Date().toISOString(),
+          requestId,
+          releaseRevision,
           action: route.action,
           method: request.method ?? "UNKNOWN",
           path: loggedPath,
@@ -299,9 +323,11 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         };
         try {
           const recorded = options.auditSink!.record(event);
-          if (recorded && "catch" in recorded) void recorded.catch((error) => console.error("Security audit sink failed", error));
+          if (recorded && "catch" in recorded) {
+            void recorded.catch((error) => reportInternalError("security-audit-sink", requestId, loggedPath, releaseRevision, error));
+          }
         } catch (error) {
-          console.error("Security audit sink failed", error);
+          reportInternalError("security-audit-sink", requestId, loggedPath, releaseRevision, error);
         }
       }
     });
@@ -643,7 +669,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (error instanceof RangeError) return sendJson(response, 413, { error: error.message });
       if (error instanceof AgentOutputError) return sendJson(response, 502, { error: error.message });
       if (error instanceof ModelProviderError) return sendJson(response, error.status, { error: error.message, requestId: error.requestId });
-      console.error("Unexpected API error", error);
+      reportInternalError("api", requestId, loggedPath, releaseRevision, error);
       return sendJson(response, 500, { error: "Internal server error" });
     }
   });

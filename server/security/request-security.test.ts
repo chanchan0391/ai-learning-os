@@ -104,9 +104,11 @@ describe("request security", () => {
     const sink = new JsonLineSecurityAuditSink();
     const event = {
       occurredAt: "2026-08-04T04:00:00.000Z",
+      requestId: "request-1",
+      releaseRevision: "a".repeat(40),
       action: "sync.plan.write",
       method: "PUT",
-      path: "/api/sync/plans/plan-1",
+      path: "/api/sync/plans/:planId",
       status: 200,
       outcome: "success" as const,
       userId: "user-private-id",
@@ -118,7 +120,13 @@ describe("request security", () => {
 
     const first = JSON.parse(String(log.mock.calls[0][0])) as Record<string, unknown>;
     const second = JSON.parse(String(log.mock.calls[1][0])) as Record<string, unknown>;
-    expect(first).toMatchObject({ type: "security_audit", action: event.action, status: 200 });
+    expect(first).toMatchObject({
+      type: "security_audit",
+      requestId: event.requestId,
+      releaseRevision: event.releaseRevision,
+      action: event.action,
+      status: 200,
+    });
     expect(first).not.toHaveProperty("userId");
     expect(first).not.toHaveProperty("deviceId");
     expect(first.userRef).toMatch(/^[0-9a-f]{32}$/);
