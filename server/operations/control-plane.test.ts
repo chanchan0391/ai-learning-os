@@ -7,6 +7,32 @@ import { spawnSync } from "node:child_process";
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const controlPlaneScript = join(repositoryRoot, "deploy/dev/control-plane.sh");
 const temporaryDirectories: string[] = [];
+const sandboxDirectives = [
+  "UMask=0077",
+  "NoNewPrivileges=true",
+  "CapabilityBoundingSet=",
+  "AmbientCapabilities=",
+  "PrivateTmp=true",
+  "PrivateDevices=true",
+  "ProtectSystem=strict",
+  "ProtectHome=read-only",
+  "ProtectControlGroups=true",
+  "ProtectKernelModules=true",
+  "ProtectKernelTunables=true",
+  "ProtectKernelLogs=true",
+  "ProtectClock=true",
+  "ProtectHostname=true",
+  "RestrictSUIDSGID=true",
+  "RestrictRealtime=true",
+  "LockPersonality=true",
+  "RemoveIPC=true",
+  "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+  "SystemCallArchitectures=native",
+];
+
+function unitContents(execStart: string) {
+  return `[Service]\nExecStart=${execStart} app.js\n${sandboxDirectives.join("\n")}\n`;
+}
 
 interface Fixture {
   baseDir: string;
@@ -32,7 +58,7 @@ function makeFixture(): Fixture {
   symlinkSync(process.execPath, join(procRoot, pid, "exe"));
 
   for (const unit of ["ai-learning-os-api.service", "ai-learning-os-web.service"]) {
-    writeFileSync(join(sourceDir, unit), `[Service]\nExecStart=${process.execPath} app.js\n`);
+    writeFileSync(join(sourceDir, unit), unitContents(process.execPath));
     writeFileSync(join(unitDir, unit), `[Service]\nExecStart=/old/node app.js\n`);
   }
 
@@ -79,7 +105,7 @@ describe("dev control-plane management", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("selected runtime");
     for (const unit of ["ai-learning-os-api.service", "ai-learning-os-web.service"]) {
-      expect(readFileSync(join(fixture.unitDir, unit), "utf8")).toContain(process.execPath);
+      expect(readFileSync(join(fixture.unitDir, unit), "utf8")).toBe(unitContents(process.execPath));
     }
     const backupRoot = join(fixture.baseDir, "control-plane-backups");
     const backups = readdirSync(backupRoot);
@@ -102,14 +128,28 @@ describe("dev control-plane management", () => {
     const fakeHome = dirname(process.execPath);
     const placeholderNode = `%h/${process.execPath.slice(fakeHome.length + 1)}`;
     for (const unit of ["ai-learning-os-api.service", "ai-learning-os-web.service"]) {
-      writeFileSync(join(fixture.sourceDir, unit), `[Service]\nExecStart=${placeholderNode} app.js\n`);
-      writeFileSync(join(fixture.unitDir, unit), `[Service]\nExecStart=${placeholderNode} app.js\n`);
+      writeFileSync(join(fixture.sourceDir, unit), unitContents(placeholderNode));
+      writeFileSync(join(fixture.unitDir, unit), unitContents(placeholderNode));
     }
 
     const result = runControlPlane(fixture, "status", { HOME: fakeHome });
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("selected runtime");
+  });
+
+  it("rejects source units missing a required sandbox directive", () => {
+    const fixture = makeFixture();
+    const apiUnit = join(fixture.sourceDir, "ai-learning-os-api.service");
+    writeFileSync(apiUnit, readFileSync(apiUnit, "utf8").replace("NoNewPrivileges=true\n", ""));
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "ai-learning-os-api.service is missing required sandbox directive: NoNewPrivileges=true",
+    );
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
   });
 
   it("restores prior units when post-install verification fails", () => {
@@ -122,7 +162,7 @@ describe("dev control-plane management", () => {
     for (const unit of ["ai-learning-os-api.service", "ai-learning-os-web.service"]) {
       const installed = join(fixture.unitDir, unit);
       expect(existsSync(installed)).toBe(true);
-      expect(readFileSync(installed, "utf8")).toContain("/old/node");
+      expect(readFileSync(installed, "utf8")).toBe("[Service]\nExecStart=/old/node app.js\n");
     }
   });
 });

@@ -14,6 +14,26 @@ systemctl_bin=${AI_LEARNING_SYSTEMCTL_BIN:-systemctl}
 proc_root=${AI_LEARNING_PROC_ROOT:-/proc}
 units="ai-learning-os-api.service ai-learning-os-web.service"
 lock_dir="$base_dir/.control-plane.lock"
+required_sandbox_directives='UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native'
 
 usage() {
   echo "Usage: $0 [status|install]" >&2
@@ -37,6 +57,12 @@ validate_sources() {
       echo "$unit does not use the selected Node binary" >&2
       return 1
     fi
+    echo "$required_sandbox_directives" | while IFS= read -r directive; do
+      if ! grep -Fxq "$directive" "$source_unit"; then
+        echo "$unit is missing required sandbox directive: $directive" >&2
+        exit 1
+      fi
+    done || return 1
   done
 }
 
