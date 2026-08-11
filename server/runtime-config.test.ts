@@ -91,6 +91,18 @@ describe("sync runtime configuration", () => {
       .toThrow(/exact IPv4 or IPv6/);
   });
 
+  it("rejects unbounded trusted proxy configuration", () => {
+    const addresses = Array.from(
+      { length: RUNTIME_RESOURCE_LIMITS.trustedProxyAddresses + 1 },
+      (_, index) => `10.0.0.${index + 1}`,
+    ).join(",");
+    expect(() => readTrustedProxyAddresses({ TRUSTED_PROXY_ADDRESSES: addresses }))
+      .toThrow(/no more than 64 addresses/);
+    expect(() => readTrustedProxyAddresses({
+      TRUSTED_PROXY_ADDRESSES: "1".repeat(RUNTIME_RESOURCE_LIMITS.trustedProxyAddressesCharacters + 1),
+    })).toThrow(/no greater than 4096 characters/);
+  });
+
   it("keeps sync disabled when no database is configured", () => {
     expect(readSyncRuntimeConfig({})).toBeNull();
   });
@@ -142,6 +154,29 @@ describe("sync runtime configuration", () => {
       DATABASE_URL: "postgres://localhost/learning", DATABASE_TLS_MODE: "require",
       SYNC_ALLOWED_ORIGINS: "https://learn.example",
     })).toThrow(/disable or verify-full/);
+  });
+
+  it("rejects unbounded allowed origins and cookie identifiers", () => {
+    const base = { DATABASE_URL: "postgres://localhost/learning" };
+    const origins = Array.from(
+      { length: RUNTIME_RESOURCE_LIMITS.allowedOrigins + 1 },
+      (_, index) => `https://tenant-${index}.example`,
+    ).join(",");
+    expect(() => readSyncRuntimeConfig({ ...base, SYNC_ALLOWED_ORIGINS: origins }))
+      .toThrow(/no more than 32 origins/);
+    expect(() => readSyncRuntimeConfig({
+      ...base,
+      SYNC_ALLOWED_ORIGINS: `https://${"a".repeat(RUNTIME_RESOURCE_LIMITS.originCharacters)}.example`,
+    })).toThrow(/entries must be no greater than 2048 characters/);
+    expect(() => readSyncRuntimeConfig({
+      ...base,
+      SYNC_ALLOWED_ORIGINS: "a".repeat(RUNTIME_RESOURCE_LIMITS.allowedOriginsCharacters + 1),
+    })).toThrow(/SYNC_ALLOWED_ORIGINS must be no greater than 16384 characters/);
+    expect(() => readSyncRuntimeConfig({
+      ...base,
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      SESSION_COOKIE_NAME: "a".repeat(RUNTIME_RESOURCE_LIMITS.sessionCookieNameCharacters + 1),
+    })).toThrow(/SESSION_COOKIE_NAME must be no greater than 128 characters/);
   });
 
   it("requires certificate-verifying TLS for a remote PostgreSQL server", () => {
@@ -198,6 +233,29 @@ describe("sync runtime configuration", () => {
     expect(readSyncRuntimeConfig({ ...base, OIDC_UPSTREAM_TIMEOUT_MS: "7500" })?.oidc?.upstreamTimeoutMs).toBe(7_500);
     expect(() => readSyncRuntimeConfig({ ...base, OIDC_UPSTREAM_TIMEOUT_MS: "0" })).toThrow(/positive integer/);
     expect(() => readSyncRuntimeConfig({ ...base, OIDC_UPSTREAM_TIMEOUT_MS: "60001" })).toThrow(/no greater than 60000/);
+  });
+
+  it("rejects unbounded OIDC identifiers and URLs", () => {
+    const base = {
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      OIDC_ISSUER: "https://identity.example",
+      OIDC_CLIENT_ID: "learning-client",
+      OIDC_REDIRECT_URI: "https://learn.example/api/auth/callback",
+      OIDC_TRANSACTION_SECRET: "a-secure-random-value-with-32-characters",
+    };
+    expect(() => readSyncRuntimeConfig({
+      ...base,
+      OIDC_CLIENT_ID: "a".repeat(RUNTIME_RESOURCE_LIMITS.oidcClientIdCharacters + 1),
+    })).toThrow(/OIDC_CLIENT_ID must be no greater than 256 characters/);
+    expect(() => readSyncRuntimeConfig({
+      ...base,
+      OIDC_TRANSACTION_SECRET: "a".repeat(RUNTIME_RESOURCE_LIMITS.oidcTransactionSecretCharacters + 1),
+    })).toThrow(/OIDC_TRANSACTION_SECRET must be no greater than 4096 characters/);
+    expect(() => readSyncRuntimeConfig({
+      ...base,
+      OIDC_REDIRECT_URI: `https://learn.example/${"a".repeat(RUNTIME_RESOURCE_LIMITS.oidcUrlCharacters)}/api/auth/callback`,
+    })).toThrow(/OIDC_REDIRECT_URI must be no greater than 2048 characters/);
   });
 
   it("loads explicit monthly token and USD account budgets", () => {
@@ -269,6 +327,16 @@ describe("sync runtime configuration", () => {
     expect(() => readSyncRuntimeConfig(base)).toThrow(/AI_PLAN_BUDGETS_JSON/);
     expect(() => readSyncRuntimeConfig({ ...base, AI_PLAN_BUDGETS_JSON: '{"starter":{"monthlyTokenLimit":0,"monthlyCostLimitUsd":"2"}}' })).toThrow(/positive integer/);
     expect(() => readSyncRuntimeConfig({ ...base, AI_PLAN_BUDGETS_JSON: '{"starter":{"monthlyTokenLimit":100,"monthlyCostLimitUsd":2}}' })).toThrow(/requires only/);
+    const plans = Object.fromEntries(Array.from(
+      { length: RUNTIME_RESOURCE_LIMITS.planBudgets + 1 },
+      (_, index) => [`plan-${index}`, { monthlyTokenLimit: 100, monthlyCostLimitUsd: "2" }],
+    ));
+    expect(() => readSyncRuntimeConfig({ ...base, AI_PLAN_BUDGETS_JSON: JSON.stringify(plans) }))
+      .toThrow(/no more than 32 plans/);
+    expect(() => readSyncRuntimeConfig({
+      ...base,
+      AI_PLAN_BUDGETS_JSON: "x".repeat(RUNTIME_RESOURCE_LIMITS.planBudgetsJsonCharacters + 1),
+    })).toThrow(/no greater than 32768 characters/);
   });
 
   it("allows an HTTP issuer only for local development", () => {

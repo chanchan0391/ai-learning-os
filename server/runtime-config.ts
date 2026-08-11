@@ -48,6 +48,17 @@ export const RUNTIME_RESOURCE_LIMITS = {
   databaseIdleTransactionTimeoutMillis: 120_000,
   databaseMaxLifetimeSeconds: 86_400,
   activeDevicesPerAccount: 1_000,
+  allowedOrigins: 32,
+  allowedOriginsCharacters: 16_384,
+  originCharacters: 2_048,
+  trustedProxyAddresses: 64,
+  trustedProxyAddressesCharacters: 4_096,
+  planBudgets: 32,
+  planBudgetsJsonCharacters: 32_768,
+  sessionCookieNameCharacters: 128,
+  oidcUrlCharacters: 2_048,
+  oidcClientIdCharacters: 256,
+  oidcTransactionSecretCharacters: 4_096,
 } as const;
 
 export interface DatabasePoolRuntimeConfig {
@@ -143,9 +154,18 @@ function parseUsdMicros(value: string, name: string): number {
 }
 
 function parseOrigins(value: string): string[] {
+  if (value.length > RUNTIME_RESOURCE_LIMITS.allowedOriginsCharacters) {
+    throw new Error(`SYNC_ALLOWED_ORIGINS must be no greater than ${RUNTIME_RESOURCE_LIMITS.allowedOriginsCharacters} characters`);
+  }
   const origins = [...new Set(value.split(",").map((entry) => entry.trim()).filter(Boolean))];
   if (origins.length === 0) throw new Error("SYNC_ALLOWED_ORIGINS is required when DATABASE_URL enables sync");
+  if (origins.length > RUNTIME_RESOURCE_LIMITS.allowedOrigins) {
+    throw new Error(`SYNC_ALLOWED_ORIGINS must contain no more than ${RUNTIME_RESOURCE_LIMITS.allowedOrigins} origins`);
+  }
   for (const origin of origins) {
+    if (origin.length > RUNTIME_RESOURCE_LIMITS.originCharacters) {
+      throw new Error(`SYNC_ALLOWED_ORIGINS entries must be no greater than ${RUNTIME_RESOURCE_LIMITS.originCharacters} characters`);
+    }
     const url = new URL(origin);
     if (url.origin !== origin || (url.protocol !== "https:" && url.hostname !== "127.0.0.1" && url.hostname !== "localhost")) {
       throw new Error(`SYNC_ALLOWED_ORIGINS must contain exact HTTPS or local development origins: ${origin}`);
@@ -180,8 +200,14 @@ function parseDatabaseConnection(connectionString: string, tlsMode: string | und
 
 export function readTrustedProxyAddresses(env: NodeJS.ProcessEnv): string[] | undefined {
   const value = env.TRUSTED_PROXY_ADDRESSES;
+  if (value && value.length > RUNTIME_RESOURCE_LIMITS.trustedProxyAddressesCharacters) {
+    throw new Error(`TRUSTED_PROXY_ADDRESSES must be no greater than ${RUNTIME_RESOURCE_LIMITS.trustedProxyAddressesCharacters} characters`);
+  }
   const addresses = [...new Set((value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean))];
   if (addresses.length === 0) return undefined;
+  if (addresses.length > RUNTIME_RESOURCE_LIMITS.trustedProxyAddresses) {
+    throw new Error(`TRUSTED_PROXY_ADDRESSES must contain no more than ${RUNTIME_RESOURCE_LIMITS.trustedProxyAddresses} addresses`);
+  }
   if (addresses.some((address) => !isIP(address))) {
     throw new Error("TRUSTED_PROXY_ADDRESSES must contain only exact IPv4 or IPv6 addresses");
   }
@@ -189,6 +215,9 @@ export function readTrustedProxyAddresses(env: NodeJS.ProcessEnv): string[] | un
 }
 
 function parsePlanBudgets(value: string): Record<string, AccountModelBudget> {
+  if (value.length > RUNTIME_RESOURCE_LIMITS.planBudgetsJsonCharacters) {
+    throw new Error(`AI_PLAN_BUDGETS_JSON must be no greater than ${RUNTIME_RESOURCE_LIMITS.planBudgetsJsonCharacters} characters`);
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
@@ -197,6 +226,9 @@ function parsePlanBudgets(value: string): Record<string, AccountModelBudget> {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).length === 0) {
     throw new Error("AI_PLAN_BUDGETS_JSON must be a non-empty object");
+  }
+  if (Object.keys(parsed).length > RUNTIME_RESOURCE_LIMITS.planBudgets) {
+    throw new Error(`AI_PLAN_BUDGETS_JSON must contain no more than ${RUNTIME_RESOURCE_LIMITS.planBudgets} plans`);
   }
   return Object.fromEntries(Object.entries(parsed).map(([planKey, candidate]) => {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(planKey) || !candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
@@ -255,8 +287,9 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
   }
   const { databaseTls } = parseDatabaseConnection(connectionString, env.DATABASE_TLS_MODE);
   const sessionCookieName = env.SESSION_COOKIE_NAME?.trim();
-  if (sessionCookieName && !/^[A-Za-z0-9_-]+$/.test(sessionCookieName)) {
-    throw new Error("SESSION_COOKIE_NAME may contain only letters, digits, underscores, and hyphens");
+  if (sessionCookieName && (sessionCookieName.length > RUNTIME_RESOURCE_LIMITS.sessionCookieNameCharacters
+    || !/^[A-Za-z0-9_-]+$/.test(sessionCookieName))) {
+    throw new Error(`SESSION_COOKIE_NAME must be no greater than ${RUNTIME_RESOURCE_LIMITS.sessionCookieNameCharacters} characters and may contain only letters, digits, underscores, and hyphens`);
   }
   const allowedOrigins = parseOrigins(configuredOrigins ?? "");
   const oidcValues = [env.OIDC_ISSUER, env.OIDC_CLIENT_ID, env.OIDC_REDIRECT_URI, env.OIDC_TRANSACTION_SECRET];
@@ -267,6 +300,9 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
       throw new Error("OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_REDIRECT_URI, and OIDC_TRANSACTION_SECRET must be configured together");
     }
     const issuer = env.OIDC_ISSUER!.trim().replace(/\/$/, "");
+    if (issuer.length > RUNTIME_RESOURCE_LIMITS.oidcUrlCharacters) {
+      throw new Error(`OIDC_ISSUER must be no greater than ${RUNTIME_RESOURCE_LIMITS.oidcUrlCharacters} characters`);
+    }
     const issuerUrl = new URL(issuer);
     const localIssuer = issuerUrl.hostname === "127.0.0.1" || issuerUrl.hostname === "localhost";
     if ((issuerUrl.protocol !== "https:" && !(localIssuer && issuerUrl.protocol === "http:"))
@@ -275,14 +311,24 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
       throw new Error("OIDC_ISSUER must be an exact HTTPS URL (or local HTTP development URL) without credentials, query, or fragment");
     }
     const redirectUri = env.OIDC_REDIRECT_URI!.trim();
+    if (redirectUri.length > RUNTIME_RESOURCE_LIMITS.oidcUrlCharacters) {
+      throw new Error(`OIDC_REDIRECT_URI must be no greater than ${RUNTIME_RESOURCE_LIMITS.oidcUrlCharacters} characters`);
+    }
     const redirectUrl = new URL(redirectUri);
     const localRedirect = redirectUrl.hostname === "127.0.0.1" || redirectUrl.hostname === "localhost";
     if ((redirectUrl.protocol !== "https:" && !localRedirect) || redirectUrl.username || redirectUrl.password
       || redirectUrl.hash || redirectUrl.search || !redirectUrl.pathname.endsWith("/api/auth/callback")) {
       throw new Error("OIDC_REDIRECT_URI must be HTTPS (or local development), end with /api/auth/callback, and have no credentials, query, or fragment");
     }
+    const clientId = env.OIDC_CLIENT_ID!.trim();
+    if (clientId.length > RUNTIME_RESOURCE_LIMITS.oidcClientIdCharacters) {
+      throw new Error(`OIDC_CLIENT_ID must be no greater than ${RUNTIME_RESOURCE_LIMITS.oidcClientIdCharacters} characters`);
+    }
     const transactionSecret = env.OIDC_TRANSACTION_SECRET!.trim();
     if (transactionSecret.length < 32) throw new Error("OIDC_TRANSACTION_SECRET must be at least 32 characters");
+    if (transactionSecret.length > RUNTIME_RESOURCE_LIMITS.oidcTransactionSecretCharacters) {
+      throw new Error(`OIDC_TRANSACTION_SECRET must be no greater than ${RUNTIME_RESOURCE_LIMITS.oidcTransactionSecretCharacters} characters`);
+    }
     const upstreamTimeoutMs = oidcUpstreamTimeoutValue
       ? parsePositiveInteger(oidcUpstreamTimeoutValue, "OIDC_UPSTREAM_TIMEOUT_MS")
       : undefined;
@@ -291,7 +337,7 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     }
     oidc = {
       issuer,
-      clientId: env.OIDC_CLIENT_ID!.trim(),
+      clientId,
       redirectUri,
       transactionSecret,
       ...(upstreamTimeoutMs === undefined ? {} : { upstreamTimeoutMs }),
