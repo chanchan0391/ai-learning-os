@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
 import {
+  assertModelUsageSafety,
   createSyncRuntime,
   DATABASE_POOL_DEFAULTS,
   readAgentConcurrencyLimit,
@@ -10,6 +11,17 @@ import {
 } from "./runtime-config";
 
 describe("sync runtime configuration", () => {
+  it("fails closed when a live model has no authenticated usage ledger", () => {
+    expect(() => assertModelUsageSafety(true, false, {})).toThrow(/require account model budgets/);
+    expect(() => assertModelUsageSafety(true, false, { AI_ALLOW_UNMETERED_LIVE_MODEL: "yes" })).toThrow(/true or false/);
+  });
+
+  it("allows metered live models, deterministic mode, and an explicit development override", () => {
+    expect(() => assertModelUsageSafety(true, true, {})).not.toThrow();
+    expect(() => assertModelUsageSafety(false, false, {})).not.toThrow();
+    expect(() => assertModelUsageSafety(true, false, { AI_ALLOW_UNMETERED_LIVE_MODEL: "true" })).not.toThrow();
+  });
+
   it("loads an optional positive per-instance Agent concurrency limit", () => {
     expect(readAgentConcurrencyLimit({})).toBeUndefined();
     expect(readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "12" })).toBe(12);

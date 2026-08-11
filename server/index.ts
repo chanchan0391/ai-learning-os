@@ -1,7 +1,12 @@
 import { createApp } from "./app";
 import { createModelProvider } from "./ai/provider-factory";
 import { configureHttpServer, createShutdownHandler } from "./http-server-lifecycle";
-import { createSyncRuntime, readAgentConcurrencyLimit, readTrustedProxyAddresses } from "./runtime-config";
+import {
+  assertModelUsageSafety,
+  createSyncRuntime,
+  readAgentConcurrencyLimit,
+  readTrustedProxyAddresses,
+} from "./runtime-config";
 import { InMemoryConcurrencyLimiter } from "./security/request-security";
 
 try {
@@ -14,6 +19,7 @@ const port = Number(process.env.AI_API_PORT ?? 8787);
 const host = process.env.AI_API_HOST?.trim() || "127.0.0.1";
 const provider = createModelProvider();
 const syncRuntime = createSyncRuntime(process.env);
+assertModelUsageSafety(provider.isAiEnabled, Boolean(syncRuntime.appOptions.modelUsageLedger), process.env);
 const agentConcurrencyLimit = readAgentConcurrencyLimit(process.env);
 syncRuntime.appOptions.trustedProxyAddresses = readTrustedProxyAddresses(process.env);
 if (agentConcurrencyLimit) {

@@ -58,6 +58,23 @@ export function readAgentConcurrencyLimit(env: NodeJS.ProcessEnv): number | unde
   return value ? parsePositiveInteger(value, "AI_MAX_CONCURRENT_AGENT_REQUESTS") : undefined;
 }
 
+/** Prevents live model credentials from silently exposing unauthenticated, unmetered Agent endpoints. */
+export function assertModelUsageSafety(
+  isAiEnabled: boolean,
+  hasModelUsageLedger: boolean,
+  env: NodeJS.ProcessEnv,
+): void {
+  const override = env.AI_ALLOW_UNMETERED_LIVE_MODEL?.trim();
+  if (override && override !== "true" && override !== "false") {
+    throw new Error("AI_ALLOW_UNMETERED_LIVE_MODEL must be true or false");
+  }
+  if (isAiEnabled && !hasModelUsageLedger && override !== "true") {
+    throw new Error(
+      "Live model providers require account model budgets; set AI_ALLOW_UNMETERED_LIVE_MODEL=true only for an isolated development smoke test",
+    );
+  }
+}
+
 export function readDatabasePoolConfig(env: NodeJS.ProcessEnv): DatabasePoolRuntimeConfig {
   const read = (name: string, fallback: number) => {
     const value = env[name]?.trim();

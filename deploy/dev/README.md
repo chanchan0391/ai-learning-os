@@ -50,6 +50,8 @@ AI_PLAN_BUDGETS_JSON='{"starter":{"monthlyTokenLimit":50000,"monthlyCostLimitUsd
 AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=false
 ```
 
+实时模型在启动时要求上述四项账号预算和数据库会话能力同时存在，避免部署误配置成未认证、未计量的付费 Agent API。`AI_ALLOW_UNMETERED_LIVE_MODEL=true` 只允许用于隔离的本地烟雾测试，不得写入 dev 或任何共享环境。
+
 完整容器部署启动后，通过上述隧道打开 `http://127.0.0.1:8088` 即可查看远端 Web、API、OIDC、PostgreSQL 和实时模型组成的完整效果。
 
 若服务器暂时无法从 Docker Hub 拉取基础镜像，可使用 `ai-learning-os-api.service` 和 `ai-learning-os-web.service` 作为等价的用户级运行方式。当前服务固定使用 NVM 的 Node 22.23.1，仍只监听服务器回环地址。
