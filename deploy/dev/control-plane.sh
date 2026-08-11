@@ -17,14 +17,10 @@ lock_dir="$base_dir/.control-plane.lock"
 required_sandbox_directives='UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
-PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=read-only
 ProtectControlGroups=true
-ProtectKernelModules=true
 ProtectKernelTunables=true
-ProtectKernelLogs=true
-ProtectClock=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
