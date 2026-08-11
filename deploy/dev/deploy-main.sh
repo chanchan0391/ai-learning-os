@@ -19,9 +19,14 @@ update_operational_runners() {
   done
   for runner in deploy-main.sh backup.sh; do
     candidate=$current_link/deploy/dev/$runner
+    installed_runner=$base_dir/$runner
+    if [ -f "$installed_runner" ] && [ ! -L "$installed_runner" ] \
+      && [ -x "$installed_runner" ] && cmp -s "$candidate" "$installed_runner"; then
+      continue
+    fi
     staged_runner="$base_dir/.$runner.next"
     install -m 0755 "$candidate" "$staged_runner"
-    mv -f "$staged_runner" "$base_dir/$runner"
+    mv -f "$staged_runner" "$installed_runner"
   done
 }
 

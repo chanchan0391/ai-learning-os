@@ -36,6 +36,10 @@ fi
 
 deployed_revision=$(ssh "$deploy_host" "test -f '$remote_base/current/DEPLOYED_COMMIT' && cat '$remote_base/current/DEPLOYED_COMMIT' || true")
 if [ "$deployed_revision" = "$revision" ]; then
+  # Re-enter the remote deployment runner even when the application release is
+  # current. Its same-revision path repairs operational runners after a deploy
+  # that activated successfully but was interrupted before runner refresh.
+  ssh "$deploy_host" "'$remote_base/deploy-main.sh' '$revision'"
   exit 0
 fi
 

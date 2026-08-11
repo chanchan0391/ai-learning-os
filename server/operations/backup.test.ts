@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const backupScript = join(repositoryRoot, "deploy/dev/backup.sh");
 const deployScript = join(repositoryRoot, "deploy/dev/deploy-main.sh");
+const publishScript = join(repositoryRoot, "deploy/dev/publish-main.sh");
 const temporaryDirectories: string[] = [];
 
 interface Fixture {
@@ -145,5 +146,70 @@ describe("dev operational runner updates", () => {
     expect(readFileSync(join(baseDir, "backup.sh"), "utf8")).toBe("new backup runner\n");
     expect(statSync(join(baseDir, "deploy-main.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "backup.sh")).mode & 0o777).toBe(0o755);
+  });
+
+  it("does not rewrite operational runners that already match the active release", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-runners-current-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const current = join(baseDir, "current");
+    const releaseOperations = join(current, "deploy/dev");
+    const fakeBin = join(root, "bin");
+    const revision = "c".repeat(40);
+    const fixedTime = new Date("2026-01-01T00:00:00.000Z");
+    mkdirSync(releaseOperations, { recursive: true });
+    mkdirSync(fakeBin);
+    writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
+    for (const runner of ["deploy-main.sh", "backup.sh"]) {
+      writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
+      executable(join(baseDir, runner), `${runner} current\n`);
+      utimesSync(join(baseDir, runner), fixedTime, fixedTime);
+    }
+    executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+
+    const result = spawnSync("sh", [deployScript, revision], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        AI_LEARNING_DEPLOY_DIR: baseDir,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    for (const runner of ["deploy-main.sh", "backup.sh"]) {
+      expect(statSync(join(baseDir, runner)).mtimeMs).toBe(fixedTime.getTime());
+    }
+  });
+
+  it("reconciles remote runners when the application revision is already current", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-"));
+    temporaryDirectories.push(root);
+    const checkout = join(root, "checkout");
+    const fakeBin = join(root, "bin");
+    const sshLog = join(root, "ssh.log");
+    const revision = "b".repeat(40);
+    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(fakeBin);
+    executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
+    executable(join(fakeBin, "ssh"), `#!/bin/sh\nset -eu\ncase "$*" in\n  *DEPLOYED_COMMIT*) printf '%s\\n' '${revision}' ;;\n  *) printf '%s\\n' "$*" >> "$FAKE_SSH_LOG" ;;\nesac\n`);
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_CHECKOUT_DIR: checkout,
+        AI_LEARNING_DEPLOY_HOST: "dev-host",
+        AI_LEARNING_REMOTE_BASE: "/srv/ai-learning-os",
+        FAKE_SSH_LOG: sshLog,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(sshLog, "utf8")).toBe(
+      `dev-host '/srv/ai-learning-os/deploy-main.sh' '${revision}'\n`,
+    );
   });
 });
