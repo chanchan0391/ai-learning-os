@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const backupScript = join(repositoryRoot, "deploy/dev/backup.sh");
+const deployScript = join(repositoryRoot, "deploy/dev/deploy-main.sh");
 const temporaryDirectories: string[] = [];
 
 interface Fixture {
@@ -108,5 +109,41 @@ describe("dev database backup", () => {
     expect(existsSync(expiredBackup)).toBe(false);
     expect(existsSync(expiredChecksum)).toBe(false);
     expect(readdirSync(fixture.backupDir)).toHaveLength(2);
+  });
+});
+
+describe("dev operational runner updates", () => {
+  it("refreshes both deployment and backup runners for an already deployed revision", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-runners-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const current = join(baseDir, "current");
+    const releaseOperations = join(current, "deploy/dev");
+    const fakeBin = join(root, "bin");
+    const revision = "a".repeat(40);
+    mkdirSync(releaseOperations, { recursive: true });
+    mkdirSync(fakeBin);
+    writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
+    writeFileSync(join(releaseOperations, "deploy-main.sh"), "new deploy runner\n");
+    writeFileSync(join(releaseOperations, "backup.sh"), "new backup runner\n");
+    writeFileSync(join(baseDir, "deploy-main.sh"), "old deploy runner\n");
+    writeFileSync(join(baseDir, "backup.sh"), "old backup runner\n");
+    executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+
+    const result = spawnSync("sh", [deployScript, revision], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        AI_LEARNING_DEPLOY_DIR: baseDir,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`Revision ${revision} is already deployed`);
+    expect(readFileSync(join(baseDir, "deploy-main.sh"), "utf8")).toBe("new deploy runner\n");
+    expect(readFileSync(join(baseDir, "backup.sh"), "utf8")).toBe("new backup runner\n");
+    expect(statSync(join(baseDir, "deploy-main.sh")).mode & 0o777).toBe(0o755);
+    expect(statSync(join(baseDir, "backup.sh")).mode & 0o777).toBe(0o755);
   });
 });

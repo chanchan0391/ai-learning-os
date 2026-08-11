@@ -9,15 +9,20 @@ requested_revision=${1:-}
 provided_archive=${2:-}
 provided_checksum=${3:-}
 
-update_deploy_runner() {
-  candidate=$current_link/deploy/dev/deploy-main.sh
-  if [ ! -f "$candidate" ]; then
-    echo "Active release does not contain the deploy runner" >&2
-    return 1
-  fi
-  staged_runner="$base_dir/.deploy-main.next"
-  install -m 0755 "$candidate" "$staged_runner"
-  mv -f "$staged_runner" "$base_dir/deploy-main.sh"
+update_operational_runners() {
+  for runner in deploy-main.sh backup.sh; do
+    candidate=$current_link/deploy/dev/$runner
+    if [ ! -f "$candidate" ] || [ -L "$candidate" ]; then
+      echo "Active release does not contain a safe $runner" >&2
+      return 1
+    fi
+  done
+  for runner in deploy-main.sh backup.sh; do
+    candidate=$current_link/deploy/dev/$runner
+    staged_runner="$base_dir/.$runner.next"
+    install -m 0755 "$candidate" "$staged_runner"
+    mv -f "$staged_runner" "$base_dir/$runner"
+  done
 }
 
 service_uses_selected_node() {
@@ -51,7 +56,7 @@ if [ -f "$current_link/DEPLOYED_COMMIT" ]; then
   current_revision=$(cat "$current_link/DEPLOYED_COMMIT")
 fi
 if [ "$current_revision" = "$revision" ]; then
-  update_deploy_runner
+  update_operational_runners
   echo "Revision $revision is already deployed"
   exit 0
 fi
@@ -180,5 +185,5 @@ find "$base_dir/releases" -mindepth 1 -maxdepth 1 -type d ! -name '.deploy-*' -p
       fi
     done
 
-update_deploy_runner
+update_operational_runners
 echo "Deployed $revision successfully"
