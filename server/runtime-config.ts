@@ -19,6 +19,7 @@ export interface SyncRuntime {
 
 export interface SyncRuntimeConfig {
   connectionString: string;
+  databaseTls: boolean;
   allowedOrigins: string[];
   sessionCookieName?: string;
   oidc?: OidcConfig;
@@ -98,9 +99,10 @@ export function readDatabasePoolConfig(env: NodeJS.ProcessEnv): DatabasePoolRunt
   return config;
 }
 
-function toPoolConfig(connectionString: string, config: DatabasePoolRuntimeConfig): PoolConfig {
+function toPoolConfig(connectionString: string, config: DatabasePoolRuntimeConfig, databaseTls = false): PoolConfig {
   return {
     connectionString,
+    ...(databaseTls ? { ssl: { rejectUnauthorized: true } } : {}),
     max: config.max,
     connectionTimeoutMillis: config.connectionTimeoutMillis,
     idleTimeoutMillis: config.idleTimeoutMillis,
@@ -129,6 +131,30 @@ function parseOrigins(value: string): string[] {
     }
   }
   return origins;
+}
+
+function parseDatabaseConnection(connectionString: string, tlsMode: string | undefined): { databaseTls: boolean } {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    throw new Error("DATABASE_URL must be a valid PostgreSQL URL");
+  }
+  if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") {
+    throw new Error("DATABASE_URL must use the postgres or postgresql scheme");
+  }
+  if (["sslmode", "sslcert", "sslkey", "sslrootcert"].some((name) => url.searchParams.has(name))) {
+    throw new Error("Configure database TLS with DATABASE_TLS_MODE, not DATABASE_URL query parameters");
+  }
+  const normalizedMode = tlsMode?.trim();
+  if (normalizedMode && normalizedMode !== "disable" && normalizedMode !== "verify-full") {
+    throw new Error("DATABASE_TLS_MODE must be disable or verify-full");
+  }
+  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+  if (!loopback && normalizedMode !== "verify-full") {
+    throw new Error("Remote DATABASE_URL requires DATABASE_TLS_MODE=verify-full");
+  }
+  return { databaseTls: normalizedMode === "verify-full" };
 }
 
 export function readTrustedProxyAddresses(env: NodeJS.ProcessEnv): string[] | undefined {
@@ -182,6 +208,7 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     env.DATABASE_IDLE_TRANSACTION_TIMEOUT_MS,
     env.DATABASE_MAX_LIFETIME_SECONDS,
     env.AUTH_MAX_ACTIVE_DEVICES,
+    env.DATABASE_TLS_MODE,
   ];
   const budgetValues = [
     env.AI_MONTHLY_TOKEN_LIMIT,
@@ -205,6 +232,7 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     }
     return null;
   }
+  const { databaseTls } = parseDatabaseConnection(connectionString, env.DATABASE_TLS_MODE);
   const sessionCookieName = env.SESSION_COOKIE_NAME?.trim();
   if (sessionCookieName && !/^[A-Za-z0-9_-]+$/.test(sessionCookieName)) {
     throw new Error("SESSION_COOKIE_NAME may contain only letters, digits, underscores, and hyphens");
@@ -275,6 +303,7 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
   }
   return {
     connectionString,
+    databaseTls,
     allowedOrigins,
     maxActiveDevices: env.AUTH_MAX_ACTIVE_DEVICES?.trim()
       ? parsePositiveInteger(env.AUTH_MAX_ACTIVE_DEVICES.trim(), "AUTH_MAX_ACTIVE_DEVICES")
@@ -294,7 +323,7 @@ export function createSyncRuntime(
   if (!config) return { appOptions: {}, close: async () => undefined };
 
   const databasePoolConfig = readDatabasePoolConfig(env);
-  const pool = createPool(config.connectionString, toPoolConfig(config.connectionString, databasePoolConfig));
+  const pool = createPool(config.connectionString, toPoolConfig(config.connectionString, databasePoolConfig, config.databaseTls));
   const sessions = new PostgresSessionPrincipalResolver(pool, config.sessionCookieName);
   const sessionLifecycle = new PostgresSessionLifecycle(pool, undefined, undefined, undefined, undefined, config.maxActiveDevices);
   return {

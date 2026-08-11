@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Pool } from "pg";
+import type { Pool, PoolConfig } from "pg";
 import {
   assertModelUsageSafety,
   createSyncRuntime,
@@ -77,6 +77,7 @@ describe("sync runtime configuration", () => {
       SESSION_COOKIE_NAME: "learning_session",
     })).toEqual({
       connectionString: "postgres://localhost/learning",
+      databaseTls: false,
       allowedOrigins: ["http://127.0.0.1:5173", "https://learn.example"],
       sessionCookieName: "learning_session",
       maxActiveDevices: 100,
@@ -103,6 +104,27 @@ describe("sync runtime configuration", () => {
       DATABASE_URL: "postgres://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
       OIDC_UPSTREAM_TIMEOUT_MS: "5000",
     })).toThrow(/configured together/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://database.example/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+    })).toThrow(/requires DATABASE_TLS_MODE=verify-full/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning?sslmode=require", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+    })).toThrow(/DATABASE_TLS_MODE/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "mysql://localhost/learning", SYNC_ALLOWED_ORIGINS: "https://learn.example",
+    })).toThrow(/postgres or postgresql scheme/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning", DATABASE_TLS_MODE: "require",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+    })).toThrow(/disable or verify-full/);
+  });
+
+  it("requires certificate-verifying TLS for a remote PostgreSQL server", () => {
+    expect(readSyncRuntimeConfig({
+      DATABASE_URL: "postgresql://database.example/learning",
+      DATABASE_TLS_MODE: "verify-full",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+    })).toMatchObject({ databaseTls: true });
   });
 
   it("loads a bounded per-account active device limit", () => {
@@ -294,6 +316,25 @@ describe("sync runtime configuration", () => {
       waiting: 2,
       saturated: true,
     });
+    await runtime.close();
+  });
+
+  it("passes certificate verification to the PostgreSQL pool", async () => {
+    let poolConfig: PoolConfig | undefined;
+    const pool = {
+      query: async () => ({ rows: [] }), end: async () => undefined,
+      totalCount: 0, idleCount: 0, waitingCount: 0,
+    } as unknown as Pool;
+    const runtime = createSyncRuntime({
+      DATABASE_URL: "postgres://database.example/learning",
+      DATABASE_TLS_MODE: "verify-full",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+    }, (_connectionString, config) => {
+      poolConfig = config;
+      return pool;
+    });
+
+    expect(poolConfig?.ssl).toEqual({ rejectUnauthorized: true });
     await runtime.close();
   });
 });
