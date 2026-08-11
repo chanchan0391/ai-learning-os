@@ -38,6 +38,18 @@ export const DATABASE_POOL_DEFAULTS = {
   maxLifetimeSeconds: 300,
 } as const;
 
+export const RUNTIME_RESOURCE_LIMITS = {
+  agentConcurrency: 100,
+  databasePoolMax: 100,
+  databaseConnectionTimeoutMillis: 60_000,
+  databaseIdleTimeoutMillis: 600_000,
+  databaseStatementTimeoutMillis: 120_000,
+  databaseQueryTimeoutMillis: 180_000,
+  databaseIdleTransactionTimeoutMillis: 120_000,
+  databaseMaxLifetimeSeconds: 86_400,
+  activeDevicesPerAccount: 1_000,
+} as const;
+
 export interface DatabasePoolRuntimeConfig {
   max: number;
   connectionTimeoutMillis: number;
@@ -54,9 +66,17 @@ function parsePositiveInteger(value: string, name: string): number {
   return parsed;
 }
 
+function parseBoundedPositiveInteger(value: string, name: string, maximum: number): number {
+  const parsed = parsePositiveInteger(value, name);
+  if (parsed > maximum) throw new Error(`${name} must be no greater than ${maximum}`);
+  return parsed;
+}
+
 export function readAgentConcurrencyLimit(env: NodeJS.ProcessEnv): number | undefined {
   const value = env.AI_MAX_CONCURRENT_AGENT_REQUESTS?.trim();
-  return value ? parsePositiveInteger(value, "AI_MAX_CONCURRENT_AGENT_REQUESTS") : undefined;
+  return value
+    ? parseBoundedPositiveInteger(value, "AI_MAX_CONCURRENT_AGENT_REQUESTS", RUNTIME_RESOURCE_LIMITS.agentConcurrency)
+    : undefined;
 }
 
 /** Prevents live model credentials from silently exposing unauthenticated, unmetered Agent endpoints. */
@@ -77,21 +97,22 @@ export function assertModelUsageSafety(
 }
 
 export function readDatabasePoolConfig(env: NodeJS.ProcessEnv): DatabasePoolRuntimeConfig {
-  const read = (name: string, fallback: number) => {
+  const read = (name: string, fallback: number, maximum: number) => {
     const value = env[name]?.trim();
-    return value ? parsePositiveInteger(value, name) : fallback;
+    return value ? parseBoundedPositiveInteger(value, name, maximum) : fallback;
   };
   const config = {
-    max: read("DATABASE_POOL_MAX", DATABASE_POOL_DEFAULTS.max),
-    connectionTimeoutMillis: read("DATABASE_CONNECTION_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.connectionTimeoutMillis),
-    idleTimeoutMillis: read("DATABASE_IDLE_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.idleTimeoutMillis),
-    statementTimeoutMillis: read("DATABASE_STATEMENT_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.statementTimeoutMillis),
-    queryTimeoutMillis: read("DATABASE_QUERY_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.queryTimeoutMillis),
+    max: read("DATABASE_POOL_MAX", DATABASE_POOL_DEFAULTS.max, RUNTIME_RESOURCE_LIMITS.databasePoolMax),
+    connectionTimeoutMillis: read("DATABASE_CONNECTION_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.connectionTimeoutMillis, RUNTIME_RESOURCE_LIMITS.databaseConnectionTimeoutMillis),
+    idleTimeoutMillis: read("DATABASE_IDLE_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.idleTimeoutMillis, RUNTIME_RESOURCE_LIMITS.databaseIdleTimeoutMillis),
+    statementTimeoutMillis: read("DATABASE_STATEMENT_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.statementTimeoutMillis, RUNTIME_RESOURCE_LIMITS.databaseStatementTimeoutMillis),
+    queryTimeoutMillis: read("DATABASE_QUERY_TIMEOUT_MS", DATABASE_POOL_DEFAULTS.queryTimeoutMillis, RUNTIME_RESOURCE_LIMITS.databaseQueryTimeoutMillis),
     idleInTransactionSessionTimeoutMillis: read(
       "DATABASE_IDLE_TRANSACTION_TIMEOUT_MS",
       DATABASE_POOL_DEFAULTS.idleInTransactionSessionTimeoutMillis,
+      RUNTIME_RESOURCE_LIMITS.databaseIdleTransactionTimeoutMillis,
     ),
-    maxLifetimeSeconds: read("DATABASE_MAX_LIFETIME_SECONDS", DATABASE_POOL_DEFAULTS.maxLifetimeSeconds),
+    maxLifetimeSeconds: read("DATABASE_MAX_LIFETIME_SECONDS", DATABASE_POOL_DEFAULTS.maxLifetimeSeconds, RUNTIME_RESOURCE_LIMITS.databaseMaxLifetimeSeconds),
   };
   if (config.queryTimeoutMillis <= config.statementTimeoutMillis) {
     throw new Error("DATABASE_QUERY_TIMEOUT_MS must be greater than DATABASE_STATEMENT_TIMEOUT_MS");
@@ -306,7 +327,11 @@ export function readSyncRuntimeConfig(env: NodeJS.ProcessEnv): SyncRuntimeConfig
     databaseTls,
     allowedOrigins,
     maxActiveDevices: env.AUTH_MAX_ACTIVE_DEVICES?.trim()
-      ? parsePositiveInteger(env.AUTH_MAX_ACTIVE_DEVICES.trim(), "AUTH_MAX_ACTIVE_DEVICES")
+      ? parseBoundedPositiveInteger(
+        env.AUTH_MAX_ACTIVE_DEVICES.trim(),
+        "AUTH_MAX_ACTIVE_DEVICES",
+        RUNTIME_RESOURCE_LIMITS.activeDevicesPerAccount,
+      )
       : DEFAULT_MAX_ACTIVE_DEVICES,
     ...(sessionCookieName ? { sessionCookieName } : {}),
     ...(oidc ? { oidc } : {}),

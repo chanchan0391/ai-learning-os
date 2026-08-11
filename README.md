@@ -88,7 +88,7 @@ cp .env.example .env.local
 
 然后在 `.env.local` 中填写 `OPENAI_API_KEY` 和 `OPENAI_MODEL`，重新运行 `npm start`。密钥文件不会被 Git 提交。所有模型响应默认最多使用 4096 个输出 token；可用 `OPENAI_MAX_OUTPUT_TOKENS` 在 32,768 的硬上限内显式调整，并应以固定评估集验证更低上限不会截断结构化结果。一次调用默认总时限为 60 秒，`OPENAI_TOTAL_TIMEOUT_MS` 最多可配置为 120 秒。
 
-每个 API 实例默认最多同时执行 20 个 Agent 请求；可用正整数 `AI_MAX_CONCURRENT_AGENT_REQUESTS` 按可用内存、连接预算和模型配额调整。满载响应为可重试 `503`，并且不会读取学习正文或启动新的模型调用。
+每个 API 实例默认最多同时执行 20 个 Agent 请求；可用正整数 `AI_MAX_CONCURRENT_AGENT_REQUESTS` 按可用内存、连接预算和模型配额调整，配置硬上限为 100。满载响应为可重试 `503`，并且不会读取学习正文或启动新的模型调用。
 
 如果使用 OpenAI-compatible 服务，可改为配置 `OPENAI_COMPATIBLE_API_KEY`、`OPENAI_COMPATIBLE_BASE_URL`，并通过 `OPENAI_MODEL`（或 `OPENAI_COMPATIBLE_MODEL`）指定模型。兼容模式使用 `/v1/chat/completions` 和 JSON Schema 结构化输出；base URL 可填写服务根地址或已经包含 `/v1` 的地址。远端服务必须使用 HTTPS，本机回环开发服务可使用 HTTP；不要同时配置 OpenAI 和兼容服务的两组密钥。
 
@@ -100,7 +100,7 @@ npm run build
 npm run eval:agents
 ```
 
-开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。非回环数据库还必须设置 `DATABASE_TLS_MODE=verify-full`，由 PostgreSQL 客户端验证服务器证书和主机名；TLS 选项不能混入连接 URL，以免配置优先级产生歧义。迁移也会创建多实例共享限流表；缺少最新迁移时受保护路由会拒绝服务，不会退回不安全的单实例配额。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。运行时默认每实例最多使用 10 条 PostgreSQL 连接，并对连接获取、空闲连接、连接生命周期、语句、查询等待和空闲事务设置时限；可用 `DATABASE_POOL_MAX`、`DATABASE_CONNECTION_TIMEOUT_MS`、`DATABASE_IDLE_TIMEOUT_MS`、`DATABASE_MAX_LIFETIME_SECONDS`、`DATABASE_STATEMENT_TIMEOUT_MS`、`DATABASE_QUERY_TIMEOUT_MS` 和 `DATABASE_IDLE_TRANSACTION_TIMEOUT_MS` 调整。`/api/health` 的 `databasePool` 快照可用于监控连接使用和等待者；未启用数据库时该值为 `null`。启用登录还需同时配置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`；配置完成后，页面会显示登录与“立即同步”控制。单账号默认最多允许 100 个同时具有有效会话的设备，可用 `AUTH_MAX_ACTIVE_DEVICES` 收紧。身份方案和 HTTP 契约见 [`docs/authentication-design.md`](docs/authentication-design.md)。
+开发账号同步服务时，先在 `.env.local` 配置 `DATABASE_URL` 和精确的 `SYNC_ALLOWED_ORIGINS`，运行 `npm run db:migrate`，再启动 API。非回环数据库还必须设置 `DATABASE_TLS_MODE=verify-full`，由 PostgreSQL 客户端验证服务器证书和主机名；TLS 选项不能混入连接 URL，以免配置优先级产生歧义。迁移也会创建多实例共享限流表；缺少最新迁移时受保护路由会拒绝服务，不会退回不安全的单实例配额。未配置数据库时同步保持关闭；配置不完整时服务会直接拒绝启动。运行时默认每实例最多使用 10 条 PostgreSQL 连接，并对连接获取、空闲连接、连接生命周期、语句、查询等待和空闲事务设置时限；可用 `DATABASE_POOL_MAX`、`DATABASE_CONNECTION_TIMEOUT_MS`、`DATABASE_IDLE_TIMEOUT_MS`、`DATABASE_MAX_LIFETIME_SECONDS`、`DATABASE_STATEMENT_TIMEOUT_MS`、`DATABASE_QUERY_TIMEOUT_MS` 和 `DATABASE_IDLE_TRANSACTION_TIMEOUT_MS` 调整，启动硬上限分别为 100 条、60 秒、10 分钟、24 小时、120 秒、180 秒和 120 秒。`/api/health` 的 `databasePool` 快照可用于监控连接使用和等待者；未启用数据库时该值为 `null`。启用登录还需同时配置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 和至少 32 字符的 `OIDC_TRANSACTION_SECRET`；配置完成后，页面会显示登录与“立即同步”控制。单账号默认最多允许 100 个同时具有有效会话的设备，可用 `AUTH_MAX_ACTIVE_DEVICES` 收紧，配置硬上限为 1,000。身份方案和 HTTP 契约见 [`docs/authentication-design.md`](docs/authentication-design.md)。
 
 实时模型必须同时配置 `AI_MONTHLY_TOKEN_LIMIT`、`AI_MONTHLY_COST_LIMIT_USD`、`AI_INPUT_COST_PER_MILLION_USD` 和 `AI_OUTPUT_COST_PER_MILLION_USD`，从而启用账号模型成本熔断、要求 Agent API 登录并阻止凭据误配置成公开未计量端点；费率应与实际模型价格一致。只有隔离的本地实时烟雾测试可以显式设置 `AI_ALLOW_UNMETERED_LIVE_MODEL=true` 绕过该启动保护，任何共享或部署环境都不得使用。可再配置 `AI_GLOBAL_MONTHLY_COST_LIMIT_USD`，让所有账号的已入账估算成本达到应用总上限后统一停止新调用。若启用 `AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED`，还必须用 `AI_PLAN_BUDGETS_JSON` 显式定义每个可用套餐的月度 token 与金额配额；未知套餐默认拒绝。账本按厂商返回的成功调用用量记账，不保存 Prompt 或模型输出；Agent 单次 JSON 输入限制为 64 KiB，单次输出默认限制为 4096 token，两者共同缩小在途调用成本，但不消除并发检查窗口，生产仍需配置模型厂商侧的独立硬上限。
 

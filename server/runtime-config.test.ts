@@ -4,6 +4,7 @@ import {
   assertModelUsageSafety,
   createSyncRuntime,
   DATABASE_POOL_DEFAULTS,
+  RUNTIME_RESOURCE_LIMITS,
   readAgentConcurrencyLimit,
   readDatabasePoolConfig,
   readSyncRuntimeConfig,
@@ -27,6 +28,9 @@ describe("sync runtime configuration", () => {
     expect(readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "12" })).toBe(12);
     expect(() => readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "0" })).toThrow(/positive integer/);
     expect(() => readAgentConcurrencyLimit({ AI_MAX_CONCURRENT_AGENT_REQUESTS: "1.5" })).toThrow(/positive integer/);
+    expect(() => readAgentConcurrencyLimit({
+      AI_MAX_CONCURRENT_AGENT_REQUESTS: String(RUNTIME_RESOURCE_LIMITS.agentConcurrency + 1),
+    })).toThrow(/no greater than 100/);
   });
 
   it("loads bounded PostgreSQL pool defaults and explicit overrides", () => {
@@ -56,6 +60,27 @@ describe("sync runtime configuration", () => {
       .toThrow(/QUERY_TIMEOUT_MS must be greater/);
     expect(() => readDatabasePoolConfig({ DATABASE_QUERY_TIMEOUT_MS: "15000" }))
       .toThrow(/QUERY_TIMEOUT_MS must be greater/);
+    expect(() => readDatabasePoolConfig({
+      DATABASE_POOL_MAX: String(RUNTIME_RESOURCE_LIMITS.databasePoolMax + 1),
+    })).toThrow(/DATABASE_POOL_MAX must be no greater/);
+    expect(() => readDatabasePoolConfig({
+      DATABASE_CONNECTION_TIMEOUT_MS: String(RUNTIME_RESOURCE_LIMITS.databaseConnectionTimeoutMillis + 1),
+    })).toThrow(/DATABASE_CONNECTION_TIMEOUT_MS must be no greater/);
+    expect(() => readDatabasePoolConfig({
+      DATABASE_IDLE_TIMEOUT_MS: String(RUNTIME_RESOURCE_LIMITS.databaseIdleTimeoutMillis + 1),
+    })).toThrow(/DATABASE_IDLE_TIMEOUT_MS must be no greater/);
+    expect(() => readDatabasePoolConfig({
+      DATABASE_STATEMENT_TIMEOUT_MS: String(RUNTIME_RESOURCE_LIMITS.databaseStatementTimeoutMillis + 1),
+    })).toThrow(/DATABASE_STATEMENT_TIMEOUT_MS must be no greater/);
+    expect(() => readDatabasePoolConfig({
+      DATABASE_QUERY_TIMEOUT_MS: String(RUNTIME_RESOURCE_LIMITS.databaseQueryTimeoutMillis + 1),
+    })).toThrow(/DATABASE_QUERY_TIMEOUT_MS must be no greater/);
+    expect(() => readDatabasePoolConfig({
+      DATABASE_IDLE_TRANSACTION_TIMEOUT_MS: String(RUNTIME_RESOURCE_LIMITS.databaseIdleTransactionTimeoutMillis + 1),
+    })).toThrow(/DATABASE_IDLE_TRANSACTION_TIMEOUT_MS must be no greater/);
+    expect(() => readDatabasePoolConfig({
+      DATABASE_MAX_LIFETIME_SECONDS: String(RUNTIME_RESOURCE_LIMITS.databaseMaxLifetimeSeconds + 1),
+    })).toThrow(/DATABASE_MAX_LIFETIME_SECONDS must be no greater/);
   });
 
   it("loads optional exact trusted proxy addresses independently of sync", () => {
@@ -138,6 +163,11 @@ describe("sync runtime configuration", () => {
       SYNC_ALLOWED_ORIGINS: "https://learn.example",
       AUTH_MAX_ACTIVE_DEVICES: "0",
     })).toThrow(/positive integer/);
+    expect(() => readSyncRuntimeConfig({
+      DATABASE_URL: "postgres://localhost/learning",
+      SYNC_ALLOWED_ORIGINS: "https://learn.example",
+      AUTH_MAX_ACTIVE_DEVICES: String(RUNTIME_RESOURCE_LIMITS.activeDevicesPerAccount + 1),
+    })).toThrow(/AUTH_MAX_ACTIVE_DEVICES must be no greater/);
   });
 
   it("loads a complete provider-neutral OIDC configuration", () => {
