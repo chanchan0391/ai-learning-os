@@ -89,6 +89,9 @@ describe("createModelProvider", () => {
 
   it("rejects an invalid or orphaned output cap", () => {
     expect(() => createModelProvider({ OPENAI_MAX_OUTPUT_TOKENS: "0" })).toThrow(/positive integer/);
+    expect(() => createModelProvider({
+      OPENAI_API_KEY: "openai-key", OPENAI_MODEL: "model", OPENAI_MAX_OUTPUT_TOKENS: "32769",
+    })).toThrow(/no greater than 32768/);
     expect(() => createModelProvider({ OPENAI_MAX_OUTPUT_TOKENS: "512" })).toThrow(/requires a configured model provider/);
   });
 
@@ -100,6 +103,9 @@ describe("createModelProvider", () => {
     });
     await expect(provider.generateStructured({ instructions: "Return JSON", input: "test", schema: { name: "result", value: {} } })).resolves.toMatchObject({ value: { ok: true } });
     expect(() => createModelProvider({ OPENAI_TOTAL_TIMEOUT_MS: "0" })).toThrow(/positive integer/);
+    expect(() => createModelProvider({
+      OPENAI_API_KEY: "openai-key", OPENAI_MODEL: "model", OPENAI_TOTAL_TIMEOUT_MS: "120001",
+    })).toThrow(/no greater than 120000/);
     expect(() => createModelProvider({ OPENAI_TOTAL_TIMEOUT_MS: "12000" })).toThrow(/requires a configured model provider/);
   });
 });

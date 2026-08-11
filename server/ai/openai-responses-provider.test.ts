@@ -33,7 +33,8 @@ describe("OpenAI Responses provider", () => {
       maxOutputTokens: 1_024, fetchImplementation: fetchMock as typeof fetch,
     });
     await expect(provider.generateStructured(request)).resolves.toMatchObject({ value: { ok: true } });
-    expect(() => new OpenAIResponsesProvider({ apiKey: "secret", model: "test", maxOutputTokens: 0 })).toThrow(/positive safe integer/);
+    expect(() => new OpenAIResponsesProvider({ apiKey: "secret", model: "test", maxOutputTokens: 0 })).toThrow(/positive integer/);
+    expect(() => new OpenAIResponsesProvider({ apiKey: "secret", model: "test", maxOutputTokens: 32_769 })).toThrow(/no greater than 32768/);
     expect(() => new OpenAIResponsesProvider({ apiKey: "secret", model: "test", maxResponseBytes: 0 })).toThrow(/positive safe integer/);
   });
 
@@ -171,5 +172,6 @@ describe("OpenAI Responses provider", () => {
 
   it("validates the total request deadline", () => {
     expect(() => new OpenAIResponsesProvider({ apiKey: "secret", model: "test", totalTimeoutMs: 0 })).toThrow(/total timeout/);
+    expect(() => new OpenAIResponsesProvider({ apiKey: "secret", model: "test", totalTimeoutMs: 120_001 })).toThrow(/no greater than 120000ms/);
   });
 });

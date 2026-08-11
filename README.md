@@ -86,7 +86,7 @@ npm start
 cp .env.example .env.local
 ```
 
-然后在 `.env.local` 中填写 `OPENAI_API_KEY` 和 `OPENAI_MODEL`，重新运行 `npm start`。密钥文件不会被 Git 提交。所有模型响应默认最多使用 4096 个输出 token；可用 `OPENAI_MAX_OUTPUT_TOKENS` 显式调整，并应以固定评估集验证更低上限不会截断结构化结果。
+然后在 `.env.local` 中填写 `OPENAI_API_KEY` 和 `OPENAI_MODEL`，重新运行 `npm start`。密钥文件不会被 Git 提交。所有模型响应默认最多使用 4096 个输出 token；可用 `OPENAI_MAX_OUTPUT_TOKENS` 在 32,768 的硬上限内显式调整，并应以固定评估集验证更低上限不会截断结构化结果。一次调用默认总时限为 60 秒，`OPENAI_TOTAL_TIMEOUT_MS` 最多可配置为 120 秒。
 
 每个 API 实例默认最多同时执行 20 个 Agent 请求；可用正整数 `AI_MAX_CONCURRENT_AGENT_REQUESTS` 按可用内存、连接预算和模型配额调整。满载响应为可重试 `503`，并且不会读取学习正文或启动新的模型调用。
 

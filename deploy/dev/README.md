@@ -29,9 +29,9 @@ OIDC_REDIRECT_URI=http://127.0.0.1:5173/api/auth/callback
 OIDC_TRANSACTION_SECRET=<at-least-32-random-characters>
 # 可选：OIDC discovery、令牌交换和 JWKS 请求时限（毫秒），默认 10000，最大 60000
 OIDC_UPSTREAM_TIMEOUT_MS=10000
-# 可选：每次结构化模型响应的输出 token 上限，默认 4096
+# 可选：每次结构化模型响应的输出 token 上限，默认 4096，最大 32768
 OPENAI_MAX_OUTPUT_TOKENS=4096
-# 可选：一次模型调用跨全部重试和退避的总时限（毫秒），默认 60000
+# 可选：一次模型调用跨全部重试和退避的总时限（毫秒），默认 60000，最大 120000
 OPENAI_TOTAL_TIMEOUT_MS=60000
 # 可选：每个 API 实例同时执行的 Agent 请求上限，默认 20
 AI_MAX_CONCURRENT_AGENT_REQUESTS=20

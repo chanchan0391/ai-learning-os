@@ -1,12 +1,18 @@
 import { DeterministicModelProvider } from "./deterministic-provider";
 import type { ModelProvider } from "./model-provider";
-import { DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_TOTAL_TIMEOUT_MS, OpenAIResponsesProvider } from "./openai-responses-provider";
+import {
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  DEFAULT_TOTAL_TIMEOUT_MS,
+  MAX_MAX_OUTPUT_TOKENS,
+  MAX_TOTAL_TIMEOUT_MS,
+  OpenAIResponsesProvider,
+} from "./openai-responses-provider";
 
 function parseMaxOutputTokens(value: string | undefined): number {
   if (!value?.trim()) return DEFAULT_MAX_OUTPUT_TOKENS;
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error("OPENAI_MAX_OUTPUT_TOKENS must be a positive integer");
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > MAX_MAX_OUTPUT_TOKENS) {
+    throw new Error(`OPENAI_MAX_OUTPUT_TOKENS must be a positive integer no greater than ${MAX_MAX_OUTPUT_TOKENS}`);
   }
   return parsed;
 }
@@ -14,8 +20,8 @@ function parseMaxOutputTokens(value: string | undefined): number {
 function parseTotalTimeout(value: string | undefined): number {
   if (!value?.trim()) return DEFAULT_TOTAL_TIMEOUT_MS;
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error("OPENAI_TOTAL_TIMEOUT_MS must be a positive integer");
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > MAX_TOTAL_TIMEOUT_MS) {
+    throw new Error(`OPENAI_TOTAL_TIMEOUT_MS must be a positive integer no greater than ${MAX_TOTAL_TIMEOUT_MS}`);
   }
   return parsed;
 }

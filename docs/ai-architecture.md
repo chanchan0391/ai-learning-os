@@ -127,7 +127,7 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=true
 
 ### AI 模式
 
-同时配置 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 后，API 使用 `OpenAIResponsesProvider`，健康检查返回 `aiEnabled: true`。仅配置其中一项会拒绝启动，防止误以为 AI 已启用。Provider 默认把每次结构化响应限制为 4096 个输出 token；`OPENAI_MAX_OUTPUT_TOKENS` 可显式调整，Responses 与 compatible Chat Completions 分别映射到各自的输出上限字段。厂商返回 token 用量时按其原始值记账；若 compatible Provider 成功响应却缺少用量，则用完整请求正文与结构化输出的 UTF-8 字节数作为保守 token 代理，避免账号和应用预算被静默绕过。未来实时 Provider 若既不提供用量也未实现等价保守估算，会在认证预算上下文安全失败。
+同时配置 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 后，API 使用 `OpenAIResponsesProvider`，健康检查返回 `aiEnabled: true`。仅配置其中一项会拒绝启动，防止误以为 AI 已启用。Provider 默认把每次结构化响应限制为 4096 个输出 token；`OPENAI_MAX_OUTPUT_TOKENS` 可显式调整但不得超过 32,768，Responses 与 compatible Chat Completions 分别映射到各自的输出上限字段。一次调用的默认总时限为 60 秒，`OPENAI_TOTAL_TIMEOUT_MS` 不得超过 120 秒。厂商返回 token 用量时按其原始值记账；若 compatible Provider 成功响应却缺少用量，则用完整请求正文与结构化输出的 UTF-8 字节数作为保守 token 代理，避免账号和应用预算被静默绕过。未来实时 Provider 若既不提供用量也未实现等价保守估算，会在认证预算上下文安全失败。
 
 ## Agent 边界
 

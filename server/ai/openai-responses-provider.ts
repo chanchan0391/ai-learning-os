@@ -16,8 +16,10 @@ interface OpenAIProviderConfig {
 }
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
+export const MAX_MAX_OUTPUT_TOKENS = 32_768;
 export const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
 export const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
+export const MAX_TOTAL_TIMEOUT_MS = 120_000;
 
 interface OpenAIResponseBody {
   id?: string;
@@ -115,10 +117,12 @@ export class OpenAIResponsesProvider implements ModelProvider {
     this.maxOutputTokens = config.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     this.maxResponseBytes = config.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) throw new Error("OpenAI timeout must be positive");
-    if (!Number.isFinite(this.totalTimeoutMs) || this.totalTimeoutMs <= 0) throw new Error("OpenAI total timeout must be positive");
+    if (!Number.isSafeInteger(this.totalTimeoutMs) || this.totalTimeoutMs <= 0 || this.totalTimeoutMs > MAX_TOTAL_TIMEOUT_MS) {
+      throw new Error(`OpenAI total timeout must be a positive integer no greater than ${MAX_TOTAL_TIMEOUT_MS}ms`);
+    }
     if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) throw new Error("OpenAI max retries must be a non-negative integer");
-    if (!Number.isSafeInteger(this.maxOutputTokens) || this.maxOutputTokens <= 0) {
-      throw new Error("OpenAI max output tokens must be a positive safe integer");
+    if (!Number.isSafeInteger(this.maxOutputTokens) || this.maxOutputTokens <= 0 || this.maxOutputTokens > MAX_MAX_OUTPUT_TOKENS) {
+      throw new Error(`OpenAI max output tokens must be a positive integer no greater than ${MAX_MAX_OUTPUT_TOKENS}`);
     }
     if (!Number.isSafeInteger(this.maxResponseBytes) || this.maxResponseBytes <= 0) {
       throw new Error("OpenAI response byte limit must be a positive safe integer");
