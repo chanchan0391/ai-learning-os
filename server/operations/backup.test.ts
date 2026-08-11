@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -53,12 +54,18 @@ describe("dev database backup", () => {
 
     expect(result.status, result.stderr).toBe(0);
     const files = readdirSync(fixture.backupDir);
-    expect(files).toHaveLength(1);
-    expect(files[0]).toMatch(/^ai-learning-os-\d{8}T\d{6}Z-[A-Za-z0-9]+\.dump$/);
-    const backup = join(fixture.backupDir, files[0]);
+    expect(files).toHaveLength(2);
+    const backupName = files.find((file) => file.endsWith(".dump"));
+    expect(backupName).toMatch(/^ai-learning-os-\d{8}T\d{6}Z-[A-Za-z0-9]+\.dump$/);
+    const backup = join(fixture.backupDir, backupName!);
+    const checksum = `${backup}.sha256`;
     expect(readFileSync(backup, "utf8")).toBe("valid custom archive");
+    expect(readFileSync(checksum, "utf8")).toBe(
+      `${createHash("sha256").update("valid custom archive").digest("hex")}  ${backupName}\n`,
+    );
     expect(statSync(fixture.backupDir).mode & 0o777).toBe(0o700);
     expect(statSync(backup).mode & 0o777).toBe(0o600);
+    expect(statSync(checksum).mode & 0o777).toBe(0o600);
   });
 
   it("removes the temporary artifact when archive verification fails", () => {
@@ -82,5 +89,24 @@ describe("dev database backup", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Database backup is empty");
     expect(readdirSync(fixture.backupDir)).toEqual([]);
+  });
+
+  it("removes expired archives and their checksum sidecars together", () => {
+    const fixture = makeFixture();
+    mkdirSync(fixture.backupDir);
+    const expiredBackup = join(fixture.backupDir, "ai-learning-os-20260701T000000Z-old.dump");
+    const expiredChecksum = `${expiredBackup}.sha256`;
+    writeFileSync(expiredBackup, "expired archive");
+    writeFileSync(expiredChecksum, "expired checksum");
+    const expiredAt = new Date(Date.now() - 9 * 24 * 60 * 60 * 1_000);
+    utimesSync(expiredBackup, expiredAt, expiredAt);
+    utimesSync(expiredChecksum, expiredAt, expiredAt);
+
+    const result = runBackup(fixture);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(expiredBackup)).toBe(false);
+    expect(existsSync(expiredChecksum)).toBe(false);
+    expect(readdirSync(fixture.backupDir)).toHaveLength(2);
   });
 });

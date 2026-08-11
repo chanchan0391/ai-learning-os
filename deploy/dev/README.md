@@ -99,6 +99,6 @@ cat ~/services/ai-learning-os/current/DEPLOYED_COMMIT
 
 远端 `~/services/ai-learning-os/dev.env` 保存 Dex 测试账号配置，权限应为 `0600`。应用数据库密码和本地运行配置只保存在本地 `.env.local`，不得提交到 Git。
 
-远端每日运行 `backup.sh`，以 PostgreSQL custom format 保存数据库备份；脚本会先拒绝空输出，再用 `pg_restore --list` 验证归档可读取，只有通过验证的临时文件才会以碰撞安全的名称原子发布。备份目录权限为 `0700`，文件权限为 `0600`，超过 7 天的副本会自动删除。该开发基线不代替生产环境的异地加密备份。
+远端每日运行 `backup.sh`，以 PostgreSQL custom format 保存数据库备份；脚本会先拒绝空输出，再用 `pg_restore --list` 验证归档可读取，只有通过验证的临时文件才会以碰撞安全的名称发布。每份归档同时生成只引用文件名的 SHA-256 sidecar；恢复前应在备份目录运行 Linux `sha256sum -c <backup>.sha256`（macOS 使用 `shasum -a 256 -c`），再执行隔离恢复。备份目录权限为 `0700`，归档与校验文件权限为 `0600`，超过 7 天的归档及其校验文件会成对删除。该开发基线不代替生产环境的异地加密备份。
 
 恢复时必须新建隔离的临时数据库，禁止覆盖运行中的应用数据库。验证清单和演练结果记录在 [`../../docs/dev-recovery-drill.md`](../../docs/dev-recovery-drill.md)。
