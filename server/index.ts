@@ -8,6 +8,7 @@ import {
   readTrustedProxyAddresses,
 } from "./runtime-config";
 import { InMemoryConcurrencyLimiter } from "./security/request-security";
+import { readReleaseRevision } from "./release-provenance";
 
 try {
   process.loadEnvFile(".env.local");
@@ -21,6 +22,7 @@ const provider = createModelProvider();
 const syncRuntime = createSyncRuntime(process.env);
 assertModelUsageSafety(provider.isAiEnabled, Boolean(syncRuntime.appOptions.modelUsageLedger), process.env);
 const agentConcurrencyLimit = readAgentConcurrencyLimit(process.env);
+syncRuntime.appOptions.releaseRevision = readReleaseRevision();
 syncRuntime.appOptions.trustedProxyAddresses = readTrustedProxyAddresses(process.env);
 if (agentConcurrencyLimit) {
   syncRuntime.appOptions.agentConcurrencyLimiter = new InMemoryConcurrencyLimiter(agentConcurrencyLimit);

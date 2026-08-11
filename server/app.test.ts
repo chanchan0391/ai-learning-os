@@ -28,11 +28,21 @@ describe("AI Learning OS API", () => {
   it("reports whether a live AI model is enabled", async () => {
     const baseUrl = await startApi();
     await expect(fetch(`${baseUrl}/api/health`).then((response) => response.json())).resolves.toMatchObject({
-      status: "ok", provider: "deterministic-development", aiEnabled: false, syncEnabled: false,
+      status: "ok", releaseRevision: null, provider: "deterministic-development", aiEnabled: false, syncEnabled: false,
       dependencies: { database: "disabled" },
       databasePool: null,
       capacity: { inFlight: 0, requests: 0, rejected: 0, failed: 0, rateLimited: 0, byScope: {} },
       agentConcurrency: { limit: 20, inFlight: 0, rejected: 0 },
+    });
+  });
+
+  it("reports the exact validated release revision", async () => {
+    const releaseRevision = "b".repeat(40);
+    const baseUrl = await startApi(new DeterministicModelProvider(), { releaseRevision });
+
+    await expect(fetch(`${baseUrl}/api/health`).then((response) => response.json())).resolves.toMatchObject({
+      status: "ok",
+      releaseRevision,
     });
   });
 

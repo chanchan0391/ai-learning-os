@@ -99,6 +99,7 @@ function onResponseSettled(
 }
 
 export interface AppOptions {
+  releaseRevision?: string | null;
   syncStore?: SyncStore;
   resolvePrincipal?: AuthenticatedPrincipalResolver;
   allowedSyncOrigins?: readonly string[];
@@ -342,6 +343,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         const ready = database !== "unavailable";
         return sendJson(response, ready ? 200 : 503, {
           status: ready ? "ok" : "degraded",
+          releaseRevision: options.releaseRevision ?? null,
           provider: provider.id,
           aiEnabled: provider.isAiEnabled,
           syncEnabled: Boolean(options.syncStore && options.resolvePrincipal),

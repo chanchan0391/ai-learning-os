@@ -64,7 +64,7 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=false
 2. 执行 `npm ci` 和 `npm run check`。
 3. 在迁移前创建 PostgreSQL 备份，再在数据库 advisory lock 下执行带 SHA-256 完整性验证的幂等迁移。
 4. 原子切换 `current` 符号链接并重启 Web 与 API。
-5. 验证两个用户服务真正使用选定的 Node 二进制、Web 首页和 API 健康端点，同时确认实时模型、同步和 PostgreSQL 就绪检查均通过；失败时恢复上一 release。
+5. 验证两个用户服务真正使用选定的 Node 二进制、Web 首页和 API 健康端点，同时要求 API 报告的 release revision 与待部署提交完全一致，并确认实时模型、同步和 PostgreSQL 就绪检查均通过；失败时恢复上一 release。
 6. 健康后用已验证 release 中的版本原子更新远程 `deploy-main.sh`，避免后续部署继续使用旧运行时或逻辑。
 7. 只保留最近三个 release，避免服务器磁盘持续增长。
 

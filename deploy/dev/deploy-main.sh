@@ -140,9 +140,10 @@ while [ "$attempt" -le 30 ]; do
       process.stdin.on("data", (chunk) => body += chunk);
       process.stdin.on("end", () => {
         const health = JSON.parse(body);
-        if (health.status !== "ok" || !health.aiEnabled || !health.syncEnabled) process.exit(1);
+        const expectedRevision = process.argv[1];
+        if (health.status !== "ok" || health.releaseRevision !== expectedRevision || !health.aiEnabled || !health.syncEnabled) process.exit(1);
       });
-    '
+    ' "$revision"
   then
     healthy=true
     break
