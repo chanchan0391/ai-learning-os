@@ -29,7 +29,10 @@ export class PostgresFixedWindowRateLimiter implements RequestRateLimiter {
     this.consumeCount += 1;
     if (this.consumeCount % 1_000 === 0) {
       void this.pool.query("DELETE FROM request_rate_limits WHERE expires_at <= $1", [new Date(now)])
-        .catch((error) => console.error("Rate limit cleanup failed", error));
+        .catch((error) => console.error(
+          "Rate limit cleanup failed",
+          error instanceof Error ? error.name : "UnknownError",
+        ));
     }
 
     return {

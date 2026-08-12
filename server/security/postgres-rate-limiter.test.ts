@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { DataType, newDb } from "pg-mem";
+import type { Pool } from "pg";
 import { afterEach, describe, expect, it } from "vitest";
 import { PostgresFixedWindowRateLimiter } from "./postgres-rate-limiter";
 
@@ -42,5 +43,34 @@ describe("PostgreSQL fixed-window rate limiter", () => {
 
     now += 60_000;
     await expect(secondInstance.consume("sync-write", "203.0.113.7", policy)).resolves.toMatchObject({ allowed: true, remaining: 1 });
+  });
+
+  it("redacts database details when opportunistic cleanup fails", async () => {
+    const secret = "postgres://private-user:private-password@private-host/database";
+    let queryCount = 0;
+    const pool = {
+      query: async (query: string) => {
+        queryCount += 1;
+        if (query.startsWith("DELETE")) throw new Error(secret);
+        return { rows: [{ request_count: 1 }] };
+      },
+    } as unknown as Pool;
+    const limiter = new PostgresFixedWindowRateLimiter(pool, () => Date.parse("2026-08-01T12:00:01.000Z"));
+    const logged: unknown[][] = [];
+    const originalConsoleError = console.error;
+    console.error = (...values: unknown[]) => { logged.push(values); };
+
+    try {
+      for (let index = 0; index < 1_000; index += 1) {
+        await limiter.consume("sync-write", `client-${index}`, { limit: 2, windowMs: 60_000 });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(queryCount).toBe(1_001);
+    expect(logged).toEqual([["Rate limit cleanup failed", "Error"]]);
+    expect(JSON.stringify(logged)).not.toContain(secret);
   });
 });
