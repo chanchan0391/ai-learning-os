@@ -6,9 +6,11 @@ import {
   DATABASE_POOL_DEFAULTS,
   RUNTIME_RESOURCE_LIMITS,
   readAgentConcurrencyLimit,
+  readDatabaseConnectionConfig,
   readDatabasePoolConfig,
   readSyncRuntimeConfig,
   readTrustedProxyAddresses,
+  toDatabasePoolConfig,
 } from "./runtime-config";
 
 describe("sync runtime configuration", () => {
@@ -52,6 +54,37 @@ describe("sync runtime configuration", () => {
       idleInTransactionSessionTimeoutMillis: 7_000,
       maxLifetimeSeconds: 120,
     });
+  });
+
+  it("builds a migration-safe PostgreSQL pool config with verified remote TLS", () => {
+    const database = readDatabaseConnectionConfig({
+      DATABASE_URL: "postgres://database.example/learning",
+      DATABASE_TLS_MODE: "verify-full",
+    });
+    const config = toDatabasePoolConfig(
+      database.connectionString,
+      { ...readDatabasePoolConfig({}), max: 1 },
+      database.databaseTls,
+    );
+
+    expect(config).toMatchObject({
+      connectionString: "postgres://database.example/learning",
+      ssl: { rejectUnauthorized: true },
+      max: 1,
+      connectionTimeoutMillis: DATABASE_POOL_DEFAULTS.connectionTimeoutMillis,
+      statement_timeout: DATABASE_POOL_DEFAULTS.statementTimeoutMillis,
+      query_timeout: DATABASE_POOL_DEFAULTS.queryTimeoutMillis,
+    });
+  });
+
+  it("rejects unsafe standalone migration database connections", () => {
+    expect(() => readDatabaseConnectionConfig({})).toThrow(/DATABASE_URL is required/);
+    expect(() => readDatabaseConnectionConfig({
+      DATABASE_URL: "postgres://database.example/learning",
+    })).toThrow(/requires DATABASE_TLS_MODE=verify-full/);
+    expect(() => readDatabaseConnectionConfig({
+      DATABASE_URL: "postgres://localhost/learning?sslmode=require",
+    })).toThrow(/DATABASE_TLS_MODE/);
   });
 
   it("rejects unsafe PostgreSQL pool bounds", () => {

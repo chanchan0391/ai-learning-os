@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { readDatabaseConnectionConfig, readDatabasePoolConfig, toDatabasePoolConfig } from "../runtime-config";
 import { runMigrations } from "./migration-runner";
 
 try {
@@ -10,14 +11,18 @@ try {
   if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
 }
 
-const connectionString = process.env.DATABASE_URL?.trim();
-if (!connectionString) throw new Error("DATABASE_URL is required to run database migrations");
+const database = readDatabaseConnectionConfig(process.env);
+const poolConfig = toDatabasePoolConfig(
+  database.connectionString,
+  { ...readDatabasePoolConfig(process.env), max: 1 },
+  database.databaseTls,
+);
 
 const migrationsDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "migrations");
 const migrationFiles = (await readdir(migrationsDirectory))
   .filter((name) => /^\d+[-_].+\.sql$/.test(name))
   .sort();
-const pool = new pg.Pool({ connectionString, max: 1 });
+const pool = new pg.Pool(poolConfig);
 
 try {
   const migrations = await Promise.all(migrationFiles.map(async (name) => ({
