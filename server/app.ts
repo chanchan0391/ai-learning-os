@@ -8,7 +8,7 @@ import { createCoachAgent } from "./agents/coach-agent";
 import { createPlannerAgent } from "./agents/planner-agent";
 import { createTeacherAgent } from "./agents/teacher-agent";
 import { createReviewAgent } from "./agents/review-agent";
-import { ModelProviderError, type ModelProvider } from "./ai/model-provider";
+import { ModelProviderError, safeProviderRequestId, type ModelProvider } from "./ai/model-provider";
 import { MeteredModelProvider, type ModelUsageLedger } from "./ai/model-usage";
 import type { AuthenticatedPrincipalResolver } from "./auth/authenticated-principal";
 import type { OidcAuthenticator } from "./auth/oidc-client";
@@ -82,6 +82,22 @@ export function observabilityPath(pathname: string): string {
 function sendJson(response: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers });
   response.end(JSON.stringify(body));
+}
+
+function publicModelProviderError(error: ModelProviderError): {
+  status: number;
+  body: { error: string; requestId?: string };
+} {
+  const status = [429, 499, 502, 503, 504].includes(error.status) ? error.status : 502;
+  const message = status === 429
+    ? "Model provider rate limit exceeded"
+    : status === 499
+      ? "Model request was cancelled"
+      : status === 504
+        ? "Model provider request timed out"
+        : "Model provider request failed";
+  const requestId = safeProviderRequestId(error.requestId);
+  return { status, body: { error: message, ...(requestId ? { requestId } : {}) } };
 }
 
 function onResponseSettled(
@@ -668,7 +684,10 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (error instanceof SyntaxError || error instanceof TypeError) return sendJson(response, 400, { error: error.message });
       if (error instanceof RangeError) return sendJson(response, 413, { error: error.message });
       if (error instanceof AgentOutputError) return sendJson(response, 502, { error: error.message });
-      if (error instanceof ModelProviderError) return sendJson(response, error.status, { error: error.message, requestId: error.requestId });
+      if (error instanceof ModelProviderError) {
+        const publicError = publicModelProviderError(error);
+        return sendJson(response, publicError.status, publicError.body);
+      }
       reportInternalError("api", requestId, loggedPath, releaseRevision, error);
       return sendJson(response, 500, { error: "Internal server error" });
     }

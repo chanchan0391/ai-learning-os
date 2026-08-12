@@ -177,6 +177,33 @@ describe("account model usage", () => {
     expect(entries).toEqual([{ userId: "user-1", action: "ai.plan.create", provider: "live", model: "model-a", requestId: "req-1", inputTokens: 5, outputTokens: 3 }]);
   });
 
+  it("does not persist an untrusted provider request ID in the usage ledger", async () => {
+    const entries: unknown[] = [];
+    const provider: ModelProvider = {
+      id: "live", isAiEnabled: true,
+      generateStructured: async <T>() => ({
+        value: { ok: true } as T,
+        model: "model-a",
+        requestId: "req-1 private learner context",
+        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+      }),
+    };
+    const metered = new MeteredModelProvider(provider, {
+      checkBudget: async () => ({ allowed: true, exceeded: null, resetAt: 0, remainingTokens: 1, remainingCostMicros: 1 }),
+      record: async (entry) => { entries.push(entry); },
+    });
+
+    await metered.run(
+      { userId: "user-1", action: "ai.plan.create" },
+      () => metered.generateStructured({ instructions: "x", input: "x", schema: { name: "x", value: {} } }),
+    );
+
+    expect(entries).toEqual([{
+      userId: "user-1", action: "ai.plan.create", provider: "live", model: "model-a",
+      requestId: undefined, inputTokens: 5, outputTokens: 3,
+    }]);
+  });
+
   it("fails closed when an authenticated live provider omits billable usage", async () => {
     const provider: ModelProvider = {
       id: "live", isAiEnabled: true,

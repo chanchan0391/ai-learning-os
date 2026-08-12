@@ -171,6 +171,30 @@ describe("AI Learning OS API", () => {
     }
   });
 
+  it("does not expose untrusted model-provider error details or request identifiers", async () => {
+    const provider: ModelProvider = {
+      id: "untrusted-error-test",
+      isAiEnabled: true,
+      generateStructured: async () => {
+        throw new ModelProviderError(
+          "upstream reflected secret-token and private learner context",
+          401,
+          "request-id\nset-cookie: secret-token",
+        );
+      },
+    };
+    const baseUrl = await startApi(provider);
+
+    const response = await fetch(`${baseUrl}/api/plans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(goal),
+    });
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({ error: "Model provider request failed" });
+  });
+
   it("templates dynamic paths and suppresses unknown path content in telemetry", async () => {
     const requestEvents: RequestLogEvent[] = [];
     const auditEvents: SecurityAuditEvent[] = [];

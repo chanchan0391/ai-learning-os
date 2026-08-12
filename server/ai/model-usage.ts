@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Pool } from "pg";
-import { ModelProviderError } from "./model-provider";
+import { ModelProviderError, safeProviderRequestId } from "./model-provider";
 import type { ModelProvider, StructuredGenerationRequest, StructuredGenerationResult } from "./model-provider";
 
 export interface ModelBudgetDecision {
@@ -159,7 +159,7 @@ export class MeteredModelProvider implements ModelProvider {
         ...context,
         provider: this.provider.id,
         model: result.model,
-        requestId: result.requestId,
+        requestId: safeProviderRequestId(result.requestId),
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
       });

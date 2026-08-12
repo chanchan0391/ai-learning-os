@@ -77,7 +77,7 @@ OpenAI 实现采用 Responses API，并使用 Structured Outputs 约束返回格
 
 OpenAI Provider 对每次尝试设置 30 秒超时，并对网络错误、408、409、429 和 5xx 响应最多重试两次。重试使用有上限的指数退避；服务返回 `Retry-After` 时优先遵循该值。每次尝试都发送唯一的 `X-Client-Request-Id`，便于在没有收到厂商响应 ID 的超时场景中排查。400 等永久请求错误不会重试。
 
-同一次 Agent 调用只向领域层返回一次最终结果，重试过程不会写入学习状态；OpenAI 请求继续使用 `store: false`。浏览器断开连接时，本地 API 会沿 `AbortSignal` 取消正在执行的 Agent 调用，避免无调用方的模型工作继续消耗资源。超时最终映射为 504，主动取消映射为 499，其他厂商错误保留安全状态码和可选请求 ID。此策略遵循官方的[错误处理建议](https://developers.openai.com/api/docs/guides/error-codes)与[客户端请求 ID 指南](https://developers.openai.com/api/reference/overview#supplying-your-own-request-id-with-x-client-request-id)。
+同一次 Agent 调用只向领域层返回一次最终结果，重试过程不会写入学习状态；OpenAI 请求继续使用 `store: false`。浏览器断开连接时，本地 API 会沿 `AbortSignal` 取消正在执行的 Agent 调用，避免无调用方的模型工作继续消耗资源。超时最终映射为 504，主动取消映射为 499；其他厂商错误只返回稳定类别，不转发上游正文中的错误消息。可选厂商请求 ID 必须是最多 200 个字符的受限 ASCII 关联标识，否则不会进入浏览器响应或模型用量账本。此策略遵循官方的[错误处理建议](https://developers.openai.com/api/docs/guides/error-codes)与[客户端请求 ID 指南](https://developers.openai.com/api/reference/overview#supplying-your-own-request-id-with-x-client-request-id)。
 
 Agent API 还在每个进程内共享一个并发准入边界，默认最多同时执行 20 个 Planner、Teacher、Evaluator、Review 或 Coach 请求。并发满载时，新请求会在认证预算查询、正文读取和模型调用前返回带 `Retry-After` 的 `503`；请求完成、失败或客户端断开都会幂等释放名额。`/api/health` 暴露上限、当前进行中数量和累计拒绝数，不包含用户或学习内容。`AI_MAX_CONCURRENT_AGENT_REQUESTS` 可按实例容量调整；多实例总上限仍需由生产入口和厂商配额共同约束。
 
@@ -115,7 +115,7 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=true
 
 - `.env.local` 已加入 `.gitignore`。
 - API 密钥不进入前端构建、浏览器存储、日志或 Git。
-- 模型错误只向客户端返回安全信息和可选请求 ID。
+- 模型错误只向客户端返回稳定安全类别和经过字符、长度校验的可选请求 ID；厂商错误正文不会透传。
 - 五类 Agent 请求体限制为 64 KiB，避免异常学习内容放大输入 token 成本；同步正文保留 1 MB 上限，响应禁止缓存。
 - OpenAI 请求使用 `store: false`；正式上线前仍需完成隐私、保留策略和用户告知设计。
 

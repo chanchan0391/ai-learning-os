@@ -1,4 +1,4 @@
-import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest, type StructuredGenerationResult } from "./model-provider";
+import { ModelProviderError, safeProviderRequestId, type ModelProvider, type StructuredGenerationRequest, type StructuredGenerationResult } from "./model-provider";
 import { readBoundedJson, UpstreamResponseTooLargeError } from "../http/bounded-json-response";
 
 interface OpenAIProviderConfig {
@@ -191,7 +191,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
             signal,
           });
           const responseBody = await readBoundedJson<OpenAIResponseBody>(response, this.maxResponseBytes);
-          const requestId = response.headers.get("x-request-id") ?? responseBody.id;
+          const requestId = safeProviderRequestId(response.headers.get("x-request-id") ?? responseBody.id);
           if (!response.ok) {
             if (attempt < this.maxRetries && isRetryableStatus(response.status)) {
               await wait(retryDelay(response, attempt, this.retryDelayMs), requestSignal);
@@ -219,7 +219,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
         } catch (error) {
           if (error instanceof ModelProviderError) throw error;
           if (error instanceof UpstreamResponseTooLargeError) {
-            throw new ModelProviderError("Model provider response was too large", 502, response?.headers.get("x-request-id") ?? undefined);
+            throw new ModelProviderError("Model provider response was too large", 502, safeProviderRequestId(response?.headers.get("x-request-id")));
           }
           if (request.signal?.aborted) throw new ModelProviderError("Model request was cancelled", 499);
           if (totalTimeoutController.signal.aborted) {

@@ -108,6 +108,21 @@ describe("OpenAI Responses provider", () => {
     await expect(provider.generateStructured(request)).rejects.toEqual(new ModelProviderError("Rate limited", 429, "req_1"));
   });
 
+  it("drops malformed upstream request IDs before they cross the provider boundary", async () => {
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "secret", model: "test-model",
+      fetchImplementation: (async () => new Response(
+        JSON.stringify({ output_text: "{\"ok\":true}" }),
+        { headers: { "x-request-id": "req_1 private-context" } },
+      )) as typeof fetch,
+    });
+
+    await expect(provider.generateStructured(request)).resolves.toEqual(expect.objectContaining({
+      value: { ok: true },
+      requestId: undefined,
+    }));
+  });
+
   it("retries transient failures with one logical result", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Busy" } }), { status: 503 }))
