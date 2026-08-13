@@ -211,7 +211,8 @@ function parseBaseRevision(request: IncomingMessage): number | null {
   if (ifNoneMatch) throw new TypeError("If-None-Match must be * when creating an entity");
   if (typeof ifMatch === "string") {
     const match = /^\"([1-9]\d*)\"$/.exec(ifMatch);
-    if (match) return Number(match[1]);
+    const revision = match ? Number(match[1]) : Number.NaN;
+    if (Number.isSafeInteger(revision)) return revision;
     throw new TypeError('If-Match must be a quoted positive revision, for example "1"');
   }
   const error = new Error("A write precondition is required");

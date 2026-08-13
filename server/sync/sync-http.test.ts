@@ -1,5 +1,5 @@
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initializeLearningState } from "../../src/learning-state";
 import { generateLearningPlan } from "../../src/planner";
 import { createApp } from "../app";
@@ -64,6 +64,27 @@ describe("authenticated sync HTTP API", () => {
 
     expect(missingPrecondition.status).toBe(428);
     expect(mismatchedId.status).toBe(400);
+  });
+
+  it("rejects unsafe conditional revisions before calling the sync store", async () => {
+    const store = new InMemorySyncStore();
+    const putPlan = vi.spyOn(store, "putPlan");
+    const baseUrl = await startApi(store);
+    const plan = generateLearningPlan(goal, new Date("2026-08-01T10:00:00.000Z"));
+    const response = await fetch(`${baseUrl}/api/sync/plans/${plan.id}`, {
+      method: "PUT",
+      headers: {
+        ...writeOrigin,
+        Cookie: "session=alice",
+        "Idempotency-Key": "unsafe-revision",
+        "If-Match": `"${Number.MAX_SAFE_INTEGER + 1}"`,
+      },
+      body: JSON.stringify(plan),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'If-Match must be a quoted positive revision, for example "1"' });
+    expect(putPlan).not.toHaveBeenCalled();
   });
 
   it("creates, retries, pulls, and conditionally updates a plan", async () => {

@@ -135,7 +135,7 @@ export function requireSyncWriteRequest(request: SyncWriteRequest<unknown>): voi
   if (!isBoundedIdentifier(request.operationId) || !isBoundedIdentifier(request.entityId)) {
     throw new TypeError(`Operation and entity IDs must contain 1-${MAX_SYNC_IDENTIFIER_LENGTH} characters`);
   }
-  if (request.baseRevision !== null && (!Number.isInteger(request.baseRevision) || request.baseRevision < 1)) {
+  if (request.baseRevision !== null && (!Number.isSafeInteger(request.baseRevision) || request.baseRevision < 1)) {
     throw new TypeError("Base revision must be null or a positive integer");
   }
 }

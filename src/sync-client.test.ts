@@ -193,6 +193,51 @@ describe("browser sync client", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects malformed cloud entity envelopes before using their identifiers or revisions", async () => {
+    const invalidEntities = [
+      { entityType: "unknown", entityId: "plan-1", revision: 1, updatedAt: "2026-08-01T10:00:00.000Z", value: {} },
+      { entityType: "learning-plan", entityId: "plan-1", revision: Number.MAX_SAFE_INTEGER + 1, updatedAt: "2026-08-01T10:00:00.000Z", value: {} },
+      { entityType: "learning-plan", entityId: "plan-1", revision: 1, updatedAt: "not-a-date", value: {} },
+    ];
+
+    for (const entity of invalidEntities) {
+      const request = vi.fn(async () => Response.json({ changes: [entity], cursor: "page-1", hasMore: false })) as typeof fetch;
+      await expect(new BrowserSyncClient(localStorage, request).sync(null))
+        .rejects.toThrow("云端同步响应格式无效，请稍后重试");
+    }
+  });
+
+  it("rejects malformed pagination metadata before following another page", async () => {
+    const state = learningState();
+    const request = vi.fn(async () => Response.json({
+      changes: [{ entityType: "learning-plan", entityId: state.plan.id, revision: 1, updatedAt: state.plan.createdAt, value: state.plan }],
+      cursor: "x".repeat(257),
+      hasMore: true,
+    })) as typeof fetch;
+
+    await expect(new BrowserSyncClient(localStorage, request).sync(null))
+      .rejects.toThrow("云端同步分页游标无效，请稍后重试");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a malformed write response before saving sync metadata", async () => {
+    const state = learningState();
+    const request = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (!init?.method) return Response.json({ changes: [], cursor: "page-1", hasMore: false });
+      return Response.json({
+        entityType: "learning-plan",
+        entityId: "different-plan",
+        revision: 1,
+        updatedAt: state.plan.createdAt,
+        value: state.plan,
+      });
+    }) as typeof fetch;
+
+    await expect(new BrowserSyncClient(localStorage, request).sync(state))
+      .rejects.toThrow("云端写入响应格式无效，请稍后重试");
+    expect(localStorage.getItem(SYNC_METADATA_KEY)).toBeNull();
+  });
+
   it("cancels a streamed cloud page that exceeds the response byte limit", async () => {
     const oversized = `{"changes":[],"padding":"${"x".repeat(9 * 1024 * 1024)}"}`;
     const request = vi.fn(async () => new Response(oversized, {

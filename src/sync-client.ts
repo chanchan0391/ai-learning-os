@@ -10,6 +10,8 @@ const MAX_SYNC_RESPONSE_BYTES = 9 * 1024 * 1024;
 const MAX_AUTH_RESPONSE_BYTES = 64 * 1024;
 const MAX_SYNC_ENTITIES = 25_000;
 const MAX_SYNC_PAGES = MAX_SYNC_ENTITIES / MAX_SYNC_PAGE_ENTITIES;
+const MAX_SYNC_IDENTIFIER_CHARACTERS = 256;
+const MAX_SYNC_TIMESTAMP_CHARACTERS = 64;
 
 interface SyncEntity<T = unknown> {
   entityType: "learning-plan" | "daily-record";
@@ -109,6 +111,28 @@ function fingerprint(value: unknown): string {
 
 function metadataKey(entity: Pick<SyncEntity, "entityType" | "entityId">): string {
   return `${entity.entityType}:${entity.entityId}`;
+}
+
+function isSyncEntity(value: unknown): value is SyncEntity {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entity = value as Partial<SyncEntity>;
+  return (entity.entityType === "learning-plan" || entity.entityType === "daily-record")
+    && typeof entity.entityId === "string"
+    && entity.entityId.trim().length > 0
+    && entity.entityId.length <= MAX_SYNC_IDENTIFIER_CHARACTERS
+    && Number.isSafeInteger(entity.revision)
+    && entity.revision! >= 1
+    && typeof entity.updatedAt === "string"
+    && entity.updatedAt.length > 0
+    && entity.updatedAt.length <= MAX_SYNC_TIMESTAMP_CHARACTERS
+    && Number.isFinite(Date.parse(entity.updatedAt))
+    && Object.prototype.hasOwnProperty.call(entity, "value");
+}
+
+function isBoundedSyncCursor(value: unknown): value is string {
+  return typeof value === "string"
+    && value.trim().length > 0
+    && value.length <= MAX_SYNC_IDENTIFIER_CHARACTERS;
 }
 
 function recordId(planId: string, record: DailyLearningRecord): string {
@@ -445,12 +469,15 @@ export class BrowserSyncClient {
       if (body.changes.length > MAX_SYNC_PAGE_ENTITIES) {
         throw new Error("云端同步分页超过安全上限，请稍后重试");
       }
+      if ((body.hasMore !== undefined && typeof body.hasMore !== "boolean") || !body.changes.every(isSyncEntity)) {
+        throw new Error("云端同步响应格式无效，请稍后重试");
+      }
       for (const entity of body.changes) entities.set(metadataKey(entity), entity);
       if (entities.size >= MAX_SYNC_ENTITIES && body.hasMore === true) {
         throw new Error("云端学习记录过多，无法在单次同步中安全读取");
       }
       if (body.hasMore !== true) return [...entities.values()];
-      if (!body.cursor || seenCursors.has(body.cursor)) throw new Error("云端同步分页游标无效，请稍后重试");
+      if (!isBoundedSyncCursor(body.cursor) || seenCursors.has(body.cursor)) throw new Error("云端同步分页游标无效，请稍后重试");
       seenCursors.add(body.cursor);
       cursor = body.cursor;
     }
@@ -498,7 +525,12 @@ export class BrowserSyncClient {
     );
     if (response.status === 409) throw new SyncConflictError();
     if (!response.ok) throw new Error(responseError(body, "云端写入失败"));
-    return body as SyncEntity;
+    if (!isSyncEntity(body)
+      || body.entityType !== local.entityType
+      || body.entityId !== local.entityId) {
+      throw new Error("云端写入响应格式无效，请稍后重试");
+    }
+    return body;
   }
 
   private restoreFromRemote(entities: SyncEntity[], preferredPlanId?: string): SyncResult {
