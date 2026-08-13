@@ -38,7 +38,7 @@ ModelProvider
 
 1. 用户在浏览器填写学习目标。
 2. 浏览器把目标发送到本地 `POST /api/plans`。
-3. Planner Agent 验证输入并构造系统指令、用户上下文和 JSON Schema。
+3. Planner Agent 验证输入的字段、类型、长度和精确对象形状，拒绝未声明内容后再构造系统指令、用户上下文和 JSON Schema。
 4. `ModelProvider` 选择已配置的模型；没有凭据时使用确定性开发实现。
 5. Planner Agent 验证模型输出，包括阶段范围、任务初始状态和每日分钟总数。
 6. 学习任务通过 Teacher Agent 返回短教学会话，实践任务通过 Evaluator Agent 返回固定量表结果；检测到学习中断时，用户可明确请求 Coach Agent 生成低压力恢复计划。
@@ -116,7 +116,7 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=true
 - `.env.local` 已加入 `.gitignore`。
 - API 密钥不进入前端构建、浏览器存储、日志或 Git。
 - 模型错误只向客户端返回稳定安全类别和经过字符、长度校验的可选请求 ID；厂商错误正文不会透传。
-- 五类 Agent 请求体限制为 64 KiB，避免异常学习内容放大输入 token 成本；同步正文保留 1 MB 上限，响应禁止缓存。
+- 五类 Agent 请求体限制为 64 KiB，并对请求、目标、任务和各类嵌套上下文执行精确字段白名单，避免异常学习内容或未声明字段放大输入 token 成本、绕过 Prompt 边界；同步正文保留 1 MB 上限，响应禁止缓存。
 - OpenAI 请求使用 `store: false`；正式上线前仍需完成隐私、保留策略和用户告知设计。
 
 ## 开发模式与 AI 模式

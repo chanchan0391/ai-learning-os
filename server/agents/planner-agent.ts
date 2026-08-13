@@ -2,7 +2,7 @@ import { validateGoal } from "../../src/planner";
 import type { DailyTask, LearningGoal, LearningPlan, LearningStage } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
-import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS, isBoundedText, isValidAgentTask } from "./request-validation";
+import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS, hasOnlyKeys, isBoundedText, isValidAgentTask } from "./request-validation";
 
 export { AgentOutputError } from "./agent-errors";
 
@@ -89,6 +89,9 @@ function assertGeneratedPlan(value: GeneratedPlan, goal: LearningGoal): void {
 export function createPlannerAgent(provider: ModelProvider) {
   return {
     async createPlan(goal: LearningGoal, now = new Date(), signal?: AbortSignal): Promise<LearningPlan> {
+      if (!hasOnlyKeys(goal, ["subject", "currentLevel", "targetOutcome", "dailyMinutes", "durationWeeks"])) {
+        throw new TypeError("学习目标格式无效");
+      }
       const errors = validateGoal(goal);
       if (errors.length > 0) throw new TypeError(errors.join("；"));
 

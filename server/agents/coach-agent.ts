@@ -2,7 +2,7 @@ import { validateGoal } from "../../src/planner";
 import type { RecoveryPlan, RecoveryPlanRequest } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
-import { AGENT_OUTPUT_LIMITS, isBoundedText, isValidAgentTask } from "./request-validation";
+import { AGENT_OUTPUT_LIMITS, hasOnlyKeys, isBoundedText, isValidAgentTask } from "./request-validation";
 
 export const RECOVERY_PLAN_SCHEMA: JsonSchema = {
   type: "object",
@@ -33,14 +33,18 @@ export const RECOVERY_PLAN_SCHEMA: JsonSchema = {
 };
 
 function validateRequest(request: RecoveryPlanRequest): void {
-  if (!request || typeof request !== "object") throw new TypeError("恢复计划请求格式无效");
+  if (!hasOnlyKeys(request, ["goal", "currentTask", "interruption"])) throw new TypeError("恢复计划请求格式无效");
+  if (!hasOnlyKeys(request.goal, ["subject", "currentLevel", "targetOutcome", "dailyMinutes", "durationWeeks"])) {
+    throw new TypeError("学习目标格式无效");
+  }
   const errors = validateGoal(request.goal);
   if (errors.length > 0) throw new TypeError(errors.join("；"));
   if (!isValidAgentTask(request.currentTask)) {
     throw new TypeError("当前学习任务格式无效或超出长度限制");
   }
   const interruption = request.interruption;
-  if (!interruption || !["inactivity", "repeated-difficulty", "both"].includes(interruption.reason)
+  if (!hasOnlyKeys(interruption, ["reason", "inactiveDays", "recentDifficultDays", "lastActiveDate"])
+    || !["inactivity", "repeated-difficulty", "both"].includes(interruption.reason)
     || !Number.isInteger(interruption.inactiveDays) || interruption.inactiveDays < 0
     || !Number.isInteger(interruption.recentDifficultDays) || interruption.recentDifficultDays < 0 || interruption.recentDifficultDays > 2
     || !/^\d{4}-\d{2}-\d{2}$/.test(interruption.lastActiveDate)) {

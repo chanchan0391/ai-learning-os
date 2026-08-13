@@ -3,12 +3,18 @@ export { AGENT_INPUT_LIMITS } from "../../src/agent-limits";
 export { AGENT_OUTPUT_LIMITS } from "../../src/agent-limits";
 import { AGENT_INPUT_LIMITS } from "../../src/agent-limits";
 
+export function hasOnlyKeys(value: unknown, allowedKeys: readonly string[]): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const allowed = new Set(allowedKeys);
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
 export function isBoundedText(value: unknown, maximum: number): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= maximum;
 }
 
 export function isValidAgentTask(value: unknown): value is DailyTask {
-  if (!value || typeof value !== "object") return false;
+  if (!hasOnlyKeys(value, ["id", "type", "title", "description", "minutes", "completed"])) return false;
   const task = value as Partial<DailyTask>;
   return isBoundedText(task.id, AGENT_INPUT_LIMITS.taskIdCharacters)
     && ["diagnose", "learn", "practice", "reflect"].includes(task.type ?? "")

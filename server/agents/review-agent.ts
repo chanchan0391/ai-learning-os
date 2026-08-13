@@ -2,7 +2,7 @@ import { validateGoal } from "../../src/planner";
 import type { ReviewAssessment, ReviewAssessmentRequest, ReviewRecall } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
-import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS, isBoundedText, isBoundedTextList } from "./request-validation";
+import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS, hasOnlyKeys, isBoundedText, isBoundedTextList } from "./request-validation";
 
 const RECALLS: ReviewRecall[] = ["forgot", "effortful", "easy"];
 
@@ -26,11 +26,15 @@ function expectedRecall(score: number): ReviewRecall {
 }
 
 function validateRequest(request: ReviewAssessmentRequest): void {
-  if (!request || typeof request !== "object") throw new TypeError("复习判分请求格式无效");
+  if (!hasOnlyKeys(request, ["goal", "items", "answer"])) throw new TypeError("复习判分请求格式无效");
+  if (!hasOnlyKeys(request.goal, ["subject", "currentLevel", "targetOutcome", "dailyMinutes", "durationWeeks"])) {
+    throw new TypeError("学习目标格式无效");
+  }
   const errors = validateGoal(request.goal);
   if (errors.length > 0) throw new TypeError(errors.join("；"));
   if (!Array.isArray(request.items) || request.items.length === 0 || request.items.length > AGENT_INPUT_LIMITS.reviewItems
-    || request.items.some((item) => !Number.isInteger(item?.sourceDay) || item.sourceDay < 1
+    || request.items.some((item) => !hasOnlyKeys(item, ["sourceDay", "nextAction", "misconceptions"])
+      || !Number.isInteger(item.sourceDay) || item.sourceDay < 1
       || !isBoundedText(item.nextAction, AGENT_INPUT_LIMITS.reviewTextCharacters)
       || !isBoundedTextList(item.misconceptions, AGENT_INPUT_LIMITS.reviewMisconceptionsPerItem, AGENT_INPUT_LIMITS.reviewTextCharacters))) {
     throw new TypeError("复习薄弱点不能为空或超出长度限制");

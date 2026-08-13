@@ -2,7 +2,7 @@ import { validateGoal } from "../../src/planner";
 import type { EvaluationDimension, EvaluationRequest, EvaluationResult } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
-import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS, isBoundedText, isBoundedTextList, isValidAgentTask } from "./request-validation";
+import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS, hasOnlyKeys, isBoundedText, isBoundedTextList, isValidAgentTask } from "./request-validation";
 
 const DIMENSIONS: EvaluationDimension[] = ["understanding", "application", "evidence", "reflection"];
 
@@ -41,7 +41,10 @@ function expectedMastery(score: number): EvaluationResult["masteryLevel"] {
 }
 
 function validateRequest(request: EvaluationRequest): void {
-  if (!request || typeof request !== "object") throw new TypeError("评估请求格式无效");
+  if (!hasOnlyKeys(request, ["goal", "task", "submission"])) throw new TypeError("评估请求格式无效");
+  if (!hasOnlyKeys(request.goal, ["subject", "currentLevel", "targetOutcome", "dailyMinutes", "durationWeeks"])) {
+    throw new TypeError("学习目标格式无效");
+  }
   const errors = validateGoal(request.goal);
   if (errors.length > 0) throw new TypeError(errors.join("；"));
   if (!isValidAgentTask(request.task)) throw new TypeError("评估任务格式无效或超出长度限制");
