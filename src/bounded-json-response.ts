@@ -5,6 +5,13 @@ export class ResponseTooLargeError extends Error {
   }
 }
 
+export class ResponseInvalidEncodingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ResponseInvalidEncodingError";
+  }
+}
+
 /** Reads browser API JSON without allowing an anomalous response to grow memory without bound. */
 export async function readBoundedJson<T>(response: Response, maxBytes: number, tooLargeMessage: string): Promise<T> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
@@ -23,7 +30,7 @@ export async function readBoundedJson<T>(response: Response, maxBytes: number, t
   if (!response.body) return JSON.parse("") as T;
 
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   let totalBytes = 0;
   const bodyChunks: string[] = [];
   try {
@@ -35,9 +42,18 @@ export async function readBoundedJson<T>(response: Response, maxBytes: number, t
         await reader.cancel().catch(() => undefined);
         throw new ResponseTooLargeError(tooLargeMessage);
       }
-      bodyChunks.push(decoder.decode(value, { stream: true }));
+      try {
+        bodyChunks.push(decoder.decode(value, { stream: true }));
+      } catch {
+        await reader.cancel().catch(() => undefined);
+        throw new ResponseInvalidEncodingError("API 响应不是有效的 UTF-8 JSON，请稍后重试");
+      }
     }
-    bodyChunks.push(decoder.decode());
+    try {
+      bodyChunks.push(decoder.decode());
+    } catch {
+      throw new ResponseInvalidEncodingError("API 响应不是有效的 UTF-8 JSON，请稍后重试");
+    }
   } finally {
     reader.releaseLock();
   }

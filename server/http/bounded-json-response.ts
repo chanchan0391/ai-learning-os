@@ -5,6 +5,13 @@ export class UpstreamResponseTooLargeError extends Error {
   }
 }
 
+export class UpstreamResponseInvalidEncodingError extends Error {
+  constructor() {
+    super("Upstream response was not valid UTF-8");
+    this.name = "UpstreamResponseInvalidEncodingError";
+  }
+}
+
 /** Reads an upstream JSON response without allowing a provider to grow process memory without bound. */
 export async function readBoundedJson<T>(response: Response, maxBytes: number): Promise<T> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
@@ -40,6 +47,11 @@ export async function readBoundedJson<T>(response: Response, maxBytes: number): 
     reader.releaseLock();
   }
 
-  const body = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), totalBytes).toString("utf8");
+  let body: string;
+  try {
+    body = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), totalBytes));
+  } catch {
+    throw new UpstreamResponseInvalidEncodingError();
+  }
   return JSON.parse(body) as T;
 }

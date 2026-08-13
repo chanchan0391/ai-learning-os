@@ -57,6 +57,23 @@ describe("OpenAI Responses provider", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("rejects malformed UTF-8 provider responses without retrying", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      Uint8Array.from([0x7b, 0x22, 0x69, 0x64, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d]),
+    ));
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "secret",
+      model: "test",
+      maxRetries: 2,
+      fetchImplementation: fetchMock as typeof fetch,
+    });
+
+    await expect(provider.generateStructured(request)).rejects.toEqual(
+      new ModelProviderError("Model provider response contained invalid JSON", 502),
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("normalizes Responses and compatible token usage for account metering", async () => {
     const responsesProvider = new OpenAIResponsesProvider({
       apiKey: "secret", model: "responses-model",

@@ -1,5 +1,9 @@
 import { ModelProviderError, safeProviderRequestId, type ModelProvider, type StructuredGenerationRequest, type StructuredGenerationResult } from "./model-provider";
-import { readBoundedJson, UpstreamResponseTooLargeError } from "../http/bounded-json-response";
+import {
+  readBoundedJson,
+  UpstreamResponseInvalidEncodingError,
+  UpstreamResponseTooLargeError,
+} from "../http/bounded-json-response";
 
 interface OpenAIProviderConfig {
   apiKey: string;
@@ -220,6 +224,9 @@ export class OpenAIResponsesProvider implements ModelProvider {
           if (error instanceof ModelProviderError) throw error;
           if (error instanceof UpstreamResponseTooLargeError) {
             throw new ModelProviderError("Model provider response was too large", 502, safeProviderRequestId(response?.headers.get("x-request-id")));
+          }
+          if (error instanceof UpstreamResponseInvalidEncodingError) {
+            throw new ModelProviderError("Model provider response contained invalid JSON", 502, safeProviderRequestId(response?.headers.get("x-request-id")));
           }
           if (request.signal?.aborted) throw new ModelProviderError("Model request was cancelled", 499);
           if (totalTimeoutController.signal.aborted) {

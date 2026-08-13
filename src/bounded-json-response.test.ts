@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readBoundedJson, ResponseTooLargeError } from "./bounded-json-response";
+import { readBoundedJson, ResponseInvalidEncodingError, ResponseTooLargeError } from "./bounded-json-response";
 
 describe("bounded browser JSON responses", () => {
   it("parses a response within the byte limit", async () => {
@@ -27,6 +27,21 @@ describe("bounded browser JSON responses", () => {
     }));
 
     await expect(readBoundedJson(response, 64, "too large")).rejects.toBeInstanceOf(ResponseTooLargeError);
+    expect(cancelled).toBe(true);
+  });
+
+  it("rejects and cancels malformed UTF-8 instead of replacing learning data bytes", async () => {
+    let cancelled = false;
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }));
+
+    await expect(readBoundedJson(response, 64, "too large")).rejects.toBeInstanceOf(ResponseInvalidEncodingError);
     expect(cancelled).toBe(true);
   });
 });
