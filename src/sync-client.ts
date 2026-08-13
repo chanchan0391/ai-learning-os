@@ -12,6 +12,8 @@ const MAX_SYNC_ENTITIES = 25_000;
 const MAX_SYNC_PAGES = MAX_SYNC_ENTITIES / MAX_SYNC_PAGE_ENTITIES;
 const MAX_SYNC_IDENTIFIER_CHARACTERS = 256;
 const MAX_SYNC_TIMESTAMP_CHARACTERS = 64;
+const MAX_ACTIVE_DEVICES = 1_000;
+const MAX_DEVICE_LABEL_CHARACTERS = 100;
 
 interface SyncEntity<T = unknown> {
   entityType: "learning-plan" | "daily-record";
@@ -55,6 +57,10 @@ export interface ActiveDevice {
   lastSeenAt: string;
   current: boolean;
 }
+
+type AuthSessionEnvelope =
+  | { authenticated: false }
+  | { authenticated: true; principal: { userId: string; deviceId: string } };
 
 export interface SyncResult {
   state: LearningState | null;
@@ -135,6 +141,50 @@ function isBoundedSyncCursor(value: unknown): value is string {
     && value.length <= MAX_SYNC_IDENTIFIER_CHARACTERS;
 }
 
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === sortedExpected[index]);
+}
+
+function isBoundedIdentifier(value: unknown): value is string {
+  return typeof value === "string"
+    && value.trim().length > 0
+    && value.length <= MAX_SYNC_IDENTIFIER_CHARACTERS;
+}
+
+function isValidAuthState(value: unknown): value is AuthSessionEnvelope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const envelope = value as Record<string, unknown>;
+  if (envelope.authenticated === false) return hasExactKeys(envelope, ["authenticated"]);
+  if (envelope.authenticated !== true || !hasExactKeys(envelope, ["authenticated", "principal"])) return false;
+  if (!envelope.principal || typeof envelope.principal !== "object" || Array.isArray(envelope.principal)) return false;
+  const principal = envelope.principal as Record<string, unknown>;
+  return hasExactKeys(principal, ["deviceId", "userId"])
+    && isBoundedIdentifier(principal.userId)
+    && isBoundedIdentifier(principal.deviceId);
+}
+
+function isActiveDevice(value: unknown): value is ActiveDevice {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const device = value as Record<string, unknown>;
+  return hasExactKeys(device, ["createdAt", "current", "id", "label", "lastSeenAt"])
+    && isBoundedIdentifier(device.id)
+    && typeof device.label === "string"
+    && device.label.trim().length > 0
+    && device.label.length <= MAX_DEVICE_LABEL_CHARACTERS
+    && typeof device.createdAt === "string"
+    && device.createdAt.length > 0
+    && device.createdAt.length <= MAX_SYNC_TIMESTAMP_CHARACTERS
+    && Number.isFinite(Date.parse(device.createdAt))
+    && typeof device.lastSeenAt === "string"
+    && device.lastSeenAt.length > 0
+    && device.lastSeenAt.length <= MAX_SYNC_TIMESTAMP_CHARACTERS
+    && Number.isFinite(Date.parse(device.lastSeenAt))
+    && typeof device.current === "boolean";
+}
+
 function recordId(planId: string, record: DailyLearningRecord): string {
   return `${planId}:day-${record.day}`;
 }
@@ -162,7 +212,8 @@ export class BrowserSyncClient {
       const body = await readBoundedJson<{ authenticated?: boolean; principal?: { userId?: string; deviceId?: string } }>(
         response, MAX_AUTH_RESPONSE_BYTES, "账号响应超过安全上限，请稍后重试",
       );
-      return body.authenticated && body.principal?.userId && body.principal.deviceId
+      if (!isValidAuthState(body)) return { status: "local-only" };
+      return body.authenticated
         ? { status: "signed-in", userId: body.principal.userId, deviceId: body.principal.deviceId }
         : { status: "signed-out" };
     } catch {
@@ -185,14 +236,21 @@ export class BrowserSyncClient {
     const body = await readBoundedJson<{ devices?: ActiveDevice[]; error?: string }>(
       response, MAX_AUTH_RESPONSE_BYTES, "账号响应超过安全上限，请稍后重试",
     );
-    if (!response.ok || !Array.isArray(body.devices)) throw new Error(responseError(body, "无法读取登录设备"));
-    return body.devices.filter((device) => (
-      typeof device.id === "string"
-      && typeof device.label === "string"
-      && typeof device.createdAt === "string"
-      && typeof device.lastSeenAt === "string"
-      && typeof device.current === "boolean"
-    ));
+    if (!response.ok || !body || typeof body !== "object" || Array.isArray(body)) {
+      throw new Error(responseError(body, "无法读取登录设备"));
+    }
+    const envelope = body as Record<string, unknown>;
+    if (!hasExactKeys(envelope, ["devices"]) || !Array.isArray(envelope.devices)
+      || envelope.devices.length === 0 || envelope.devices.length > MAX_ACTIVE_DEVICES
+      || !envelope.devices.every(isActiveDevice)) {
+      throw new Error("登录设备响应格式无效，请稍后重试");
+    }
+    const devices = envelope.devices as ActiveDevice[];
+    const uniqueIds = new Set(devices.map((device) => device.id));
+    if (uniqueIds.size !== devices.length || devices.filter((device) => device.current).length !== 1) {
+      throw new Error("登录设备响应格式无效，请稍后重试");
+    }
+    return devices;
   }
 
   async revokeDevice(deviceId: string): Promise<void> {

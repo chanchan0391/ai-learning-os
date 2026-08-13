@@ -72,7 +72,7 @@ describe("browser sync client", () => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       calls.push({ url, method: init?.method ?? "GET" });
       if (url === "/api/auth/devices") return Response.json({
-        devices: [{ id: "phone/1", label: "Phone", createdAt: "2026-08-01T10:00:00.000Z", lastSeenAt: "2026-08-01T12:00:00.000Z", current: false }],
+        devices: [{ id: "phone/1", label: "Phone", createdAt: "2026-08-01T10:00:00.000Z", lastSeenAt: "2026-08-01T12:00:00.000Z", current: true }],
       });
       return Response.json({ revoked: true });
     }) as typeof fetch;
@@ -95,6 +95,43 @@ describe("browser sync client", () => {
 
     await expect(client.getActiveDevices()).rejects.toThrow("账号响应超过安全上限，请稍后重试");
     expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed on malformed session principals", async () => {
+    const invalidSessions = [
+      { authenticated: true, principal: { userId: "user-1", deviceId: "" } },
+      { authenticated: true, principal: { userId: "user-1", deviceId: "device-1", role: "admin" } },
+      { authenticated: false, principal: { userId: "user-1", deviceId: "device-1" } },
+    ];
+
+    for (const session of invalidSessions) {
+      const request = vi.fn(async () => Response.json(session)) as typeof fetch;
+      await expect(new BrowserSyncClient(localStorage, request).getAuthState())
+        .resolves.toEqual({ status: "local-only" });
+    }
+  });
+
+  it("rejects malformed or ambiguous active device envelopes", async () => {
+    const validDevice = {
+      id: "device-1",
+      label: "Laptop",
+      createdAt: "2026-08-01T10:00:00.000Z",
+      lastSeenAt: "2026-08-01T12:00:00.000Z",
+      current: true,
+    };
+    const invalidEnvelopes = [
+      { devices: [{ ...validDevice, label: "" }] },
+      { devices: [{ ...validDevice, unexpected: true }] },
+      { devices: [validDevice, { ...validDevice }] },
+      { devices: [{ ...validDevice, current: false }] },
+      { devices: [], error: "ignored" },
+    ];
+
+    for (const envelope of invalidEnvelopes) {
+      const request = vi.fn(async () => Response.json(envelope)) as typeof fetch;
+      await expect(new BrowserSyncClient(localStorage, request).getActiveDevices())
+        .rejects.toThrow("登录设备响应格式无效，请稍后重试");
+    }
   });
 
   it("uploads a new local plan and its daily record with revision metadata", async () => {
