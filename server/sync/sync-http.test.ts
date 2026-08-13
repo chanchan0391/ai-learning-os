@@ -179,6 +179,23 @@ describe("authenticated sync HTTP API", () => {
     await expect(invalidCursor.json()).resolves.toMatchObject({ error: "invalid-cursor" });
   });
 
+  it("returns a stable insufficient-storage response when the account sync quota is exhausted", async () => {
+    const store = new InMemorySyncStore(undefined, undefined, 250, undefined, { maxEntities: 1, maxBytes: 1 });
+    const baseUrl = await startApi(store);
+    const plan = generateLearningPlan(goal, new Date("2026-08-01T10:00:00.000Z"));
+    const response = await fetch(`${baseUrl}/api/sync/plans/${plan.id}`, {
+      method: "PUT",
+      headers: { ...writeOrigin, Cookie: "session=alice", "Idempotency-Key": "over-quota", "If-None-Match": "*" },
+      body: JSON.stringify(plan),
+    });
+
+    expect(response.status).toBe(507);
+    await expect(response.json()).resolves.toEqual({
+      error: "storage-quota-exceeded",
+      message: "The account sync storage quota has been reached",
+    });
+  });
+
   it("rejects oversized sync identifiers with stable client errors", async () => {
     const baseUrl = await startApi();
     const oversized = "x".repeat(MAX_SYNC_IDENTIFIER_LENGTH + 1);

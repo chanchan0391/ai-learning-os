@@ -215,4 +215,34 @@ describe("in-memory sync store", () => {
       value: { planId: plan.id, record: state.days[0] },
     })).toThrowError(expect.objectContaining<Partial<SyncRequestError>>({ code: "missing-plan" }));
   });
+
+  it("enforces account entity and encoded-byte quotas without charging updates twice", () => {
+    const plan = generateLearningPlan(goal, new Date("2026-07-31T10:00:00.000Z"));
+    const planBytes = Buffer.byteLength(JSON.stringify(plan), "utf8");
+    const entityLimited = new InMemorySyncStore(undefined, undefined, 250, undefined, {
+      maxEntities: 1,
+      maxBytes: planBytes * 2,
+    });
+    entityLimited.putPlan(alice, { operationId: "plan", entityId: plan.id, baseRevision: null, value: plan });
+
+    expect(() => entityLimited.putDailyRecord(alice, {
+      operationId: "day",
+      entityId: `${plan.id}:day-1`,
+      baseRevision: null,
+      value: { planId: plan.id, record: initializeLearningState(plan).days[0] },
+    })).toThrowError(expect.objectContaining<Partial<SyncRequestError>>({ code: "storage-quota-exceeded" }));
+
+    const byteLimited = new InMemorySyncStore(undefined, undefined, 250, undefined, {
+      maxEntities: 10,
+      maxBytes: planBytes,
+    });
+    byteLimited.putPlan(alice, { operationId: "create", entityId: plan.id, baseRevision: null, value: plan });
+    expect(byteLimited.putPlan(alice, {
+      operationId: "same-size", entityId: plan.id, baseRevision: 1, value: plan,
+    })).toMatchObject({ revision: 2 });
+    expect(() => byteLimited.putPlan(alice, {
+      operationId: "grow", entityId: plan.id, baseRevision: 2,
+      value: { ...plan, goal: { ...plan.goal, targetOutcome: `${plan.goal.targetOutcome}扩容` } },
+    })).toThrowError(expect.objectContaining<Partial<SyncRequestError>>({ code: "storage-quota-exceeded" }));
+  });
 });

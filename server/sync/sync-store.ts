@@ -37,6 +37,15 @@ export interface SyncChanges {
 
 export const MAX_SYNC_IDENTIFIER_LENGTH = 256;
 export const MAX_SYNC_PAGE_BYTES = 8 * 1024 * 1024;
+export const DEFAULT_SYNC_STORAGE_QUOTA = {
+  maxEntities: 25_000,
+  maxBytes: 256 * 1024 * 1024,
+} as const;
+
+export interface SyncStorageQuota {
+  maxEntities: number;
+  maxBytes: number;
+}
 
 export interface SyncStore {
   putPlan(principal: SyncPrincipal, request: SyncWriteRequest<LearningPlan>): SyncEntity<LearningPlan> | Promise<SyncEntity<LearningPlan>>;
@@ -54,7 +63,7 @@ export class SyncConflictError extends Error {
 }
 
 export class SyncRequestError extends Error {
-  constructor(readonly code: "invalid-cursor" | "idempotency-mismatch" | "missing-plan" | "unknown-principal" | "entity-too-large", message: string) {
+  constructor(readonly code: "invalid-cursor" | "idempotency-mismatch" | "missing-plan" | "unknown-principal" | "entity-too-large" | "storage-quota-exceeded", message: string) {
     super(message);
     this.name = "SyncRequestError";
   }
@@ -98,6 +107,22 @@ interface CursorPosition {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function requireStorageQuota(quota: SyncStorageQuota): void {
+  if (!Number.isSafeInteger(quota.maxEntities) || quota.maxEntities <= 0) {
+    throw new TypeError("Sync entity quota must be a positive integer");
+  }
+  if (!Number.isSafeInteger(quota.maxBytes) || quota.maxBytes <= 0) {
+    throw new TypeError("Sync storage byte quota must be a positive integer");
+  }
+}
+
+export function assertSyncStorageQuota(entityCount: number, encodedBytes: number, quota: SyncStorageQuota): void {
+  requireStorageQuota(quota);
+  if (entityCount > quota.maxEntities || encodedBytes > quota.maxBytes) {
+    throw new SyncRequestError("storage-quota-exceeded", "The account sync storage quota has been reached");
+  }
 }
 
 export function requireSyncIdentity(principal: SyncPrincipal): void {
@@ -161,9 +186,11 @@ export class InMemorySyncStore {
     private readonly createCursor: () => string = () => randomUUID(),
     private readonly pageSize = 250,
     private readonly pageByteLimit = MAX_SYNC_PAGE_BYTES,
+    private readonly storageQuota: SyncStorageQuota = DEFAULT_SYNC_STORAGE_QUOTA,
   ) {
     if (!Number.isSafeInteger(pageSize) || pageSize <= 0) throw new TypeError("Sync page size must be a positive integer");
     if (!Number.isSafeInteger(pageByteLimit) || pageByteLimit <= 0) throw new TypeError("Sync page byte limit must be a positive integer");
+    requireStorageQuota(storageQuota);
   }
 
   putPlan(principal: SyncPrincipal, request: SyncWriteRequest<LearningPlan>): SyncEntity<LearningPlan> {
@@ -227,6 +254,19 @@ export class InMemorySyncStore {
       }
       throw new SyncConflictError(null);
     }
+
+    const otherEntities = [...this.entities.values()].filter((entity) => (
+      entity.userId === principal.userId && this.entityKey(entity.userId, entity.entityType, entity.entityId) !== key
+    ));
+    const retainedBytes = otherEntities.reduce(
+      (total, entity) => total + Buffer.byteLength(JSON.stringify(entity.value), "utf8"),
+      0,
+    );
+    assertSyncStorageQuota(
+      otherEntities.length + 1,
+      retainedBytes + Buffer.byteLength(JSON.stringify(request.value), "utf8"),
+      this.storageQuota,
+    );
 
     this.sequence += 1;
     const stored: StoredEntity = {

@@ -671,6 +671,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       }
       if (error instanceof SyncRequestError) {
         const status = error.code === "idempotency-mismatch" ? 409
+          : error.code === "storage-quota-exceeded" ? 507
           : error.code === "missing-plan" || error.code === "entity-too-large" ? 422
             : error.code === "unknown-principal" ? 401 : 400;
         return sendJson(response, status, { error: error.code, message: error.message });

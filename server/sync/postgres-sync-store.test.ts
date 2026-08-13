@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { newDb } from "pg-mem";
+import { DataType, newDb } from "pg-mem";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeLearningState } from "../../src/learning-state";
 import { generateLearningPlan } from "../../src/planner";
@@ -24,11 +24,20 @@ afterEach(async () => {
 
 async function setup() {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
+  memory.public.registerFunction({
+    name: "octet_length",
+    args: [DataType.text],
+    returns: DataType.integer,
+    implementation: (value: string) => Buffer.byteLength(value, "utf8"),
+  });
   const adapter = memory.adapters.createPg();
   const pool = new adapter.Pool();
   pools.push(pool);
   const migration = await readFile(new URL("./migrations/001-initial-sync-schema.sql", import.meta.url), "utf8");
   await pool.query(migration);
+  // pg-mem cannot parse the correlated backfill in migration 011; new test accounts start at zero usage.
+  await pool.query("ALTER TABLE users ADD COLUMN sync_entity_count integer NOT NULL DEFAULT 0");
+  await pool.query("ALTER TABLE users ADD COLUMN sync_storage_bytes bigint NOT NULL DEFAULT 0");
   await pool.query("INSERT INTO users (id) VALUES ($1), ($2)", [alice.userId, bob.userId]);
   await pool.query(
     `INSERT INTO sync_devices (user_id, id, label) VALUES
@@ -244,5 +253,38 @@ describe("PostgreSQL sync store", () => {
       pool.query("SELECT count(*)::int AS count FROM learning_plans"),
     ]);
     expect([operations.rows[0].count, cursors.rows[0].count, plans.rows[0].count]).toEqual([0, 1, 1]);
+  });
+
+  it("enforces race-safe account entity and encoded-byte quotas", async () => {
+    const { pool, plan, state } = await setup();
+    const entityLimited = new PostgresSyncStore(pool, undefined, undefined, 250, undefined, {
+      maxEntities: 1,
+      maxBytes: 1024 * 1024,
+    });
+    await entityLimited.putPlan(alice, { operationId: "quota-plan", entityId: plan.id, baseRevision: null, value: plan });
+    await expect(entityLimited.putDailyRecord(alice, {
+      operationId: "quota-day",
+      entityId: `${plan.id}:day-1`,
+      baseRevision: null,
+      value: { planId: plan.id, record: state.days[0] },
+    })).rejects.toMatchObject({ code: "storage-quota-exceeded" } satisfies Partial<SyncRequestError>);
+
+    const usage = await pool.query("SELECT octet_length(value::text)::int AS bytes FROM learning_plans WHERE user_id = $1", [alice.userId]);
+    const byteLimited = new PostgresSyncStore(pool, undefined, undefined, 250, undefined, {
+      maxEntities: 10,
+      maxBytes: usage.rows[0].bytes,
+    });
+    await expect(byteLimited.putPlan(alice, {
+      operationId: "quota-same-size", entityId: plan.id, baseRevision: 1, value: plan,
+    })).resolves.toMatchObject({ revision: 2 });
+    await expect(byteLimited.putPlan(alice, {
+      operationId: "quota-grow", entityId: plan.id, baseRevision: 2,
+      value: { ...plan, goal: { ...plan.goal, targetOutcome: `${plan.goal.targetOutcome}扩容` } },
+    })).rejects.toMatchObject({ code: "storage-quota-exceeded" } satisfies Partial<SyncRequestError>);
+    const counters = await pool.query(
+      "SELECT sync_entity_count::int AS count, sync_storage_bytes::int AS bytes FROM users WHERE id = $1",
+      [alice.userId],
+    );
+    expect(counters.rows[0]).toEqual({ count: 1, bytes: usage.rows[0].bytes });
   });
 });

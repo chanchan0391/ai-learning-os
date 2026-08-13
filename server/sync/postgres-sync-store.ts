@@ -3,9 +3,11 @@ import type { Pool, PoolClient, QueryResultRow } from "pg";
 import type { LearningPlan } from "../../src/types";
 import {
   SyncConflictError,
+  DEFAULT_SYNC_STORAGE_QUOTA,
   MAX_SYNC_PAGE_BYTES,
   SyncRequestError,
   boundedSyncPage,
+  assertSyncStorageQuota,
   requireSyncIdentity,
   requireSyncCursor,
   requireSyncWriteRequest,
@@ -16,6 +18,7 @@ import {
   type SyncEntityType,
   type SyncEntityValue,
   type SyncPrincipal,
+  type SyncStorageQuota,
   type SyncWriteRequest,
 } from "./sync-store";
 
@@ -26,11 +29,17 @@ interface EntityRow extends QueryResultRow {
   updated_at: Date | string;
   value: SyncEntityValue;
   change_sequence: string | number;
+  encoded_bytes?: string | number;
 }
 
 interface OperationRow extends QueryResultRow {
   fingerprint: string;
   result: SyncEntity;
+}
+
+interface PrincipalRow extends QueryResultRow {
+  sync_entity_count: string | number;
+  sync_storage_bytes: string | number;
 }
 
 const SYNC_METADATA_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -62,9 +71,11 @@ export class PostgresSyncStore {
     private readonly createCursor: () => string = () => randomUUID(),
     private readonly pageSize = 250,
     private readonly pageByteLimit = MAX_SYNC_PAGE_BYTES,
+    private readonly storageQuota: SyncStorageQuota = DEFAULT_SYNC_STORAGE_QUOTA,
   ) {
     if (!Number.isSafeInteger(pageSize) || pageSize <= 0) throw new TypeError("Sync page size must be a positive integer");
     if (!Number.isSafeInteger(pageByteLimit) || pageByteLimit <= 0) throw new TypeError("Sync page byte limit must be a positive integer");
+    assertSyncStorageQuota(0, 0, storageQuota);
   }
 
   putPlan(principal: SyncPrincipal, request: SyncWriteRequest<LearningPlan>): Promise<SyncEntity<LearningPlan>> {
@@ -135,7 +146,7 @@ export class PostgresSyncStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await this.requireActivePrincipal(client, principal, true);
+      const storageUsage = await this.requireActivePrincipal(client, principal, true);
       const fingerprint = syncOperationFingerprint(entityType, request);
       const previous = await client.query<OperationRow>(
         "SELECT fingerprint, result FROM sync_operations WHERE user_id = $1 AND operation_id = $2 AND created_at >= $3",
@@ -162,7 +173,8 @@ export class PostgresSyncStore {
 
       const table = entityType === "learning-plan" ? "learning_plans" : "daily_records";
       const currentResult = await client.query<EntityRow>(
-        `SELECT $3::text AS entity_type, id AS entity_id, revision, updated_at, value, change_sequence
+        `SELECT $3::text AS entity_type, id AS entity_id, revision, updated_at, value, change_sequence,
+                octet_length(value::text) AS encoded_bytes
            FROM ${table}
           WHERE user_id = $1 AND id = $2
           FOR UPDATE`,
@@ -170,6 +182,20 @@ export class PostgresSyncStore {
       );
       const current = currentResult.rowCount === 1 ? entityFromRow<T>(currentResult.rows[0]) : null;
       if (request.baseRevision !== (current?.revision ?? null)) throw new SyncConflictError(current);
+
+      const nextValueSize = await client.query<{ encoded_bytes: string | number }>(
+        "SELECT octet_length($1::jsonb::text) AS encoded_bytes",
+        [JSON.stringify(request.value)],
+      );
+      const nextEntityCount = Number(storageUsage.sync_entity_count) + (current ? 0 : 1);
+      const nextStorageBytes = Number(storageUsage.sync_storage_bytes)
+        - Number(currentResult.rows[0]?.encoded_bytes ?? 0)
+        + Number(nextValueSize.rows[0].encoded_bytes);
+      assertSyncStorageQuota(
+        nextEntityCount,
+        nextStorageBytes,
+        this.storageQuota,
+      );
 
       const revision = (current?.revision ?? 0) + 1;
       const updatedAt = this.now().toISOString();
@@ -208,6 +234,10 @@ export class PostgresSyncStore {
         "UPDATE sync_devices SET last_seen_at = $3 WHERE user_id = $1 AND id = $2",
         [principal.userId, principal.deviceId, updatedAt],
       );
+      await client.query(
+        "UPDATE users SET sync_entity_count = $2, sync_storage_bytes = $3 WHERE id = $1",
+        [principal.userId, nextEntityCount, nextStorageBytes],
+      );
       await client.query("COMMIT");
       return result;
     } catch (error) {
@@ -218,9 +248,9 @@ export class PostgresSyncStore {
     }
   }
 
-  private async requireActivePrincipal(client: Pool | PoolClient, principal: SyncPrincipal, lockUser = false): Promise<void> {
-    const result = await client.query(
-      `SELECT u.id
+  private async requireActivePrincipal(client: Pool | PoolClient, principal: SyncPrincipal, lockUser = false): Promise<PrincipalRow> {
+    const result = await client.query<PrincipalRow>(
+      `SELECT u.sync_entity_count, u.sync_storage_bytes
          FROM users u
          JOIN sync_devices d ON d.user_id = u.id AND d.id = $2
         WHERE u.id = $1 AND u.deleted_at IS NULL AND d.revoked_at IS NULL
@@ -230,6 +260,7 @@ export class PostgresSyncStore {
     if (result.rowCount !== 1) {
       throw new SyncRequestError("unknown-principal", "The authenticated user or device is not active");
     }
+    return result.rows[0];
   }
 
   private async maybeCleanupExpiredMetadata(now: Date): Promise<void> {
