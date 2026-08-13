@@ -102,6 +102,16 @@ describe("standard OIDC client", () => {
     )).rejects.toThrow(/missing or expired/);
   });
 
+  it("does not reflect provider-supplied callback errors", async () => {
+    const client = new StandardOidcClient(config, undefined, undefined, vi.fn(async () => discovery()) as typeof fetch);
+
+    await expect(client.complete(
+      new URL("https://learn.example/api/auth/callback?error=secret-token%20private-context"),
+      undefined,
+      "Browser",
+    )).rejects.toEqual(new TypeError("OIDC provider rejected login"));
+  });
+
   it("rejects oversized discovery responses before parsing them", async () => {
     const oversizedDiscovery = new Response(new ReadableStream({
       start(controller) {

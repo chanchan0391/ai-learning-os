@@ -521,6 +521,18 @@ describe("AI Learning OS API", () => {
     expect(response.status).toBe(400);
   });
 
+  it("does not reflect malformed JSON contents in validation errors", async () => {
+    const baseUrl = await startApi();
+    const response = await fetch(`${baseUrl}/api/plans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: '{"currentLevel":"private learner context","subject": secret-token}',
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Request body must be valid JSON" });
+  });
+
   it("automatically scores an active-recall answer", async () => {
     const baseUrl = await startApi();
     const answer = "重试是再次执行失败步骤，恢复是从检查点继续。我会画出状态路径并标出失败分支。";
@@ -767,6 +779,29 @@ describe("AI Learning OS API", () => {
     expect(callback.headers.get("location")).toBe("/progress");
     expect(callback.headers.get("set-cookie")).toContain("ai_learning_os_session=application-token");
     expect(established).toHaveLength(1);
+  });
+
+  it("does not reflect provider callback errors in authentication responses", async () => {
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      resolvePrincipal: async () => null,
+      oidcAuthenticator: {
+        transactionCookieName: "oidc_txn",
+        begin: async () => ({ authorizationUrl: "https://identity.example/authorize", transactionCookie: "transaction" }),
+        complete: async () => { throw new TypeError("OIDC provider rejected login"); },
+      },
+      sessionLifecycle: {
+        establishFromOidc: async () => { throw new Error("not used"); },
+        rotate: async () => null,
+        revoke: async () => false,
+        revokeAll: async () => false,
+        listActiveDevices: async () => null,
+        revokeDevice: async () => false,
+      },
+    });
+
+    const response = await fetch(`${baseUrl}/api/auth/callback?error=secret-token%20private-context`, { redirect: "manual" });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "OIDC provider rejected login" });
   });
 
   it("returns a retryable response when an account reaches its active device limit", async () => {

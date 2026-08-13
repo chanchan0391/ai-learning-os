@@ -681,7 +681,8 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (error instanceof Error && error.name === "UnsupportedMediaTypeError") return sendJson(response, 415, { error: error.message });
       if (error instanceof Error && error.name === "PreconditionRequiredError") return sendJson(response, 428, { error: error.message });
       if (error instanceof AuthDeviceLimitError) return sendJson(response, 429, { error: error.message }, { "Retry-After": "3600" });
-      if (error instanceof SyntaxError || error instanceof TypeError) return sendJson(response, 400, { error: error.message });
+      if (error instanceof SyntaxError) return sendJson(response, 400, { error: "Request body must be valid JSON" });
+      if (error instanceof TypeError) return sendJson(response, 400, { error: error.message });
       if (error instanceof RangeError) return sendJson(response, 413, { error: error.message });
       if (error instanceof AgentOutputError) return sendJson(response, 502, { error: error.message });
       if (error instanceof ModelProviderError) {

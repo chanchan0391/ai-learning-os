@@ -161,7 +161,7 @@ export class StandardOidcClient implements OidcAuthenticator {
 
   async complete(callbackUrl: URL, cookieHeader: string | undefined, deviceLabel: string): Promise<OidcCallbackResult> {
     const providerError = callbackUrl.searchParams.get("error");
-    if (providerError) throw new TypeError(`OIDC provider rejected login: ${providerError}`);
+    if (providerError) throw new TypeError("OIDC provider rejected login");
     const code = callbackUrl.searchParams.get("code");
     const state = callbackUrl.searchParams.get("state");
     if (!code || !state) throw new TypeError("OIDC callback requires code and state");
