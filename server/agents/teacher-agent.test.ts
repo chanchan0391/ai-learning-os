@@ -3,7 +3,7 @@ import type { TeachingSession } from "../../src/types";
 import type { ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
 import { createTeacherAgent } from "./teacher-agent";
-import { AGENT_INPUT_LIMITS } from "./request-validation";
+import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS } from "./request-validation";
 
 const request = {
   goal: { subject: "AI Agent 工程", currentLevel: "Java 工程师", targetOutcome: "交付 Agent 应用", dailyMinutes: 60, durationWeeks: 12 },
@@ -36,6 +36,30 @@ describe("Teacher Agent", () => {
         { id: "same", prompt: "问题二", expectedSignals: ["信号"] },
       ],
       practicePrompt: "练习", completionSignals: ["可运行"],
+    };
+    await expect(createTeacherAgent(providerWith(value)).createSession(request)).rejects.toBeInstanceOf(AgentOutputError);
+  });
+
+  it("rejects oversized model-generated teaching content", async () => {
+    const value: TeachingSession = {
+      concept: "工具调用", explanation: "x".repeat(AGENT_OUTPUT_LIMITS.longTextCharacters + 1), workedExample: "示例",
+      understandingChecks: [
+        { id: "recall", prompt: "问题一", expectedSignals: ["信号"] },
+        { id: "apply", prompt: "问题二", expectedSignals: ["信号"] },
+      ],
+      practicePrompt: "练习", completionSignals: ["可运行"],
+    };
+    await expect(createTeacherAgent(providerWith(value)).createSession(request)).rejects.toBeInstanceOf(AgentOutputError);
+  });
+
+  it("rejects empty model-generated completion signals", async () => {
+    const value: TeachingSession = {
+      concept: "工具调用", explanation: "解释", workedExample: "示例",
+      understandingChecks: [
+        { id: "recall", prompt: "问题一", expectedSignals: ["信号"] },
+        { id: "apply", prompt: "问题二", expectedSignals: ["信号"] },
+      ],
+      practicePrompt: "练习", completionSignals: [],
     };
     await expect(createTeacherAgent(providerWith(value)).createSession(request)).rejects.toBeInstanceOf(AgentOutputError);
   });

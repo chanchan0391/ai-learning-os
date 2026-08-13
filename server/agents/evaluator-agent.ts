@@ -2,7 +2,7 @@ import { validateGoal } from "../../src/planner";
 import type { EvaluationDimension, EvaluationRequest, EvaluationResult } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
-import { AGENT_INPUT_LIMITS, isBoundedText, isValidAgentTask } from "./request-validation";
+import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS, isBoundedText, isBoundedTextList, isValidAgentTask } from "./request-validation";
 
 const DIMENSIONS: EvaluationDimension[] = ["understanding", "application", "evidence", "reflection"];
 
@@ -22,15 +22,15 @@ export const EVALUATION_SCHEMA: JsonSchema = {
         properties: {
           dimension: { type: "string", enum: DIMENSIONS },
           score: { type: "integer", minimum: 0, maximum: 4 },
-          evidence: { type: "string", minLength: 1 },
-          feedback: { type: "string", minLength: 1 },
+          evidence: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
+          feedback: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
         },
       },
     },
     totalScore: { type: "integer", minimum: 0, maximum: 16 },
     masteryLevel: { type: "string", enum: ["needs-support", "developing", "ready"] },
-    misconceptions: { type: "array", items: { type: "string", minLength: 1 } },
-    nextAction: { type: "string", minLength: 1 },
+    misconceptions: { type: "array", maxItems: AGENT_OUTPUT_LIMITS.evaluationMisconceptions, items: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.shortTextCharacters } },
+    nextAction: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
   },
 };
 
@@ -57,14 +57,17 @@ function assertEvaluation(value: EvaluationResult): void {
     throw new AgentOutputError("Evaluator Agent returned missing or duplicate rubric dimensions");
   }
   for (const item of value.rubric) {
-    if (!item || !Number.isInteger(item.score) || item.score < 0 || item.score > 4 || typeof item.evidence !== "string" || !item.evidence.trim() || typeof item.feedback !== "string" || !item.feedback.trim()) {
+    if (!item || !Number.isInteger(item.score) || item.score < 0 || item.score > 4
+      || !isBoundedText(item.evidence, AGENT_OUTPUT_LIMITS.longTextCharacters)
+      || !isBoundedText(item.feedback, AGENT_OUTPUT_LIMITS.longTextCharacters)) {
       throw new AgentOutputError("Evaluator Agent returned an invalid rubric score");
     }
   }
   const total = value.rubric.reduce((sum, item) => sum + item.score, 0);
   if (value.totalScore !== total) throw new AgentOutputError("Evaluator Agent total does not match rubric scores");
   if (value.masteryLevel !== expectedMastery(total)) throw new AgentOutputError("Evaluator Agent mastery level does not match total score");
-  if (!Array.isArray(value.misconceptions) || value.misconceptions.some((item) => typeof item !== "string" || !item.trim()) || typeof value.nextAction !== "string" || !value.nextAction.trim()) {
+  if (!isBoundedTextList(value.misconceptions, AGENT_OUTPUT_LIMITS.evaluationMisconceptions, AGENT_OUTPUT_LIMITS.shortTextCharacters)
+    || !isBoundedText(value.nextAction, AGENT_OUTPUT_LIMITS.longTextCharacters)) {
     throw new AgentOutputError("Evaluator Agent returned incomplete feedback");
   }
 }

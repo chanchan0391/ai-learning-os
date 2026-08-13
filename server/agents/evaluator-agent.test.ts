@@ -3,7 +3,7 @@ import type { EvaluationResult } from "../../src/types";
 import type { ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
 import { createEvaluatorAgent } from "./evaluator-agent";
-import { AGENT_INPUT_LIMITS } from "./request-validation";
+import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS } from "./request-validation";
 
 const request = {
   goal: { subject: "AI Agent 工程", currentLevel: "Java 工程师", targetOutcome: "交付 Agent 应用", dailyMinutes: 60, durationWeeks: 12 },
@@ -36,6 +36,13 @@ describe("Evaluator Agent", () => {
 
   it("rejects a mastery label that contradicts the score threshold", async () => {
     await expect(createEvaluatorAgent(providerWith({ ...valid, masteryLevel: "ready" })).evaluate(request)).rejects.toBeInstanceOf(AgentOutputError);
+  });
+
+  it("rejects excessive model-generated misconceptions", async () => {
+    await expect(createEvaluatorAgent(providerWith({
+      ...valid,
+      misconceptions: Array.from({ length: AGENT_OUTPUT_LIMITS.evaluationMisconceptions + 1 }, () => "误解"),
+    })).evaluate(request)).rejects.toBeInstanceOf(AgentOutputError);
   });
 
   it("rejects oversized submissions before calling the provider", async () => {

@@ -2,15 +2,15 @@ import { validateGoal } from "../../src/planner";
 import type { RecoveryPlan, RecoveryPlanRequest } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
-import { isValidAgentTask } from "./request-validation";
+import { AGENT_OUTPUT_LIMITS, isBoundedText, isValidAgentTask } from "./request-validation";
 
 export const RECOVERY_PLAN_SCHEMA: JsonSchema = {
   type: "object",
   additionalProperties: false,
   required: ["headline", "acknowledgement", "totalMinutes", "steps", "nextCheckIn"],
   properties: {
-    headline: { type: "string", minLength: 1 },
-    acknowledgement: { type: "string", minLength: 1 },
+    headline: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.titleCharacters },
+    acknowledgement: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
     totalMinutes: { type: "integer", minimum: 10, maximum: 20 },
     steps: {
       type: "array",
@@ -21,20 +21,16 @@ export const RECOVERY_PLAN_SCHEMA: JsonSchema = {
         additionalProperties: false,
         required: ["id", "title", "description", "minutes"],
         properties: {
-          id: { type: "string", minLength: 1 },
-          title: { type: "string", minLength: 1 },
-          description: { type: "string", minLength: 1 },
+          id: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.idCharacters },
+          title: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.titleCharacters },
+          description: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
           minutes: { type: "integer", minimum: 3, maximum: 12 },
         },
       },
     },
-    nextCheckIn: { type: "string", minLength: 1 },
+    nextCheckIn: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.shortTextCharacters },
   },
 };
-
-function nonEmpty(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
 
 function validateRequest(request: RecoveryPlanRequest): void {
   if (!request || typeof request !== "object") throw new TypeError("恢复计划请求格式无效");
@@ -60,7 +56,9 @@ function validateRequest(request: RecoveryPlanRequest): void {
 }
 
 function assertPlan(plan: RecoveryPlan, dailyMinutes: number): void {
-  if (!plan || !nonEmpty(plan.headline) || !nonEmpty(plan.acknowledgement) || !nonEmpty(plan.nextCheckIn)) {
+  if (!plan || !isBoundedText(plan.headline, AGENT_OUTPUT_LIMITS.titleCharacters)
+    || !isBoundedText(plan.acknowledgement, AGENT_OUTPUT_LIMITS.longTextCharacters)
+    || !isBoundedText(plan.nextCheckIn, AGENT_OUTPUT_LIMITS.shortTextCharacters)) {
     throw new AgentOutputError("Coach Agent returned incomplete recovery guidance");
   }
   if (!Array.isArray(plan.steps) || plan.steps.length < 2 || plan.steps.length > 3) {
@@ -69,7 +67,9 @@ function assertPlan(plan: RecoveryPlan, dailyMinutes: number): void {
   const ids = new Set<string>();
   let minutes = 0;
   for (const step of plan.steps) {
-    if (!step || !nonEmpty(step.id) || !nonEmpty(step.title) || !nonEmpty(step.description)
+    if (!step || !isBoundedText(step.id, AGENT_OUTPUT_LIMITS.idCharacters)
+      || !isBoundedText(step.title, AGENT_OUTPUT_LIMITS.titleCharacters)
+      || !isBoundedText(step.description, AGENT_OUTPUT_LIMITS.longTextCharacters)
       || !Number.isInteger(step.minutes) || step.minutes < 3 || step.minutes > 12) {
       throw new AgentOutputError("Coach Agent returned an invalid recovery step");
     }

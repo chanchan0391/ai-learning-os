@@ -3,7 +3,7 @@ import type { ReviewAssessment } from "../../src/types";
 import type { ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
 import { createReviewAgent } from "./review-agent";
-import { AGENT_INPUT_LIMITS } from "./request-validation";
+import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS } from "./request-validation";
 
 const request = {
   goal: { subject: "AI Agent 工程", currentLevel: "Java 工程师", targetOutcome: "交付 Agent 应用", dailyMinutes: 60, durationWeeks: 12 },
@@ -28,6 +28,13 @@ describe("Review Agent", () => {
 
   it("rejects an assessment that rewrites the learner answer", async () => {
     await expect(createReviewAgent(providerWith({ ...valid, answer: "different" })).assess(request)).rejects.toBeInstanceOf(AgentOutputError);
+  });
+
+  it("rejects oversized model-generated review feedback", async () => {
+    await expect(createReviewAgent(providerWith({
+      ...valid,
+      feedback: "x".repeat(AGENT_OUTPUT_LIMITS.longTextCharacters + 1),
+    })).assess(request)).rejects.toBeInstanceOf(AgentOutputError);
   });
 
   it("rejects an excessive number of review items before calling the provider", async () => {

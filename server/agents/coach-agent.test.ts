@@ -3,7 +3,7 @@ import type { RecoveryPlan, RecoveryPlanRequest } from "../../src/types";
 import type { ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
 import { createCoachAgent } from "./coach-agent";
-import { AGENT_INPUT_LIMITS } from "./request-validation";
+import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS } from "./request-validation";
 
 const request: RecoveryPlanRequest = {
   goal: { subject: "AI Agent 工程", currentLevel: "Java 工程师", targetOutcome: "交付 Agent 应用", dailyMinutes: 60, durationWeeks: 12 },
@@ -33,6 +33,18 @@ describe("Coach Agent", () => {
   it("rejects plans whose step minutes do not match the total", async () => {
     const value: RecoveryPlan = {
       headline: "重新开始", acknowledgement: "欢迎回来。", totalMinutes: 15,
+      steps: [
+        { id: "one", title: "回忆", description: "写下已知内容。", minutes: 4 },
+        { id: "two", title: "行动", description: "完成第一步。", minutes: 8 },
+      ],
+      nextCheckIn: "是否更容易继续？",
+    };
+    await expect(createCoachAgent(providerWith(value)).createRecoveryPlan(request)).rejects.toBeInstanceOf(AgentOutputError);
+  });
+
+  it("rejects oversized model-generated recovery guidance", async () => {
+    const value: RecoveryPlan = {
+      headline: "x".repeat(AGENT_OUTPUT_LIMITS.titleCharacters + 1), acknowledgement: "欢迎回来。", totalMinutes: 12,
       steps: [
         { id: "one", title: "回忆", description: "写下已知内容。", minutes: 4 },
         { id: "two", title: "行动", description: "完成第一步。", minutes: 8 },

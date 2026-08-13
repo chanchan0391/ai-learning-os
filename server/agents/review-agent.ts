@@ -2,7 +2,7 @@ import { validateGoal } from "../../src/planner";
 import type { ReviewAssessment, ReviewAssessmentRequest, ReviewRecall } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
-import { AGENT_INPUT_LIMITS, isBoundedText, isBoundedTextList } from "./request-validation";
+import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS, isBoundedText, isBoundedTextList } from "./request-validation";
 
 const RECALLS: ReviewRecall[] = ["forgot", "effortful", "easy"];
 
@@ -11,11 +11,11 @@ export const REVIEW_ASSESSMENT_SCHEMA: JsonSchema = {
   additionalProperties: false,
   required: ["answer", "score", "recall", "evidence", "feedback"],
   properties: {
-    answer: { type: "string", minLength: 1 },
+    answer: { type: "string", minLength: 1, maxLength: AGENT_INPUT_LIMITS.reviewAnswerCharacters },
     score: { type: "integer", minimum: 0, maximum: 4 },
     recall: { type: "string", enum: RECALLS },
-    evidence: { type: "string", minLength: 1 },
-    feedback: { type: "string", minLength: 1 },
+    evidence: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
+    feedback: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
   },
 };
 
@@ -40,8 +40,8 @@ function validateRequest(request: ReviewAssessmentRequest): void {
 
 function assertAssessment(value: ReviewAssessment, answer: string): void {
   if (!value || value.answer !== answer.trim() || !Number.isInteger(value.score) || value.score < 0 || value.score > 4
-    || value.recall !== expectedRecall(value.score) || typeof value.evidence !== "string" || !value.evidence.trim()
-    || typeof value.feedback !== "string" || !value.feedback.trim()) {
+    || value.recall !== expectedRecall(value.score) || !isBoundedText(value.evidence, AGENT_OUTPUT_LIMITS.longTextCharacters)
+    || !isBoundedText(value.feedback, AGENT_OUTPUT_LIMITS.longTextCharacters)) {
     throw new AgentOutputError("Review Agent returned an invalid or unsupported assessment");
   }
 }

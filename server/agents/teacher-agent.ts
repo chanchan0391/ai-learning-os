@@ -2,16 +2,16 @@ import { validateGoal } from "../../src/planner";
 import type { TeachingSession, TeachingSessionRequest } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
-import { AGENT_INPUT_LIMITS, isBoundedTextList, isValidAgentTask } from "./request-validation";
+import { AGENT_INPUT_LIMITS, AGENT_OUTPUT_LIMITS, isBoundedText, isBoundedTextList, isValidAgentTask } from "./request-validation";
 
 export const TEACHING_SESSION_SCHEMA: JsonSchema = {
   type: "object",
   additionalProperties: false,
   required: ["concept", "explanation", "workedExample", "understandingChecks", "practicePrompt", "completionSignals"],
   properties: {
-    concept: { type: "string", minLength: 1 },
-    explanation: { type: "string", minLength: 1 },
-    workedExample: { type: "string", minLength: 1 },
+    concept: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.titleCharacters },
+    explanation: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
+    workedExample: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
     understandingChecks: {
       type: "array",
       minItems: 2,
@@ -21,20 +21,16 @@ export const TEACHING_SESSION_SCHEMA: JsonSchema = {
         additionalProperties: false,
         required: ["id", "prompt", "expectedSignals"],
         properties: {
-          id: { type: "string", minLength: 1 },
-          prompt: { type: "string", minLength: 1 },
-          expectedSignals: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+          id: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.idCharacters },
+          prompt: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
+          expectedSignals: { type: "array", minItems: 1, maxItems: AGENT_OUTPUT_LIMITS.teacherSignalsPerCheck, items: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.shortTextCharacters } },
         },
       },
     },
-    practicePrompt: { type: "string", minLength: 1 },
-    completionSignals: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+    practicePrompt: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.longTextCharacters },
+    completionSignals: { type: "array", minItems: 1, maxItems: AGENT_OUTPUT_LIMITS.teacherCompletionSignals, items: { type: "string", minLength: 1, maxLength: AGENT_OUTPUT_LIMITS.shortTextCharacters } },
   },
 };
-
-function nonEmpty(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
 
 function validateRequest(request: TeachingSessionRequest): void {
   if (!request || typeof request !== "object") throw new TypeError("教学请求格式无效");
@@ -49,7 +45,10 @@ function validateRequest(request: TeachingSessionRequest): void {
 }
 
 function assertSession(value: TeachingSession): void {
-  if (!value || !nonEmpty(value.concept) || !nonEmpty(value.explanation) || !nonEmpty(value.workedExample) || !nonEmpty(value.practicePrompt)) {
+  if (!value || !isBoundedText(value.concept, AGENT_OUTPUT_LIMITS.titleCharacters)
+    || !isBoundedText(value.explanation, AGENT_OUTPUT_LIMITS.longTextCharacters)
+    || !isBoundedText(value.workedExample, AGENT_OUTPUT_LIMITS.longTextCharacters)
+    || !isBoundedText(value.practicePrompt, AGENT_OUTPUT_LIMITS.longTextCharacters)) {
     throw new AgentOutputError("Teacher Agent returned incomplete teaching content");
   }
   if (!Array.isArray(value.understandingChecks) || value.understandingChecks.length < 2 || value.understandingChecks.length > 3) {
@@ -57,13 +56,17 @@ function assertSession(value: TeachingSession): void {
   }
   const ids = new Set<string>();
   for (const check of value.understandingChecks) {
-    if (!check || !nonEmpty(check.id) || !nonEmpty(check.prompt) || !Array.isArray(check.expectedSignals) || check.expectedSignals.length === 0 || check.expectedSignals.some((signal) => !nonEmpty(signal))) {
+    if (!check || !isBoundedText(check.id, AGENT_OUTPUT_LIMITS.idCharacters)
+      || !isBoundedText(check.prompt, AGENT_OUTPUT_LIMITS.longTextCharacters)
+      || !Array.isArray(check.expectedSignals) || check.expectedSignals.length === 0
+      || !isBoundedTextList(check.expectedSignals, AGENT_OUTPUT_LIMITS.teacherSignalsPerCheck, AGENT_OUTPUT_LIMITS.shortTextCharacters)) {
       throw new AgentOutputError("Teacher Agent returned an invalid understanding check");
     }
     ids.add(check.id);
   }
   if (ids.size !== value.understandingChecks.length) throw new AgentOutputError("Teacher Agent returned duplicate understanding check IDs");
-  if (!Array.isArray(value.completionSignals) || value.completionSignals.length === 0 || value.completionSignals.some((signal) => !nonEmpty(signal))) {
+  if (!Array.isArray(value.completionSignals) || value.completionSignals.length === 0
+    || !isBoundedTextList(value.completionSignals, AGENT_OUTPUT_LIMITS.teacherCompletionSignals, AGENT_OUTPUT_LIMITS.shortTextCharacters)) {
     throw new AgentOutputError("Teacher Agent returned no observable completion signals");
   }
 }
