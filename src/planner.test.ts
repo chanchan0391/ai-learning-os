@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completionRate, generateLearningPlan, validateGoal } from "./planner";
+import { completionRate, generateLearningPlan, LEARNING_GOAL_LIMITS, validateGoal } from "./planner";
 import type { LearningGoal } from "./types";
 
 const goal: LearningGoal = {
@@ -35,10 +35,16 @@ describe("Planner Agent domain", () => {
     ]);
   });
 
+  it("rejects malformed and oversized goals before planning", () => {
+    expect(validateGoal({ subject: "AI", currentLevel: "ok", targetOutcome: "ship", dailyMinutes: undefined, durationWeeks: 1 } as unknown as LearningGoal))
+      .toContain("每日时间应在 15–240 分钟之间");
+    expect(validateGoal({ ...goal, subject: "x".repeat(LEARNING_GOAL_LIMITS.subjectCharacters + 1) }))
+      .toContain(`学习主题不能超过 ${LEARNING_GOAL_LIMITS.subjectCharacters} 个字符`);
+  });
+
   it("calculates completion percentage", () => {
     const plan = generateLearningPlan(goal);
     plan.today[0].completed = true;
     expect(completionRate(plan.today)).toBe(25);
   });
 });
-

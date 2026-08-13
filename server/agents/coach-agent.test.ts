@@ -3,6 +3,7 @@ import type { RecoveryPlan, RecoveryPlanRequest } from "../../src/types";
 import type { ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
 import { createCoachAgent } from "./coach-agent";
+import { AGENT_INPUT_LIMITS } from "./request-validation";
 
 const request: RecoveryPlanRequest = {
   goal: { subject: "AI Agent 工程", currentLevel: "Java 工程师", targetOutcome: "交付 Agent 应用", dailyMinutes: 60, durationWeeks: 12 },
@@ -47,5 +48,15 @@ describe("Coach Agent", () => {
       ...request,
       interruption: { ...request.interruption, inactiveDays: 1 },
     })).rejects.toThrow("学习中断原因与上下文不一致");
+  });
+
+  it("rejects oversized task descriptions before calling the provider", async () => {
+    let called = false;
+    const provider: ModelProvider = { id: "fake", isAiEnabled: true, async generateStructured<T>() { called = true; return { model: "fake", value: {} as T }; } };
+    await expect(createCoachAgent(provider).createRecoveryPlan({
+      ...request,
+      currentTask: { ...request.currentTask, description: "x".repeat(AGENT_INPUT_LIMITS.taskDescriptionCharacters + 1) },
+    })).rejects.toThrow("当前学习任务格式无效或超出长度限制");
+    expect(called).toBe(false);
   });
 });

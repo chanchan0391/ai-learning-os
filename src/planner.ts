@@ -14,13 +14,25 @@ const GENERIC_TOPICS = [
   ["综合交付", "完成可以展示和复盘的成果"],
 ] as const;
 
+export const LEARNING_GOAL_LIMITS = {
+  subjectCharacters: 200,
+  currentLevelCharacters: 2_000,
+  targetOutcomeCharacters: 2_000,
+} as const;
+
 export function validateGoal(goal: LearningGoal): string[] {
   const errors: string[] = [];
-  if (goal.subject.trim().length < 2) errors.push("请填写要学习的主题");
-  if (goal.currentLevel.trim().length < 2) errors.push("请描述当前基础");
-  if (goal.targetOutcome.trim().length < 4) errors.push("请描述希望达成的结果");
-  if (goal.dailyMinutes < 15 || goal.dailyMinutes > 240) errors.push("每日时间应在 15–240 分钟之间");
-  if (goal.durationWeeks < 1 || goal.durationWeeks > 52) errors.push("学习周期应在 1–52 周之间");
+  const value = goal as Partial<LearningGoal> | null | undefined;
+  if (typeof value?.subject !== "string" || value.subject.trim().length < 2) errors.push("请填写要学习的主题");
+  else if (value.subject.length > LEARNING_GOAL_LIMITS.subjectCharacters) errors.push(`学习主题不能超过 ${LEARNING_GOAL_LIMITS.subjectCharacters} 个字符`);
+  if (typeof value?.currentLevel !== "string" || value.currentLevel.trim().length < 2) errors.push("请描述当前基础");
+  else if (value.currentLevel.length > LEARNING_GOAL_LIMITS.currentLevelCharacters) errors.push(`当前基础不能超过 ${LEARNING_GOAL_LIMITS.currentLevelCharacters} 个字符`);
+  if (typeof value?.targetOutcome !== "string" || value.targetOutcome.trim().length < 4) errors.push("请描述希望达成的结果");
+  else if (value.targetOutcome.length > LEARNING_GOAL_LIMITS.targetOutcomeCharacters) errors.push(`目标成果不能超过 ${LEARNING_GOAL_LIMITS.targetOutcomeCharacters} 个字符`);
+  const dailyMinutes = value?.dailyMinutes;
+  if (typeof dailyMinutes !== "number" || !Number.isInteger(dailyMinutes) || dailyMinutes < 15 || dailyMinutes > 240) errors.push("每日时间应在 15–240 分钟之间");
+  const durationWeeks = value?.durationWeeks;
+  if (typeof durationWeeks !== "number" || !Number.isInteger(durationWeeks) || durationWeeks < 1 || durationWeeks > 52) errors.push("学习周期应在 1–52 周之间");
   return errors;
 }
 

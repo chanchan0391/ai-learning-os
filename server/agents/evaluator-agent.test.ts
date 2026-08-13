@@ -3,6 +3,7 @@ import type { EvaluationResult } from "../../src/types";
 import type { ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
 import { createEvaluatorAgent } from "./evaluator-agent";
+import { AGENT_INPUT_LIMITS } from "./request-validation";
 
 const request = {
   goal: { subject: "AI Agent 工程", currentLevel: "Java 工程师", targetOutcome: "交付 Agent 应用", dailyMinutes: 60, durationWeeks: 12 },
@@ -35,5 +36,13 @@ describe("Evaluator Agent", () => {
 
   it("rejects a mastery label that contradicts the score threshold", async () => {
     await expect(createEvaluatorAgent(providerWith({ ...valid, masteryLevel: "ready" })).evaluate(request)).rejects.toBeInstanceOf(AgentOutputError);
+  });
+
+  it("rejects oversized submissions before calling the provider", async () => {
+    let called = false;
+    const provider: ModelProvider = { id: "fake", isAiEnabled: true, async generateStructured<T>() { called = true; return { model: "fake", value: valid as T }; } };
+    await expect(createEvaluatorAgent(provider).evaluate({ ...request, submission: "x".repeat(AGENT_INPUT_LIMITS.submissionCharacters + 1) }))
+      .rejects.toThrow("学习成果不能为空或超出长度限制");
+    expect(called).toBe(false);
   });
 });

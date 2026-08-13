@@ -2,6 +2,7 @@ import { validateGoal } from "../../src/planner";
 import type { EvaluationDimension, EvaluationRequest, EvaluationResult } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
+import { AGENT_INPUT_LIMITS, isBoundedText, isValidAgentTask } from "./request-validation";
 
 const DIMENSIONS: EvaluationDimension[] = ["understanding", "application", "evidence", "reflection"];
 
@@ -43,8 +44,8 @@ function validateRequest(request: EvaluationRequest): void {
   if (!request || typeof request !== "object") throw new TypeError("评估请求格式无效");
   const errors = validateGoal(request.goal);
   if (errors.length > 0) throw new TypeError(errors.join("；"));
-  if (typeof request.task?.title !== "string" || !request.task.title.trim() || typeof request.task.description !== "string" || !request.task.description.trim()) throw new TypeError("评估任务不能为空");
-  if (typeof request.submission !== "string" || !request.submission.trim()) throw new TypeError("学习成果不能为空");
+  if (!isValidAgentTask(request.task)) throw new TypeError("评估任务格式无效或超出长度限制");
+  if (!isBoundedText(request.submission, AGENT_INPUT_LIMITS.submissionCharacters)) throw new TypeError("学习成果不能为空或超出长度限制");
 }
 
 function assertEvaluation(value: EvaluationResult): void {

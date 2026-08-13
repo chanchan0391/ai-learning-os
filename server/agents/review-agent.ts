@@ -2,6 +2,7 @@ import { validateGoal } from "../../src/planner";
 import type { ReviewAssessment, ReviewAssessmentRequest, ReviewRecall } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
+import { AGENT_INPUT_LIMITS, isBoundedText, isBoundedTextList } from "./request-validation";
 
 const RECALLS: ReviewRecall[] = ["forgot", "effortful", "easy"];
 
@@ -28,12 +29,13 @@ function validateRequest(request: ReviewAssessmentRequest): void {
   if (!request || typeof request !== "object") throw new TypeError("复习判分请求格式无效");
   const errors = validateGoal(request.goal);
   if (errors.length > 0) throw new TypeError(errors.join("；"));
-  if (!Array.isArray(request.items) || request.items.length === 0 || request.items.some((item) =>
-    !Number.isInteger(item?.sourceDay) || item.sourceDay < 1 || typeof item.nextAction !== "string" || !item.nextAction.trim()
-    || !Array.isArray(item.misconceptions) || item.misconceptions.some((value) => typeof value !== "string" || !value.trim()))) {
-    throw new TypeError("复习薄弱点不能为空");
+  if (!Array.isArray(request.items) || request.items.length === 0 || request.items.length > AGENT_INPUT_LIMITS.reviewItems
+    || request.items.some((item) => !Number.isInteger(item?.sourceDay) || item.sourceDay < 1
+      || !isBoundedText(item.nextAction, AGENT_INPUT_LIMITS.reviewTextCharacters)
+      || !isBoundedTextList(item.misconceptions, AGENT_INPUT_LIMITS.reviewMisconceptionsPerItem, AGENT_INPUT_LIMITS.reviewTextCharacters))) {
+    throw new TypeError("复习薄弱点不能为空或超出长度限制");
   }
-  if (typeof request.answer !== "string" || !request.answer.trim()) throw new TypeError("主动回忆答案不能为空");
+  if (!isBoundedText(request.answer, AGENT_INPUT_LIMITS.reviewAnswerCharacters)) throw new TypeError("主动回忆答案不能为空或超出长度限制");
 }
 
 function assertAssessment(value: ReviewAssessment, answer: string): void {

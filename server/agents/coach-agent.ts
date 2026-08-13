@@ -2,6 +2,7 @@ import { validateGoal } from "../../src/planner";
 import type { RecoveryPlan, RecoveryPlanRequest } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
+import { isValidAgentTask } from "./request-validation";
 
 export const RECOVERY_PLAN_SCHEMA: JsonSchema = {
   type: "object",
@@ -39,8 +40,8 @@ function validateRequest(request: RecoveryPlanRequest): void {
   if (!request || typeof request !== "object") throw new TypeError("恢复计划请求格式无效");
   const errors = validateGoal(request.goal);
   if (errors.length > 0) throw new TypeError(errors.join("；"));
-  if (!request.currentTask || !nonEmpty(request.currentTask.title) || !nonEmpty(request.currentTask.description)) {
-    throw new TypeError("当前学习任务不能为空");
+  if (!isValidAgentTask(request.currentTask)) {
+    throw new TypeError("当前学习任务格式无效或超出长度限制");
   }
   const interruption = request.interruption;
   if (!interruption || !["inactivity", "repeated-difficulty", "both"].includes(interruption.reason)

@@ -3,6 +3,7 @@ import type { ReviewAssessment } from "../../src/types";
 import type { ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
 import { createReviewAgent } from "./review-agent";
+import { AGENT_INPUT_LIMITS } from "./request-validation";
 
 const request = {
   goal: { subject: "AI Agent 工程", currentLevel: "Java 工程师", targetOutcome: "交付 Agent 应用", dailyMinutes: 60, durationWeeks: 12 },
@@ -27,5 +28,15 @@ describe("Review Agent", () => {
 
   it("rejects an assessment that rewrites the learner answer", async () => {
     await expect(createReviewAgent(providerWith({ ...valid, answer: "different" })).assess(request)).rejects.toBeInstanceOf(AgentOutputError);
+  });
+
+  it("rejects an excessive number of review items before calling the provider", async () => {
+    let called = false;
+    const provider: ModelProvider = { id: "fake", isAiEnabled: true, async generateStructured<T>() { called = true; return { model: "fake", value: valid as T }; } };
+    await expect(createReviewAgent(provider).assess({
+      ...request,
+      items: Array.from({ length: AGENT_INPUT_LIMITS.reviewItems + 1 }, (_, index) => ({ sourceDay: index + 1, nextAction: "practice", misconceptions: [] })),
+    })).rejects.toThrow("复习薄弱点不能为空或超出长度限制");
+    expect(called).toBe(false);
   });
 });

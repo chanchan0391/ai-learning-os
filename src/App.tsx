@@ -57,10 +57,11 @@ import {
   weeklyLearningTrend,
 } from "./learning-state";
 import { BrowserLearningStateRepository, previewPortfolioMerge, type ArchivedLearningState } from "./learning-storage";
-import { completionRate, validateGoal } from "./planner";
+import { completionRate, LEARNING_GOAL_LIMITS, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import { readBoundedJson } from "./bounded-json-response";
+import { AGENT_INPUT_LIMITS } from "./agent-limits";
 import type { LearningStateExport, PortfolioLearningStateExport } from "./learning-state";
 import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, RecoveryPlan, ReviewAssessment, StageLearningNote, StageRetrospective, TaskDifficulty, TeachingSession } from "./types";
 
@@ -1341,9 +1342,9 @@ export function App() {
           </div>
           <form className="goal-card" onSubmit={createPlan}>
             <div className="card-heading"><span>01</span><div><strong>创建学习目标</strong><small>约 2 分钟</small></div></div>
-            <label>我想学习<input value={goal.subject} onChange={(event) => setGoal({ ...goal, subject: event.target.value })} /></label>
-            <label>我现在的基础<textarea rows={2} value={goal.currentLevel} onChange={(event) => setGoal({ ...goal, currentLevel: event.target.value })} /></label>
-            <label>我希望最终能够<textarea rows={2} value={goal.targetOutcome} onChange={(event) => setGoal({ ...goal, targetOutcome: event.target.value })} /></label>
+            <label>我想学习<input maxLength={LEARNING_GOAL_LIMITS.subjectCharacters} value={goal.subject} onChange={(event) => setGoal({ ...goal, subject: event.target.value })} /></label>
+            <label>我现在的基础<textarea maxLength={LEARNING_GOAL_LIMITS.currentLevelCharacters} rows={2} value={goal.currentLevel} onChange={(event) => setGoal({ ...goal, currentLevel: event.target.value })} /></label>
+            <label>我希望最终能够<textarea maxLength={LEARNING_GOAL_LIMITS.targetOutcomeCharacters} rows={2} value={goal.targetOutcome} onChange={(event) => setGoal({ ...goal, targetOutcome: event.target.value })} /></label>
             <div className="field-row">
               <label>每天投入<div className="input-unit"><input type="number" min="15" max="240" value={goal.dailyMinutes} onChange={(event) => setGoal({ ...goal, dailyMinutes: Number(event.target.value) })} /><span>分钟</span></div></label>
               <label>学习周期<div className="input-unit"><input type="number" min="1" max="52" value={goal.durationWeeks} onChange={(event) => setGoal({ ...goal, durationWeeks: Number(event.target.value) })} /><span>周</span></div></label>
@@ -1778,7 +1779,7 @@ export function App() {
                       <span className="agent-label">Review Agent · 主动回忆自动判分</span>
                       <p>不查资料回答上面的复习问题。系统只根据答案中可见的证据判分，并自动安排下一次复习。</p>
                       <label>闭卷主动回忆答案
-                        <textarea rows={4} value={reviewDrafts[task.id] ?? ""} onChange={(event) => setReviewDrafts((drafts) => ({ ...drafts, [task.id]: event.target.value }))} />
+                        <textarea maxLength={AGENT_INPUT_LIMITS.reviewAnswerCharacters} rows={4} value={reviewDrafts[task.id] ?? ""} onChange={(event) => setReviewDrafts((drafts) => ({ ...drafts, [task.id]: event.target.value }))} />
                       </label>
                       <button className="primary-action" disabled={busyTaskId === task.id} onClick={() => assessReview(task)}>
                         {busyTaskId === task.id ? "Review Agent 正在判分…" : "提交答案并自动安排复习"} <span>→</span>
@@ -1820,7 +1821,7 @@ export function App() {
                     <div className="agent-workspace">
                       <span className="agent-label">Evaluator Agent · 成果提交</span>
                       <label>描述成果、关键步骤、验证证据和复盘
-                        <textarea rows={5} value={submission} onChange={(event) => setSubmissionDrafts({ ...submissionDrafts, [task.id]: event.target.value })} placeholder="例如：我实现了……；运行结果是……；失败案例是……；下一次我会……" />
+                        <textarea maxLength={AGENT_INPUT_LIMITS.submissionCharacters} rows={5} value={submission} onChange={(event) => setSubmissionDrafts({ ...submissionDrafts, [task.id]: event.target.value })} placeholder="例如：我实现了……；运行结果是……；失败案例是……；下一次我会……" />
                       </label>
                       <button className="primary-action" disabled={!submission.trim() || busyTaskId === task.id} onClick={() => evaluatePractice(task)}>{busyTaskId === task.id ? "Evaluator Agent 正在评估…" : "提交成果并获取反馈"} <span>→</span></button>
                     </div>

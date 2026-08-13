@@ -2,6 +2,7 @@ import { validateGoal } from "../../src/planner";
 import type { TeachingSession, TeachingSessionRequest } from "../../src/types";
 import type { JsonSchema, ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
+import { AGENT_INPUT_LIMITS, isBoundedTextList, isValidAgentTask } from "./request-validation";
 
 export const TEACHING_SESSION_SCHEMA: JsonSchema = {
   type: "object",
@@ -39,8 +40,10 @@ function validateRequest(request: TeachingSessionRequest): void {
   if (!request || typeof request !== "object") throw new TypeError("教学请求格式无效");
   const errors = validateGoal(request.goal);
   if (errors.length > 0) throw new TypeError(errors.join("；"));
-  if (!request.task || !nonEmpty(request.task.title) || !nonEmpty(request.task.description)) throw new TypeError("教学任务不能为空");
-  if (!request.learnerContext || !Array.isArray(request.learnerContext.knownConcepts) || !Array.isArray(request.learnerContext.recentErrors)) {
+  if (!isValidAgentTask(request.task)) throw new TypeError("教学任务格式无效或超出长度限制");
+  if (!request.learnerContext
+    || !isBoundedTextList(request.learnerContext.knownConcepts, AGENT_INPUT_LIMITS.learnerContextItems, AGENT_INPUT_LIMITS.learnerContextItemCharacters)
+    || !isBoundedTextList(request.learnerContext.recentErrors, AGENT_INPUT_LIMITS.learnerContextItems, AGENT_INPUT_LIMITS.learnerContextItemCharacters)) {
     throw new TypeError("学习者上下文格式无效");
   }
 }

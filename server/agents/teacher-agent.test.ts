@@ -3,6 +3,7 @@ import type { TeachingSession } from "../../src/types";
 import type { ModelProvider } from "../ai/model-provider";
 import { AgentOutputError } from "./agent-errors";
 import { createTeacherAgent } from "./teacher-agent";
+import { AGENT_INPUT_LIMITS } from "./request-validation";
 
 const request = {
   goal: { subject: "AI Agent 工程", currentLevel: "Java 工程师", targetOutcome: "交付 Agent 应用", dailyMinutes: 60, durationWeeks: 12 },
@@ -37,5 +38,15 @@ describe("Teacher Agent", () => {
       practicePrompt: "练习", completionSignals: ["可运行"],
     };
     await expect(createTeacherAgent(providerWith(value)).createSession(request)).rejects.toBeInstanceOf(AgentOutputError);
+  });
+
+  it("rejects oversized learner context before calling the provider", async () => {
+    let called = false;
+    const provider: ModelProvider = { id: "fake", isAiEnabled: true, async generateStructured<T>() { called = true; return { model: "fake", value: {} as T }; } };
+    await expect(createTeacherAgent(provider).createSession({
+      ...request,
+      learnerContext: { ...request.learnerContext, knownConcepts: ["x".repeat(AGENT_INPUT_LIMITS.learnerContextItemCharacters + 1)] },
+    })).rejects.toThrow("学习者上下文格式无效");
+    expect(called).toBe(false);
   });
 });
