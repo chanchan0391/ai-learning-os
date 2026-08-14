@@ -88,7 +88,7 @@ describe("dev database backup", () => {
 
     const result = runBackup(fixture);
 
-    expect(result.status).toBe(1);
+    expect(result.status, result.stderr).toBe(1);
     expect(result.stderr).toContain("failed PostgreSQL archive verification");
     expect(existsSync(fixture.backupDir)).toBe(true);
     expect(readdirSync(fixture.backupDir)).toEqual([".backup.lock"]);
@@ -226,7 +226,7 @@ describe("dev operational runner updates", () => {
     for (const runner of ["deploy-main.sh", "backup.sh"]) {
       expect(statSync(join(baseDir, runner)).mtimeMs).toBe(fixedTime.getTime());
     }
-  });
+  }, 15_000);
 
   it("restarts and verifies unhealthy services for an already deployed revision", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-runners-reconcile-"));
@@ -270,6 +270,92 @@ describe("dev operational runner updates", () => {
       "--user restart ai-learning-os-api.service ai-learning-os-web.service",
     );
   });
+
+  it("verifies the previous release after a failed deployment rolls back", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-rollback-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const incoming = join(baseDir, "incoming");
+    const oldRelease = join(baseDir, "releases", "old");
+    const archiveRoot = join(root, "archive");
+    const fakeBin = join(root, "bin");
+    const systemctlLog = join(root, "systemctl.log");
+    const oldRevision = "a".repeat(40);
+    const newRevision = "b".repeat(40);
+    const archive = join(incoming, `${newRevision}.tar.gz`);
+    mkdirSync(incoming, { recursive: true });
+    mkdirSync(oldRelease, { recursive: true });
+    mkdirSync(join(archiveRoot, "deploy/dev"), { recursive: true });
+    mkdirSync(fakeBin);
+    writeFileSync(join(oldRelease, "DEPLOYED_COMMIT"), `${oldRevision}\n`);
+    symlinkSync(oldRelease, join(baseDir, "current"));
+    writeFileSync(join(baseDir, "app.env"), "");
+    executable(join(baseDir, "backup.sh"), "#!/bin/sh\nexit 0\n");
+    writeFileSync(join(archiveRoot, "package.json"), "{}\n");
+    writeFileSync(join(archiveRoot, "deploy/dev/deploy-main.sh"), "new deploy runner\n");
+    writeFileSync(join(archiveRoot, "deploy/dev/backup.sh"), "new backup runner\n");
+    const tarResult = spawnSync("tar", ["-czf", archive, "-C", archiveRoot, "."], { encoding: "utf8" });
+    expect(tarResult.status, tarResult.stderr).toBe(0);
+    const checksum = createHash("sha256").update(readFileSync(archive)).digest("hex");
+
+    executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+    executable(join(fakeBin, "mv"), "#!/bin/sh\nif [ \"\${1:-}\" = \"-Tf\" ]; then shift; exec /bin/mv -f \"$@\"; fi\nexec /bin/mv \"$@\"\n");
+    executable(join(fakeBin, "npm"), "#!/bin/sh\nexit 0\n");
+    executable(join(fakeBin, "sha256sum"), "#!/bin/sh\nprintf '%s  %s\\n' \"$FAKE_ARCHIVE_CHECKSUM\" \"$1\"\n");
+    const fakeNode = executable(join(fakeBin, "node"), `#!/bin/sh
+set -eu
+if [ "\${1:-}" = "-e" ]; then
+  body=$(cat)
+  expected=$3
+  printf '%s' "$body" | grep -Fq "\\\"releaseRevision\\\":\\\"$expected\\\""
+fi
+`);
+    executable(join(fakeBin, "systemctl"), `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"
+case "$*" in
+  *" show "*) printf '%s\n' "$FAKE_MAIN_PID" ;;
+  *) exit 0 ;;
+esac
+`);
+    executable(join(fakeBin, "curl"), `#!/bin/sh
+set -eu
+case "$*" in
+  *8787/api/health*) printf '%s\n' '{"status":"ok","releaseRevision":"${oldRevision}","aiEnabled":true,"syncEnabled":true}' ;;
+  *) exit 0 ;;
+esac
+`);
+    executable(join(fakeBin, "readlink"), `#!/bin/sh
+if [ "\${1:-}" = "-f" ]; then
+  case "\${2:-}" in
+    /proc/*/exe|"$FAKE_NODE_BIN") printf '%s\n' "$FAKE_NODE_BIN"; exit 0 ;;
+  esac
+fi
+exec /usr/bin/readlink "$@"
+`);
+    executable(join(fakeBin, "sleep"), "#!/bin/sh\nexit 0\n");
+
+    const result = spawnSync("sh", [deployScript, newRevision, archive, checksum], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        AI_LEARNING_DEPLOY_DIR: baseDir,
+        AI_LEARNING_NODE_BIN: fakeNode,
+        AI_LEARNING_NPM_BIN: join(fakeBin, "npm"),
+        FAKE_MAIN_PID: String(process.pid),
+        FAKE_NODE_BIN: fakeNode,
+        FAKE_ARCHIVE_CHECKSUM: checksum,
+        FAKE_SYSTEMCTL_LOG: systemctlLog,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(`Health check failed for ${newRevision}; rolling back`);
+    expect(result.stderr).toContain(`Rolled back to ${oldRevision} and verified service health`);
+    expect(readFileSync(join(baseDir, "current", "DEPLOYED_COMMIT"), "utf8")).toBe(`${oldRevision}\n`);
+    expect(readFileSync(systemctlLog, "utf8").match(/--user restart/g)).toHaveLength(2);
+  }, 15_000);
 
   it("removes failed uploads and stale deployment artifacts", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-incoming-"));

@@ -45,6 +45,7 @@ service_uses_selected_node() {
 }
 
 deployment_is_healthy() {
+  expected_revision=$1
   systemctl --user is-active --quiet ai-learning-os-api.service ai-learning-os-web.service \
     && service_uses_selected_node ai-learning-os-api.service \
     && service_uses_selected_node ai-learning-os-web.service \
@@ -58,13 +59,14 @@ deployment_is_healthy() {
         const expectedRevision = process.argv[1];
         if (health.status !== "ok" || health.releaseRevision !== expectedRevision || !health.aiEnabled || !health.syncEnabled) process.exit(1);
       });
-    ' "$revision"
+    ' "$expected_revision"
 }
 
 wait_for_healthy_deployment() {
+  expected_revision=$1
   attempt=1
   while [ "$attempt" -le 30 ]; do
-    if deployment_is_healthy; then return 0; fi
+    if deployment_is_healthy "$expected_revision"; then return 0; fi
     sleep 1
     attempt=$((attempt + 1))
   done
@@ -123,13 +125,13 @@ if [ -f "$current_link/DEPLOYED_COMMIT" ]; then
 fi
 if [ "$current_revision" = "$revision" ]; then
   update_operational_runners
-  if deployment_is_healthy; then
+  if deployment_is_healthy "$revision"; then
     echo "Revision $revision is already deployed and healthy"
     exit 0
   fi
   echo "Revision $revision is current but unhealthy; restarting services"
   systemctl --user restart ai-learning-os-api.service ai-learning-os-web.service
-  if wait_for_healthy_deployment; then
+  if wait_for_healthy_deployment "$revision"; then
     echo "Reconciled revision $revision successfully"
     exit 0
   fi
@@ -202,13 +204,18 @@ mv -Tf "$next_link" "$current_link"
 
 systemctl --user restart ai-learning-os-api.service ai-learning-os-web.service
 
-if ! wait_for_healthy_deployment; then
+if ! wait_for_healthy_deployment "$revision"; then
   echo "Health check failed for $revision; rolling back" >&2
   if [ -n "$previous_target" ] && [ -d "$previous_target" ]; then
     rollback_link="$base_dir/.rollback-$revision"
     ln -s "$previous_target" "$rollback_link"
     mv -Tf "$rollback_link" "$current_link"
     systemctl --user restart ai-learning-os-api.service ai-learning-os-web.service
+    if wait_for_healthy_deployment "$current_revision"; then
+      echo "Rolled back to $current_revision and verified service health" >&2
+    else
+      echo "Rollback to $current_revision did not restore service health" >&2
+    fi
   else
     rm -f "$current_link"
     systemctl --user stop ai-learning-os-web.service ai-learning-os-api.service
