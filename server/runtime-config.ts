@@ -1,7 +1,7 @@
 import pg, { type Pool, type PoolConfig } from "pg";
 import { isIP } from "node:net";
 import type { AppOptions } from "./app";
-import { PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolver";
+import { DEFAULT_SESSION_COOKIE_NAMES, PostgresSessionPrincipalResolver } from "./auth/postgres-session-resolver";
 import { DEFAULT_MAX_ACTIVE_DEVICES, PostgresSessionLifecycle } from "./auth/postgres-session-lifecycle";
 import { MAX_OIDC_UPSTREAM_TIMEOUT_MS, StandardOidcClient, type OidcConfig } from "./auth/oidc-client";
 import { PostgresModelUsageLedger, type AccountModelBudget, type ModelUsagePolicy } from "./ai/model-usage";
@@ -397,7 +397,10 @@ export function createSyncRuntime(
 
   const databasePoolConfig = readDatabasePoolConfig(env);
   const pool = createPool(config.connectionString, toDatabasePoolConfig(config.connectionString, databasePoolConfig, config.databaseTls));
-  const sessions = new PostgresSessionPrincipalResolver(pool, config.sessionCookieName);
+  const sessions = new PostgresSessionPrincipalResolver(
+    pool,
+    config.sessionCookieName ?? DEFAULT_SESSION_COOKIE_NAMES,
+  );
   const sessionLifecycle = new PostgresSessionLifecycle(pool, undefined, undefined, undefined, undefined, config.maxActiveDevices);
   return {
     appOptions: {

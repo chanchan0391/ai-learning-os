@@ -2,7 +2,13 @@ import { readFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { DataType, newDb } from "pg-mem";
 import { afterEach, describe, expect, it } from "vitest";
-import { hashSessionToken, PostgresSessionPrincipalResolver } from "./postgres-session-resolver";
+import {
+  DEFAULT_SESSION_COOKIE_NAME,
+  hashSessionToken,
+  LEGACY_SESSION_COOKIE_NAME,
+  PostgresSessionPrincipalResolver,
+  readSessionToken,
+} from "./postgres-session-resolver";
 
 const pools: Array<{ end(): Promise<void> }> = [];
 
@@ -35,6 +41,16 @@ function request(cookie?: string): IncomingMessage {
 }
 
 describe("PostgreSQL session principal resolver", () => {
+  it("prefers the host-only default, migrates the legacy name, and rejects ambiguous duplicates", () => {
+    expect(readSessionToken(`${LEGACY_SESSION_COOKIE_NAME}=legacy-token`)).toBe("legacy-token");
+    expect(readSessionToken(
+      `${LEGACY_SESSION_COOKIE_NAME}=legacy-token; ${DEFAULT_SESSION_COOKIE_NAME}=host-token`,
+    )).toBe("host-token");
+    expect(readSessionToken(`${DEFAULT_SESSION_COOKIE_NAME}=first; ${DEFAULT_SESSION_COOKIE_NAME}=second`)).toBeNull();
+    expect(readSessionToken("custom=first; custom=second", "custom")).toBeNull();
+    expect(readSessionToken("custom=same; custom=same", "custom")).toBe("same");
+  });
+
   it("resolves an active opaque session and stores only its hash", async () => {
     const { pool, resolve } = await setup();
     const token = "local-test-session-token-with-enough-entropy";

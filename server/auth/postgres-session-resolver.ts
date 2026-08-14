@@ -3,7 +3,9 @@ import type { IncomingMessage } from "node:http";
 import type { Pool, QueryResultRow } from "pg";
 import type { AuthenticatedPrincipalResolver } from "./authenticated-principal";
 
-export const DEFAULT_SESSION_COOKIE_NAME = "ai_learning_os_session";
+export const DEFAULT_SESSION_COOKIE_NAME = "__Host-ai_learning_os_session";
+export const LEGACY_SESSION_COOKIE_NAME = "ai_learning_os_session";
+export const DEFAULT_SESSION_COOKIE_NAMES = [DEFAULT_SESSION_COOKIE_NAME, LEGACY_SESSION_COOKIE_NAME] as const;
 const MAX_SESSION_TOKEN_LENGTH = 512;
 
 interface SessionRow extends QueryResultRow {
@@ -11,14 +13,22 @@ interface SessionRow extends QueryResultRow {
   device_id: string;
 }
 
-export function readSessionToken(header: string | undefined, name = DEFAULT_SESSION_COOKIE_NAME): string | null {
+export function readSessionToken(
+  header: string | undefined,
+  names: string | readonly string[] = DEFAULT_SESSION_COOKIE_NAMES,
+): string | null {
   if (!header) return null;
-  for (const part of header.split(";")) {
-    const separator = part.indexOf("=");
-    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
-    const value = part.slice(separator + 1).trim();
-    if (!value || value.length > MAX_SESSION_TOKEN_LENGTH) return null;
-    return value;
+  for (const name of typeof names === "string" ? [names] : names) {
+    const values = new Set<string>();
+    for (const part of header.split(";")) {
+      const separator = part.indexOf("=");
+      if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+      const value = part.slice(separator + 1).trim();
+      if (!value || value.length > MAX_SESSION_TOKEN_LENGTH) return null;
+      values.add(value);
+    }
+    if (values.size > 1) return null;
+    if (values.size === 1) return values.values().next().value ?? null;
   }
   return null;
 }
@@ -35,12 +45,12 @@ export function hashSessionToken(token: string): string {
 export class PostgresSessionPrincipalResolver {
   constructor(
     private readonly pool: Pool,
-    private readonly cookieName = DEFAULT_SESSION_COOKIE_NAME,
+    private readonly cookieNames: string | readonly string[] = DEFAULT_SESSION_COOKIE_NAMES,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
   readonly resolve: AuthenticatedPrincipalResolver = async (request: IncomingMessage) => {
-    const token = readSessionToken(request.headers.cookie, this.cookieName);
+    const token = readSessionToken(request.headers.cookie, this.cookieNames);
     if (!token) return null;
     const result = await this.pool.query<SessionRow>(
       `SELECT s.user_id, s.device_id

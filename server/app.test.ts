@@ -1,6 +1,6 @@
 import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./app";
 import { DeterministicModelProvider } from "./ai/deterministic-provider";
 import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest } from "./ai/model-provider";
@@ -883,6 +883,38 @@ describe("AI Learning OS API", () => {
     expect(calls).toEqual(["rotate:old-token", "revoke:new-token", "devices:old-token", "revoke-device:old-token:device-2", "revoke-all:old-token", "delete:old-token"]);
   });
 
+  it("migrates a legacy default session to the host-only cookie on rotation", async () => {
+    const rotate = vi.fn(async () => ({
+      token: "host-token",
+      userId: "user-1",
+      deviceId: "device-1",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }));
+    const baseUrl = await startApi(new DeterministicModelProvider(), {
+      allowedSyncOrigins: ["https://learn.example"],
+      resolvePrincipal: async () => ({ userId: "user-1", deviceId: "device-1" }),
+      sessionLifecycle: {
+        establishFromOidc: async () => { throw new Error("not used"); },
+        rotate,
+        revoke: async () => true,
+        revokeAll: async () => true,
+        listActiveDevices: async () => [],
+        revokeDevice: async () => true,
+      },
+    });
+
+    const response = await fetch(`${baseUrl}/api/auth/session/refresh`, {
+      method: "POST",
+      headers: { Cookie: "ai_learning_os_session=legacy-token", Origin: "https://learn.example" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(rotate).toHaveBeenCalledWith("legacy-token");
+    expect(response.headers.get("set-cookie")).toMatch(
+      /^__Host-ai_learning_os_session=host-token; Path=\/; HttpOnly; Secure; SameSite=Lax/,
+    );
+  });
+
   it("rejects cross-origin session changes", async () => {
     const baseUrl = await startApi(new DeterministicModelProvider(), {
       allowedSyncOrigins: ["https://learn.example"],
@@ -927,7 +959,7 @@ describe("AI Learning OS API", () => {
     const callback = await fetch(`${baseUrl}/api/auth/callback?code=code&state=state`, { redirect: "manual" });
     expect(callback.status).toBe(302);
     expect(callback.headers.get("location")).toBe("/progress");
-    expect(callback.headers.get("set-cookie")).toContain("ai_learning_os_session=application-token");
+    expect(callback.headers.get("set-cookie")).toContain("__Host-ai_learning_os_session=application-token");
     expect(established).toHaveLength(1);
   });
 

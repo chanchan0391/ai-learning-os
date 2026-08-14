@@ -13,7 +13,11 @@ import { MeteredModelProvider, type ModelUsageLedger } from "./ai/model-usage";
 import type { AuthenticatedPrincipalResolver } from "./auth/authenticated-principal";
 import type { OidcAuthenticator } from "./auth/oidc-client";
 import { AuthDeviceLimitError, type AccountDataLifecycle, type SessionLifecycle } from "./auth/postgres-session-lifecycle";
-import { DEFAULT_SESSION_COOKIE_NAME, readSessionToken } from "./auth/postgres-session-resolver";
+import {
+  DEFAULT_SESSION_COOKIE_NAME,
+  DEFAULT_SESSION_COOKIE_NAMES,
+  readSessionToken,
+} from "./auth/postgres-session-resolver";
 import type { SubscriptionEntitlementResolver } from "./billing/subscription-entitlement";
 import type { DatabasePoolCapacityMonitor } from "./observability/database-capacity";
 import { requestOutcome, type RequestLogEvent, type RequestLogSink } from "./observability/request-observability";
@@ -503,6 +507,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           return sendJson(response, 503, { error: "Authentication is not configured" });
         }
         const cookieName = options.sessionCookieName ?? DEFAULT_SESSION_COOKIE_NAME;
+        const readableCookieNames = options.sessionCookieName ?? DEFAULT_SESSION_COOKIE_NAMES;
         if (request.method === "GET" && url.pathname === "/api/auth/login") {
           if (!options.oidcAuthenticator) return sendJson(response, 503, { error: "OIDC login is not configured" });
           const authorization = await options.oidcAuthenticator.begin(url.searchParams.get("returnTo") ?? undefined);
@@ -542,7 +547,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         }
         if (request.method === "POST" && url.pathname === "/api/auth/session/refresh") {
           requireAllowedOrigin(request, options.allowedSyncOrigins);
-          const token = readSessionToken(request.headers.cookie, cookieName);
+          const token = readSessionToken(request.headers.cookie, readableCookieNames);
           const rotated = token ? await options.sessionLifecycle.rotate(token) : null;
           if (!rotated) {
             auditReason = "authentication-required";
@@ -559,7 +564,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         if (request.method === "POST" && url.pathname === "/api/auth/logout") {
           requireAllowedOrigin(request, options.allowedSyncOrigins);
           auditPrincipal = await options.resolvePrincipal(request);
-          const token = readSessionToken(request.headers.cookie, cookieName);
+          const token = readSessionToken(request.headers.cookie, readableCookieNames);
           if (token) await options.sessionLifecycle.revoke(token);
           return sendJson(response, 200, { authenticated: false }, {
             "Set-Cookie": sessionCookie(cookieName, undefined, 0),
@@ -568,7 +573,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         if (request.method === "POST" && url.pathname === "/api/auth/logout-all") {
           requireAllowedOrigin(request, options.allowedSyncOrigins);
           const principal = await options.resolvePrincipal(request);
-          const token = readSessionToken(request.headers.cookie, cookieName);
+          const token = readSessionToken(request.headers.cookie, readableCookieNames);
           if (!principal || !token) {
             auditReason = "authentication-required";
             return sendJson(response, 401, { error: "Authentication required" }, {
@@ -589,7 +594,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         }
         if (request.method === "GET" && url.pathname === "/api/auth/devices") {
           const principal = await options.resolvePrincipal(request);
-          const token = readSessionToken(request.headers.cookie, cookieName);
+          const token = readSessionToken(request.headers.cookie, readableCookieNames);
           if (!principal || !token) {
             auditReason = "authentication-required";
             return sendJson(response, 401, { error: "Authentication required" });
@@ -606,7 +611,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         if (request.method === "DELETE" && targetDeviceId) {
           requireAllowedOrigin(request, options.allowedSyncOrigins);
           const principal = await options.resolvePrincipal(request);
-          const token = readSessionToken(request.headers.cookie, cookieName);
+          const token = readSessionToken(request.headers.cookie, readableCookieNames);
           if (!principal || !token) {
             auditReason = "authentication-required";
             return sendJson(response, 401, { error: "Authentication required" });
@@ -626,7 +631,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           requireAllowedOrigin(request, options.allowedSyncOrigins);
           if (!options.accountDataLifecycle) return sendJson(response, 503, { error: "Account deletion is not configured" });
           const principal = await options.resolvePrincipal(request);
-          const token = readSessionToken(request.headers.cookie, cookieName);
+          const token = readSessionToken(request.headers.cookie, readableCookieNames);
           if (!principal || !token) {
             auditReason = "authentication-required";
             return sendJson(response, 401, { error: "Authentication required" }, {
