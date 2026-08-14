@@ -39,6 +39,8 @@ export const DATABASE_POOL_DEFAULTS = {
 } as const;
 
 export const RUNTIME_RESOURCE_LIMITS = {
+  apiPort: 65_535,
+  apiHostCharacters: 253,
   agentConcurrency: 100,
   databasePoolMax: 100,
   databaseConnectionTimeoutMillis: 60_000,
@@ -61,6 +63,11 @@ export const RUNTIME_RESOURCE_LIMITS = {
   oidcTransactionSecretCharacters: 4_096,
 } as const;
 
+export interface ApiListenConfig {
+  host: string;
+  port: number;
+}
+
 export interface DatabasePoolRuntimeConfig {
   max: number;
   connectionTimeoutMillis: number;
@@ -81,6 +88,22 @@ function parseBoundedPositiveInteger(value: string, name: string, maximum: numbe
   const parsed = parsePositiveInteger(value, name);
   if (parsed > maximum) throw new Error(`${name} must be no greater than ${maximum}`);
   return parsed;
+}
+
+/** Keeps network binding explicit and rejects DNS or socket-path ambiguity at startup. */
+export function readApiListenConfig(env: NodeJS.ProcessEnv): ApiListenConfig {
+  const portValue = env.AI_API_PORT?.trim();
+  const port = portValue
+    ? parseBoundedPositiveInteger(portValue, "AI_API_PORT", RUNTIME_RESOURCE_LIMITS.apiPort)
+    : 8_787;
+  const host = env.AI_API_HOST?.trim() || "127.0.0.1";
+  if (host.length > RUNTIME_RESOURCE_LIMITS.apiHostCharacters) {
+    throw new Error(`AI_API_HOST must be no greater than ${RUNTIME_RESOURCE_LIMITS.apiHostCharacters} characters`);
+  }
+  if (host !== "localhost" && !isIP(host)) {
+    throw new Error("AI_API_HOST must be localhost or an exact IPv4 or IPv6 address");
+  }
+  return { host, port };
 }
 
 export function readAgentConcurrencyLimit(env: NodeJS.ProcessEnv): number | undefined {

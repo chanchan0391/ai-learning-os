@@ -4,6 +4,7 @@ import { configureHttpServer, createShutdownHandler } from "./http-server-lifecy
 import {
   assertModelUsageSafety,
   createSyncRuntime,
+  readApiListenConfig,
   readAgentConcurrencyLimit,
   readTrustedProxyAddresses,
 } from "./runtime-config";
@@ -16,8 +17,7 @@ try {
   if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
 }
 
-const port = Number(process.env.AI_API_PORT ?? 8787);
-const host = process.env.AI_API_HOST?.trim() || "127.0.0.1";
+const { port, host } = readApiListenConfig(process.env);
 const provider = createModelProvider();
 const syncRuntime = createSyncRuntime(process.env);
 assertModelUsageSafety(provider.isAiEnabled, Boolean(syncRuntime.appOptions.modelUsageLedger), process.env);

@@ -5,6 +5,7 @@ import {
   createSyncRuntime,
   DATABASE_POOL_DEFAULTS,
   RUNTIME_RESOURCE_LIMITS,
+  readApiListenConfig,
   readAgentConcurrencyLimit,
   readDatabaseConnectionConfig,
   readDatabasePoolConfig,
@@ -14,6 +15,23 @@ import {
 } from "./runtime-config";
 
 describe("sync runtime configuration", () => {
+  it("loads explicit bounded API listener settings", () => {
+    expect(readApiListenConfig({})).toEqual({ host: "127.0.0.1", port: 8_787 });
+    expect(readApiListenConfig({ AI_API_HOST: "::", AI_API_PORT: "65535" }))
+      .toEqual({ host: "::", port: 65_535 });
+    expect(readApiListenConfig({ AI_API_HOST: "localhost", AI_API_PORT: "3000" }))
+      .toEqual({ host: "localhost", port: 3_000 });
+  });
+
+  it("rejects ambiguous or invalid API listener settings", () => {
+    expect(() => readApiListenConfig({ AI_API_PORT: "0" })).toThrow(/positive integer/);
+    expect(() => readApiListenConfig({ AI_API_PORT: "65536" })).toThrow(/no greater than 65535/);
+    expect(() => readApiListenConfig({ AI_API_PORT: "8787.5" })).toThrow(/positive integer/);
+    expect(() => readApiListenConfig({ AI_API_HOST: "api.internal.example" })).toThrow(/exact IPv4 or IPv6/);
+    expect(() => readApiListenConfig({ AI_API_HOST: "/tmp/api.sock" })).toThrow(/exact IPv4 or IPv6/);
+    expect(() => readApiListenConfig({ AI_API_HOST: "1".repeat(254) })).toThrow(/no greater than 253/);
+  });
+
   it("fails closed when a live model has no authenticated usage ledger", () => {
     expect(() => assertModelUsageSafety(true, false, {})).toThrow(/require account model budgets/);
     expect(() => assertModelUsageSafety(true, false, { AI_ALLOW_UNMETERED_LIVE_MODEL: "yes" })).toThrow(/true or false/);
