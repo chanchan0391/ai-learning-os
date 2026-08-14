@@ -16,6 +16,12 @@ interface Fixture {
   docker: string;
 }
 
+function addHealthyDeploymentCommands(fakeBin: string, revision: string) {
+  executable(join(fakeBin, "systemctl"), "#!/bin/sh\nset -eu\ncase \"$*\" in\n  *\" show \"*) printf '%s\\n' \"$FAKE_MAIN_PID\" ;;\n  *\" is-active \"*) exit 0 ;;\n  *) exit 0 ;;\nesac\n");
+  executable(join(fakeBin, "curl"), `#!/bin/sh\nset -eu\ncase "$*" in\n  *8787/api/health*) printf '%s\\n' '{"status":"ok","releaseRevision":"${revision}","aiEnabled":true,"syncEnabled":true}' ;;\n  *) exit 0 ;;\nesac\n`);
+  executable(join(fakeBin, "readlink"), "#!/bin/sh\nprintf '%s\\n' \"$FAKE_NODE_BIN\"\n");
+}
+
 function executable(path: string, contents: string): string {
   writeFileSync(path, contents);
   chmodSync(path, 0o755);
@@ -130,6 +136,7 @@ describe("dev operational runner updates", () => {
     writeFileSync(join(baseDir, "deploy-main.sh"), "old deploy runner\n");
     writeFileSync(join(baseDir, "backup.sh"), "old backup runner\n");
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+    addHealthyDeploymentCommands(fakeBin, revision);
 
     const result = spawnSync("sh", [deployScript, revision], {
       encoding: "utf8",
@@ -137,6 +144,9 @@ describe("dev operational runner updates", () => {
         ...process.env,
         PATH: `${fakeBin}:${process.env.PATH}`,
         AI_LEARNING_DEPLOY_DIR: baseDir,
+        AI_LEARNING_NODE_BIN: process.execPath,
+        FAKE_MAIN_PID: String(process.pid),
+        FAKE_NODE_BIN: process.execPath,
       },
     });
 
@@ -166,6 +176,7 @@ describe("dev operational runner updates", () => {
       utimesSync(join(baseDir, runner), fixedTime, fixedTime);
     }
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+    addHealthyDeploymentCommands(fakeBin, revision);
 
     const result = spawnSync("sh", [deployScript, revision], {
       encoding: "utf8",
@@ -173,6 +184,9 @@ describe("dev operational runner updates", () => {
         ...process.env,
         PATH: `${fakeBin}:${process.env.PATH}`,
         AI_LEARNING_DEPLOY_DIR: baseDir,
+        AI_LEARNING_NODE_BIN: process.execPath,
+        FAKE_MAIN_PID: String(process.pid),
+        FAKE_NODE_BIN: process.execPath,
       },
     });
 
@@ -180,6 +194,49 @@ describe("dev operational runner updates", () => {
     for (const runner of ["deploy-main.sh", "backup.sh"]) {
       expect(statSync(join(baseDir, runner)).mtimeMs).toBe(fixedTime.getTime());
     }
+  });
+
+  it("restarts and verifies unhealthy services for an already deployed revision", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-runners-reconcile-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const current = join(baseDir, "current");
+    const releaseOperations = join(current, "deploy/dev");
+    const fakeBin = join(root, "bin");
+    const systemctlLog = join(root, "systemctl.log");
+    const healthState = join(root, "healthy");
+    const revision = "d".repeat(40);
+    mkdirSync(releaseOperations, { recursive: true });
+    mkdirSync(fakeBin);
+    writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
+    for (const runner of ["deploy-main.sh", "backup.sh"]) {
+      writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
+      executable(join(baseDir, runner), `${runner} current\n`);
+    }
+    executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+    executable(join(fakeBin, "systemctl"), `#!/bin/sh\nset -eu\nprintf '%s\\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"\ncase "$*" in\n  *" restart "*) touch "$FAKE_HEALTH_STATE" ;;\n  *" show "*) printf '%s\\n' "$FAKE_MAIN_PID" ;;\n  *" is-active "*) [ -f "$FAKE_HEALTH_STATE" ] ;;\n  *) exit 0 ;;\nesac\n`);
+    executable(join(fakeBin, "curl"), `#!/bin/sh\nset -eu\n[ -f "$FAKE_HEALTH_STATE" ]\ncase "$*" in\n  *8787/api/health*) printf '%s\\n' '{"status":"ok","releaseRevision":"${revision}","aiEnabled":true,"syncEnabled":true}' ;;\n  *) exit 0 ;;\nesac\n`);
+    executable(join(fakeBin, "readlink"), "#!/bin/sh\nprintf '%s\\n' \"$FAKE_NODE_BIN\"\n");
+
+    const result = spawnSync("sh", [deployScript, revision], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        AI_LEARNING_DEPLOY_DIR: baseDir,
+        AI_LEARNING_NODE_BIN: process.execPath,
+        FAKE_MAIN_PID: String(process.pid),
+        FAKE_NODE_BIN: process.execPath,
+        FAKE_SYSTEMCTL_LOG: systemctlLog,
+        FAKE_HEALTH_STATE: healthState,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`Reconciled revision ${revision} successfully`);
+    expect(readFileSync(systemctlLog, "utf8")).toContain(
+      "--user restart ai-learning-os-api.service ai-learning-os-web.service",
+    );
   });
 
   it("reconciles remote runners when the application revision is already current", () => {

@@ -37,6 +37,33 @@ service_uses_selected_node() {
     && [ "$(readlink -f "/proc/$service_pid/exe")" = "$(readlink -f "$node_bin")" ]
 }
 
+deployment_is_healthy() {
+  systemctl --user is-active --quiet ai-learning-os-api.service ai-learning-os-web.service \
+    && service_uses_selected_node ai-learning-os-api.service \
+    && service_uses_selected_node ai-learning-os-web.service \
+    && curl --fail --silent --show-error http://127.0.0.1:8088/ >/dev/null \
+    && curl --fail --silent --show-error http://127.0.0.1:8787/api/health \
+    | "$node_bin" -e '
+      let body = "";
+      process.stdin.on("data", (chunk) => body += chunk);
+      process.stdin.on("end", () => {
+        const health = JSON.parse(body);
+        const expectedRevision = process.argv[1];
+        if (health.status !== "ok" || health.releaseRevision !== expectedRevision || !health.aiEnabled || !health.syncEnabled) process.exit(1);
+      });
+    ' "$revision"
+}
+
+wait_for_healthy_deployment() {
+  attempt=1
+  while [ "$attempt" -le 30 ]; do
+    if deployment_is_healthy; then return 0; fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
 case "$requested_revision" in
   "") revision=$(git ls-remote "$repository" refs/heads/main | awk 'NR == 1 { print $1 }') ;;
   *[!0-9a-f]* ) echo "Revision must be a full lowercase Git commit SHA" >&2; exit 2 ;;
@@ -62,8 +89,18 @@ if [ -f "$current_link/DEPLOYED_COMMIT" ]; then
 fi
 if [ "$current_revision" = "$revision" ]; then
   update_operational_runners
-  echo "Revision $revision is already deployed"
-  exit 0
+  if deployment_is_healthy; then
+    echo "Revision $revision is already deployed and healthy"
+    exit 0
+  fi
+  echo "Revision $revision is current but unhealthy; restarting services"
+  systemctl --user restart ai-learning-os-api.service ai-learning-os-web.service
+  if wait_for_healthy_deployment; then
+    echo "Reconciled revision $revision successfully"
+    exit 0
+  fi
+  echo "Health reconciliation failed for current revision $revision" >&2
+  exit 1
 fi
 
 release_dir="$base_dir/releases/$revision"
@@ -137,32 +174,7 @@ mv -Tf "$next_link" "$current_link"
 
 systemctl --user restart ai-learning-os-api.service ai-learning-os-web.service
 
-healthy=false
-attempt=1
-while [ "$attempt" -le 30 ]; do
-  if systemctl --user is-active --quiet ai-learning-os-api.service ai-learning-os-web.service \
-    && service_uses_selected_node ai-learning-os-api.service \
-    && service_uses_selected_node ai-learning-os-web.service \
-    && curl --fail --silent --show-error http://127.0.0.1:8088/ >/dev/null \
-    && curl --fail --silent --show-error http://127.0.0.1:8787/api/health \
-    | "$node_bin" -e '
-      let body = "";
-      process.stdin.on("data", (chunk) => body += chunk);
-      process.stdin.on("end", () => {
-        const health = JSON.parse(body);
-        const expectedRevision = process.argv[1];
-        if (health.status !== "ok" || health.releaseRevision !== expectedRevision || !health.aiEnabled || !health.syncEnabled) process.exit(1);
-      });
-    ' "$revision"
-  then
-    healthy=true
-    break
-  fi
-  sleep 1
-  attempt=$((attempt + 1))
-done
-
-if [ "$healthy" != true ]; then
+if ! wait_for_healthy_deployment; then
   echo "Health check failed for $revision; rolling back" >&2
   if [ -n "$previous_target" ] && [ -d "$previous_target" ]; then
     rollback_link="$base_dir/.rollback-$revision"
