@@ -11,9 +11,10 @@ case "$node_bin" in
   *) unit_node_bin=$node_bin ;;
 esac
 systemctl_bin=${AI_LEARNING_SYSTEMCTL_BIN:-systemctl}
+flock_bin=${AI_LEARNING_FLOCK_BIN:-flock}
 proc_root=${AI_LEARNING_PROC_ROOT:-/proc}
 units="ai-learning-os-api.service ai-learning-os-web.service"
-lock_dir="$base_dir/.control-plane.lock"
+lock_file="$base_dir/control-plane.lock"
 required_sandbox_directives='UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
@@ -126,11 +127,15 @@ apply_units() {
 install_control_plane() {
   mkdir -p "$base_dir" "$unit_dir" "$base_dir/control-plane-backups"
   chmod 700 "$base_dir/control-plane-backups"
-  if ! mkdir "$lock_dir" 2>/dev/null; then
+  if ! command -v "$flock_bin" >/dev/null 2>&1; then
+    echo "flock is required for crash-safe control-plane locking" >&2
+    exit 1
+  fi
+  exec 9>"$lock_file"
+  if ! "$flock_bin" -n 9; then
     echo "Another control-plane operation is already running" >&2
     exit 1
   fi
-  trap 'rmdir "$lock_dir"' EXIT HUP INT TERM
 
   if status_control_plane >/dev/null 2>&1; then
     echo "Control plane is already current"

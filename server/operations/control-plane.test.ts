@@ -42,6 +42,7 @@ function makeFixture(): Fixture {
   const unitDir = join(root, "units");
   const procRoot = join(root, "proc");
   const fakeSystemctl = join(root, "systemctl");
+  const fakeFlock = join(root, "flock");
   const fakeLog = join(root, "systemctl.log");
   const pid = String(process.pid);
 
@@ -57,6 +58,8 @@ function makeFixture(): Fixture {
 
   writeFileSync(fakeSystemctl, `#!/bin/sh\nset -eu\nprintf '%s\\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"\ncase "$*" in\n  *" show "*) printf '%s\\n' "$FAKE_MAIN_PID" ;;\n  *" is-active "*) [ "\${FAKE_ACTIVE:-true}" = true ] ;;\n  *) exit 0 ;;\nesac\n`);
   chmodSync(fakeSystemctl, 0o755);
+  writeFileSync(fakeFlock, "#!/bin/sh\n[ \"${FAKE_FLOCK_AVAILABLE:-true}\" = true ]\n");
+  chmodSync(fakeFlock, 0o755);
 
   return {
     baseDir,
@@ -69,6 +72,7 @@ function makeFixture(): Fixture {
       AI_LEARNING_SYSTEMD_USER_DIR: unitDir,
       AI_LEARNING_NODE_BIN: process.execPath,
       AI_LEARNING_SYSTEMCTL_BIN: fakeSystemctl,
+      AI_LEARNING_FLOCK_BIN: fakeFlock,
       AI_LEARNING_PROC_ROOT: procRoot,
       FAKE_SYSTEMCTL_LOG: fakeLog,
       FAKE_MAIN_PID: pid,
@@ -104,6 +108,27 @@ describe("dev control-plane management", () => {
     const backups = readdirSync(backupRoot);
     expect(backups).toHaveLength(1);
     expect(readFileSync(join(backupRoot, backups[0], "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
+  });
+
+  it("does not let a stale lock artifact block a later install", () => {
+    const fixture = makeFixture();
+    mkdirSync(fixture.baseDir, { recursive: true });
+    writeFileSync(join(fixture.baseDir, "control-plane.lock"), "stale owner\n");
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("selected runtime");
+  });
+
+  it("refuses a concurrent control-plane install", () => {
+    const fixture = makeFixture();
+
+    const result = runControlPlane(fixture, "install", { FAKE_FLOCK_AVAILABLE: "false" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Another control-plane operation is already running");
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
   });
 
   it("reports installed unit drift without changing files", () => {

@@ -68,7 +68,7 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=false
 6. 健康后用已验证 release 中的版本原子更新远程 `deploy-main.sh` 与 `backup.sh`；publisher 发现同一 revision 时仍会进入远端轻量对账，并只在内容或执行权限漂移时刷新两者，避免激活后中断让后续部署或每日备份继续使用旧逻辑。
 7. 只保留最近三个 release，避免服务器磁盘持续增长。publisher 使用 macOS 自带的 `shlock` 原子记录进程归属；进程异常退出后，下一轮会识别失效 PID 并回收锁，不会永久停止自动发布。SSH/SCP 连接使用连接超时和 keepalive 失联判定；release 下载同时具有总时间和低速中止边界，网络停滞会让本轮明确失败并由后续定时轮次重试。
 
-用户服务 unit 属于 dev 主机控制面配置。`control-plane.sh` 会比较 release 与已安装 unit、服务启用/运行状态及实际 Node 进程路径。安装模式会串行化操作、备份既有 unit、原子替换、reload/restart，并在验证失败时自动恢复备份；部署健康门也会拒绝服务实际 Node 路径与选定运行时不一致的 release。
+用户服务 unit 属于 dev 主机控制面配置。`control-plane.sh` 会比较 release 与已安装 unit、服务启用/运行状态及实际 Node 进程路径。安装模式使用 `flock` 内核文件锁串行化操作；进程异常退出时锁会由操作系统释放，遗留的空锁文件不会阻塞下一次安装。安装过程会备份既有 unit、原子替换、reload/restart，并在验证失败时自动恢复备份；部署健康门也会拒绝服务实际 Node 路径与选定运行时不一致的 release。
 
 API 与 Web 用户服务采用 Node/V8 和当前 dev 用户管理器兼容的 systemd 沙箱基线：系统和 home 目录只读、临时目录私有、禁止提权、保护内核参数与控制组接口，并仅保留 Unix/IPv4/IPv6 地址族。控制面会拒绝缺少任一必需指令的源 unit，防止后续编辑静默移除基线。应用若确需新的可写路径或地址族，应先记录威胁模型和最小例外，不能整体关闭沙箱。当前 dev 主机不允许用户管理器更改 capability bounding set，因此未启用会隐式要求该操作的设备、内核模块、内核日志和时钟隔离；生产服务管理器应重新评估并尽可能启用这些限制。
 

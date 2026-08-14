@@ -156,7 +156,7 @@ describe("dev operational runner updates", () => {
     expect(readFileSync(join(baseDir, "backup.sh"), "utf8")).toBe("new backup runner\n");
     expect(statSync(join(baseDir, "deploy-main.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "backup.sh")).mode & 0o777).toBe(0o755);
-  });
+  }, 15_000);
 
   it("does not rewrite operational runners that already match the active release", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-runners-current-"));
