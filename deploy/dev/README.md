@@ -64,9 +64,9 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=false
 2. 执行 `npm ci` 和 `npm run check`。
 3. 在迁移前创建 PostgreSQL 备份，再在数据库 advisory lock 下执行带 SHA-256 完整性验证的幂等迁移。
 4. 原子切换 `current` 符号链接并重启 Web 与 API。
-5. 验证两个用户服务真正使用选定的 Node 二进制、Web 首页和 API 健康端点，同时要求 API 报告的 release revision 与待部署提交完全一致，并确认实时模型、同步和 PostgreSQL 就绪检查均通过；失败时恢复上一 release。
+5. 在有界连接与响应时间内验证两个用户服务真正使用选定的 Node 二进制、Web 首页和 API 健康端点，同时要求 API 报告的 release revision 与待部署提交完全一致，并确认实时模型、同步和 PostgreSQL 就绪检查均通过；失败时恢复上一 release。
 6. 健康后用已验证 release 中的版本原子更新远程 `deploy-main.sh` 与 `backup.sh`；publisher 发现同一 revision 时仍会进入远端轻量对账，并只在内容或执行权限漂移时刷新两者，避免激活后中断让后续部署或每日备份继续使用旧逻辑。
-7. 只保留最近三个 release，避免服务器磁盘持续增长。
+7. 只保留最近三个 release，避免服务器磁盘持续增长。publisher 的 SSH/SCP 连接使用连接超时和 keepalive 失联判定；release 下载同时具有总时间和低速中止边界，网络停滞会让本轮明确失败并由后续定时轮次重试。
 
 用户服务 unit 属于 dev 主机控制面配置。`control-plane.sh` 会比较 release 与已安装 unit、服务启用/运行状态及实际 Node 进程路径。安装模式会串行化操作、备份既有 unit、原子替换、reload/restart，并在验证失败时自动恢复备份；部署健康门也会拒绝服务实际 Node 路径与选定运行时不一致的 release。
 

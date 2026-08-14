@@ -6,6 +6,7 @@ checkout_dir=${AI_LEARNING_CHECKOUT_DIR:-"$HOME/Library/Caches/ai-learning-os-de
 deploy_host=${AI_LEARNING_DEPLOY_HOST:-dev}
 remote_base=${AI_LEARNING_REMOTE_BASE:-"/home/chanchan/services/ai-learning-os"}
 lock_dir=${TMPDIR:-/tmp}/ai-learning-os-publish-main.lock
+ssh_options="-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
 if ! mkdir "$lock_dir" 2>/dev/null; then
   echo "Another publisher is already running"
@@ -34,12 +35,12 @@ if [ "${#revision}" -ne 40 ]; then
   exit 2
 fi
 
-deployed_revision=$(ssh "$deploy_host" "test -f '$remote_base/current/DEPLOYED_COMMIT' && cat '$remote_base/current/DEPLOYED_COMMIT' || true")
+deployed_revision=$(ssh $ssh_options "$deploy_host" "test -f '$remote_base/current/DEPLOYED_COMMIT' && cat '$remote_base/current/DEPLOYED_COMMIT' || true")
 if [ "$deployed_revision" = "$revision" ]; then
   # Re-enter the remote deployment runner even when the application release is
   # current. Its same-revision path repairs operational runners after a deploy
   # that activated successfully but was interrupted before runner refresh.
-  ssh "$deploy_host" "'$remote_base/deploy-main.sh' '$revision'"
+  ssh $ssh_options "$deploy_host" "'$remote_base/deploy-main.sh' '$revision'"
   exit 0
 fi
 
@@ -53,6 +54,6 @@ if [ "${#archive_checksum}" -ne 64 ]; then
   echo "Could not calculate the full archive SHA-256 checksum" >&2
   exit 2
 fi
-ssh "$deploy_host" "mkdir -p '$remote_base/incoming'"
-scp -q "$temporary_archive" "$deploy_host:$remote_base/incoming/$revision.tar.gz.uploading"
-ssh "$deploy_host" "mv '$remote_base/incoming/$revision.tar.gz.uploading' '$remote_base/incoming/$revision.tar.gz' && '$remote_base/deploy-main.sh' '$revision' '$remote_base/incoming/$revision.tar.gz' '$archive_checksum'"
+ssh $ssh_options "$deploy_host" "mkdir -p '$remote_base/incoming'"
+scp -q $ssh_options "$temporary_archive" "$deploy_host:$remote_base/incoming/$revision.tar.gz.uploading"
+ssh $ssh_options "$deploy_host" "mv '$remote_base/incoming/$revision.tar.gz.uploading' '$remote_base/incoming/$revision.tar.gz' && '$remote_base/deploy-main.sh' '$revision' '$remote_base/incoming/$revision.tar.gz' '$archive_checksum'"

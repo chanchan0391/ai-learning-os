@@ -41,8 +41,8 @@ deployment_is_healthy() {
   systemctl --user is-active --quiet ai-learning-os-api.service ai-learning-os-web.service \
     && service_uses_selected_node ai-learning-os-api.service \
     && service_uses_selected_node ai-learning-os-web.service \
-    && curl --fail --silent --show-error http://127.0.0.1:8088/ >/dev/null \
-    && curl --fail --silent --show-error http://127.0.0.1:8787/api/health \
+    && curl --fail --silent --show-error --connect-timeout 2 --max-time 5 http://127.0.0.1:8088/ >/dev/null \
+    && curl --fail --silent --show-error --connect-timeout 2 --max-time 5 http://127.0.0.1:8787/api/health \
     | "$node_bin" -e '
       let body = "";
       process.stdin.on("data", (chunk) => body += chunk);
@@ -143,7 +143,8 @@ if [ -n "$provided_archive" ]; then
   rm -f "$provided_archive"
 else
   archive_url="https://github.com/chanchan0391/ai-learning-os/archive/$revision.tar.gz"
-  curl --fail --location --silent --show-error --retry 3 "$archive_url" \
+  curl --fail --location --silent --show-error --retry 3 \
+    --connect-timeout 10 --max-time 120 --speed-limit 1024 --speed-time 30 "$archive_url" \
     | tar -xz --strip-components=1 -C "$temporary_dir"
 fi
 

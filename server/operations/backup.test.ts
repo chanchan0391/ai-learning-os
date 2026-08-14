@@ -266,7 +266,23 @@ describe("dev operational runner updates", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(sshLog, "utf8")).toBe(
-      `dev-host '/srv/ai-learning-os/deploy-main.sh' '${revision}'\n`,
+      `-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 dev-host '/srv/ai-learning-os/deploy-main.sh' '${revision}'\n`,
     );
+  });
+
+  it("bounds deployment network operations so a partial outage cannot wedge the publisher", () => {
+    const deployment = readFileSync(deployScript, "utf8");
+    const publisher = readFileSync(publishScript, "utf8");
+
+    expect(deployment).toContain(
+      "curl --fail --silent --show-error --connect-timeout 2 --max-time 5 http://127.0.0.1:8088/",
+    );
+    expect(deployment).toContain(
+      "--connect-timeout 10 --max-time 120 --speed-limit 1024 --speed-time 30",
+    );
+    expect(publisher).toContain(
+      'ssh_options="-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"',
+    );
+    expect(publisher).toContain('scp -q $ssh_options');
   });
 });
