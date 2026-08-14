@@ -65,7 +65,7 @@ AI_SUBSCRIPTION_ENTITLEMENTS_REQUIRED=false
 3. 在迁移前创建 PostgreSQL 备份，再在数据库 advisory lock 下执行带 SHA-256 完整性验证的幂等迁移。
 4. 原子切换 `current` 符号链接并重启 Web 与 API。
 5. 在有界连接与响应时间内验证两个用户服务真正使用选定的 Node 二进制、Web 首页和 API 健康端点，同时要求 API 报告的 release revision 与待部署提交完全一致，并确认实时模型、同步和 PostgreSQL 就绪检查均通过；失败时恢复上一 release、重启服务，并使用上一提交标识重新通过完整健康门，明确报告回滚是否真正恢复服务。
-6. 健康后用已验证 release 中的版本原子更新远程 `deploy-main.sh` 与 `backup.sh`；publisher 发现同一 revision 时仍会进入远端轻量对账，并只在内容或执行权限漂移时刷新两者，避免激活后中断让后续部署或每日备份继续使用旧逻辑。
+6. 健康后用已验证 release 中的版本原子更新远程 `deploy-main.sh`、`backup.sh` 与只读 `verify-backup.sh`；publisher 发现同一 revision 时仍会进入远端轻量对账，并只在内容或执行权限漂移时刷新它们，避免激活后中断让后续部署、每日备份或恢复预检继续使用旧逻辑。
 7. 只保留最近三个已验证 release；健康门失败时，在回滚或停止服务后删除未通过验证且不再活动的 release。部署还会清理超过一天的完整或未完成上传归档及 `.deploy-*` 临时工作区；当前 revision 的托管归档在校验或部署失败时也会删除，避免连续失败或不可捕获终止持续占用服务器磁盘。所有删除都在部署锁内执行，只匹配受管目录的直属制品，并在失败 release 删除前重新确认它不是当前版本。publisher 每轮都会拒绝符号链接形式、不归当前用户所有或允许组/其他用户写入的缓存父目录、checkout 与 `.git`，并验证其 `origin` 与配置仓库完全一致，再从该远端解析不可变 revision，避免缓存重定向、跨用户替换或本地篡改静默改变部署来源；首次 clone 前会完成同样的父目录校验，clone 后重新验证生成目录。publisher 使用 macOS 自带的 `shlock` 原子记录进程归属；进程异常退出后，下一轮会识别失效 PID 并回收锁，不会永久停止自动发布。publisher 日志达到 5 MiB 后在发布锁内轮转，保留四代近期诊断记录；触发轮转的当前轮次会继续写入第一代文件，下一轮由 launchd 创建新的主日志路径，因此不会截断仍打开的文件描述符。可用 `AI_LEARNING_PUBLISH_LOG_MAX_BYTES` 调整单代阈值。SSH/SCP 连接使用连接超时和 keepalive 失联判定；release 下载同时具有总时间和低速中止边界，网络停滞会让本轮明确失败并由后续定时轮次重试。
 
 用户服务 unit 属于 dev 主机控制面配置。`control-plane.sh` 会比较 release 与已安装 unit、服务启用/运行状态及实际 Node 进程路径。安装模式使用 `flock` 内核文件锁串行化操作；进程异常退出时锁会由操作系统释放，遗留的空锁文件不会阻塞下一次安装。安装过程会备份既有 unit、原子替换、reload/restart，并在验证失败时自动恢复备份；部署健康门也会拒绝服务实际 Node 路径与选定运行时不一致的 release。
@@ -99,6 +99,12 @@ cat ~/services/ai-learning-os/current/DEPLOYED_COMMIT
 
 远端 `~/services/ai-learning-os/dev.env` 保存 Dex 测试账号配置，权限应为 `0600`。应用数据库密码和本地运行配置只保存在本地 `.env.local`，不得提交到 Git。
 
-远端每日运行 `backup.sh`，以 PostgreSQL custom format 保存数据库备份；脚本使用 `flock` 串行化定时任务与发布前备份，真实并发会在访问 PostgreSQL 前失败，进程异常退出后内核会自动释放锁，遗留的私有锁文件不会阻塞下一次执行。脚本会先拒绝空输出，再用 `pg_restore --list` 验证归档可读取，只有通过验证的临时文件才会以碰撞安全的名称发布。每份归档同时生成只引用文件名的 SHA-256 sidecar；恢复前应在备份目录运行 Linux `sha256sum -c <backup>.sha256`（macOS 使用 `shasum -a 256 -c`），再执行隔离恢复。备份目录权限为 `0700`，锁文件、归档与校验文件权限为 `0600`，超过 7 天的归档及其校验文件会成对删除。该开发基线不代替生产环境的异地加密备份。
+远端每日运行 `backup.sh`，以 PostgreSQL custom format 保存数据库备份；脚本使用 `flock` 串行化定时任务与发布前备份，真实并发会在访问 PostgreSQL 前失败，进程异常退出后内核会自动释放锁，遗留的私有锁文件不会阻塞下一次执行。脚本会先拒绝空输出，再用 `pg_restore --list` 验证归档可读取，只有通过验证的临时文件才会以碰撞安全的名称发布。每份归档同时生成只引用文件名的 SHA-256 sidecar；备份目录权限为 `0700`，锁文件、归档与校验文件权限为 `0600`，超过 7 天的归档及其校验文件会成对删除。该开发基线不代替生产环境的异地加密备份。
+
+恢复前必须先运行只读预检；它拒绝相对路径、符号链接、非当前用户文件、对组或其他用户开放的权限、错误 sidecar 文件名和校验和，并再次通过容器内 `pg_restore --list` 验证归档：
+
+```sh
+~/services/ai-learning-os/verify-backup.sh /home/chanchan/backups/ai-learning-os/<backup>.dump
+```
 
 恢复时必须新建隔离的临时数据库，禁止覆盖运行中的应用数据库。验证清单和演练结果记录在 [`../../docs/dev-recovery-drill.md`](../../docs/dev-recovery-drill.md)。

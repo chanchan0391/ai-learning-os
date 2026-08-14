@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const backupScript = join(repositoryRoot, "deploy/dev/backup.sh");
+const verifyBackupScript = join(repositoryRoot, "deploy/dev/verify-backup.sh");
 const deployScript = join(repositoryRoot, "deploy/dev/deploy-main.sh");
 const publishScript = join(repositoryRoot, "deploy/dev/publish-main.sh");
 const temporaryDirectories: string[] = [];
@@ -151,8 +152,71 @@ describe("dev database backup", () => {
   });
 });
 
+describe("dev backup restore preflight", () => {
+  function makeBackupFixture() {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-verify-backup-"));
+    temporaryDirectories.push(root);
+    const backupDir = join(root, "backups");
+    const backup = join(backupDir, "ai-learning-os-20260814T120000Z-test.dump");
+    const docker = executable(join(root, "docker"), "#!/bin/sh\nset -eu\n[ \"$*\" = 'exec -i pg pg_restore --list' ]\n[ \"$(cat)\" = 'valid custom archive' ]\n");
+    mkdirSync(backupDir, { mode: 0o700 });
+    writeFileSync(backup, "valid custom archive", { mode: 0o600 });
+    const checksum = createHash("sha256").update("valid custom archive").digest("hex");
+    writeFileSync(`${backup}.sha256`, `${checksum}  ${basename(backup)}\n`, { mode: 0o600 });
+    return { backup, backupDir, docker };
+  }
+
+  it("verifies a private managed backup without restoring it", () => {
+    const fixture = makeBackupFixture();
+    const result = spawnSync("sh", [verifyBackupScript, fixture.backup], {
+      encoding: "utf8",
+      env: { ...process.env, AI_LEARNING_DOCKER_BIN: fixture.docker },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Verified backup ai-learning-os-20260814T120000Z-test.dump");
+  });
+
+  it("rejects a tampered backup before PostgreSQL inspection", () => {
+    const fixture = makeBackupFixture();
+    writeFileSync(fixture.backup, "tampered archive", { mode: 0o600 });
+    const dockerMarker = join(dirname(fixture.docker), "docker-called");
+    executable(fixture.docker, "#!/bin/sh\ntouch \"$FAKE_DOCKER_MARKER\"\nexit 2\n");
+
+    const result = spawnSync("sh", [verifyBackupScript, fixture.backup], {
+      encoding: "utf8",
+      env: { ...process.env, AI_LEARNING_DOCKER_BIN: fixture.docker, FAKE_DOCKER_MARKER: dockerMarker },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("checksum verification failed");
+    expect(existsSync(dockerMarker)).toBe(false);
+  });
+
+  it("rejects symlinked or non-private backup inputs", () => {
+    const fixture = makeBackupFixture();
+    const linkedBackup = join(fixture.backupDir, "ai-learning-os-20260814T120001Z-link.dump");
+    symlinkSync(fixture.backup, linkedBackup);
+
+    const linkedResult = spawnSync("sh", [verifyBackupScript, linkedBackup], {
+      encoding: "utf8",
+      env: { ...process.env, AI_LEARNING_DOCKER_BIN: fixture.docker },
+    });
+    expect(linkedResult.status).toBe(2);
+    expect(linkedResult.stderr).toContain("regular file, not a symlink");
+
+    chmodSync(fixture.backup, 0o644);
+    const permissionResult = spawnSync("sh", [verifyBackupScript, fixture.backup], {
+      encoding: "utf8",
+      env: { ...process.env, AI_LEARNING_DOCKER_BIN: fixture.docker },
+    });
+    expect(permissionResult.status).toBe(2);
+    expect(permissionResult.stderr).toContain("must not grant group or other access");
+  });
+});
+
 describe("dev operational runner updates", () => {
-  it("refreshes both deployment and backup runners for an already deployed revision", () => {
+  it("refreshes deployment, backup, and verification runners for an already deployed revision", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-runners-"));
     temporaryDirectories.push(root);
     const baseDir = join(root, "service");
@@ -165,8 +229,10 @@ describe("dev operational runner updates", () => {
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
     writeFileSync(join(releaseOperations, "deploy-main.sh"), "new deploy runner\n");
     writeFileSync(join(releaseOperations, "backup.sh"), "new backup runner\n");
+    writeFileSync(join(releaseOperations, "verify-backup.sh"), "new verify runner\n");
     writeFileSync(join(baseDir, "deploy-main.sh"), "old deploy runner\n");
     writeFileSync(join(baseDir, "backup.sh"), "old backup runner\n");
+    writeFileSync(join(baseDir, "verify-backup.sh"), "old verify runner\n");
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
     addHealthyDeploymentCommands(fakeBin, revision);
 
@@ -186,8 +252,10 @@ describe("dev operational runner updates", () => {
     expect(result.stdout).toContain(`Revision ${revision} is already deployed`);
     expect(readFileSync(join(baseDir, "deploy-main.sh"), "utf8")).toBe("new deploy runner\n");
     expect(readFileSync(join(baseDir, "backup.sh"), "utf8")).toBe("new backup runner\n");
+    expect(readFileSync(join(baseDir, "verify-backup.sh"), "utf8")).toBe("new verify runner\n");
     expect(statSync(join(baseDir, "deploy-main.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "backup.sh")).mode & 0o777).toBe(0o755);
+    expect(statSync(join(baseDir, "verify-backup.sh")).mode & 0o777).toBe(0o755);
   }, 15_000);
 
   it("does not rewrite operational runners that already match the active release", () => {
@@ -202,7 +270,7 @@ describe("dev operational runner updates", () => {
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
       utimesSync(join(baseDir, runner), fixedTime, fixedTime);
@@ -223,7 +291,7 @@ describe("dev operational runner updates", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    for (const runner of ["deploy-main.sh", "backup.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh"]) {
       expect(statSync(join(baseDir, runner)).mtimeMs).toBe(fixedTime.getTime());
     }
   }, 15_000);
@@ -241,7 +309,7 @@ describe("dev operational runner updates", () => {
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
     }
@@ -294,6 +362,7 @@ describe("dev operational runner updates", () => {
     writeFileSync(join(archiveRoot, "package.json"), "{}\n");
     writeFileSync(join(archiveRoot, "deploy/dev/deploy-main.sh"), "new deploy runner\n");
     writeFileSync(join(archiveRoot, "deploy/dev/backup.sh"), "new backup runner\n");
+    writeFileSync(join(archiveRoot, "deploy/dev/verify-backup.sh"), "new verify runner\n");
     const tarResult = spawnSync("tar", ["-czf", archive, "-C", archiveRoot, "."], { encoding: "utf8" });
     expect(tarResult.status, tarResult.stderr).toBe(0);
     const checksum = createHash("sha256").update(readFileSync(archive)).digest("hex");
