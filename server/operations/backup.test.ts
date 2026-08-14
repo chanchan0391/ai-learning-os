@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -467,6 +467,99 @@ describe("dev operational runner updates", () => {
 
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("Cached deployment repository origin does not match configuration");
+    expect(existsSync(fetchMarker)).toBe(false);
+    expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
+  });
+
+  it("rejects a cached checkout redirected through a symlink before repository access", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-symlink-"));
+    temporaryDirectories.push(root);
+    const actualCheckout = join(root, "actual-checkout");
+    const checkout = join(root, "checkout");
+    const fakeBin = join(root, "bin");
+    const gitMarker = join(root, "git-called");
+    mkdirSync(join(actualCheckout, ".git"), { recursive: true });
+    symlinkSync(actualCheckout, checkout);
+    mkdirSync(fakeBin);
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
+    executable(join(fakeBin, "git"), "#!/bin/sh\ntouch \"$FAKE_GIT_MARKER\"\nexit 2\n");
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_CHECKOUT_DIR: checkout,
+        AI_LEARNING_PUBLISH_LOG: join(root, "publisher.log"),
+        FAKE_GIT_MARKER: gitMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Cached deployment checkout must be a real directory, not a symlink");
+    expect(existsSync(gitMarker)).toBe(false);
+    expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
+  });
+
+  it("rejects cached Git metadata redirected through a symlink before repository access", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-git-symlink-"));
+    temporaryDirectories.push(root);
+    const checkout = join(root, "checkout");
+    const fakeBin = join(root, "bin");
+    const gitMarker = join(root, "git-called");
+    mkdirSync(checkout);
+    mkdirSync(join(root, "actual-git"));
+    symlinkSync(join(root, "actual-git"), join(checkout, ".git"));
+    mkdirSync(fakeBin);
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
+    executable(join(fakeBin, "git"), "#!/bin/sh\ntouch \"$FAKE_GIT_MARKER\"\nexit 2\n");
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_CHECKOUT_DIR: checkout,
+        AI_LEARNING_PUBLISH_LOG: join(root, "publisher.log"),
+        FAKE_GIT_MARKER: gitMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Cached deployment Git metadata must be a real directory, not a symlink");
+    expect(existsSync(gitMarker)).toBe(false);
+    expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
+  });
+
+  it("rejects cached Git metadata not owned by the publisher before fetch", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-owner-"));
+    temporaryDirectories.push(root);
+    const checkout = join(root, "checkout");
+    const fakeBin = join(root, "bin");
+    const fetchMarker = join(root, "fetch-called");
+    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(fakeBin);
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
+    executable(join(fakeBin, "stat"), `#!/bin/sh\nset -eu\ncase "$3" in\n  */.git) printf '%s\\n' '0' ;;\n  *) printf '%s\\n' "$FAKE_CURRENT_UID" ;;\nesac\n`);
+    executable(join(fakeBin, "git"), `#!/bin/sh\ncase "$1" in\n  fetch) touch "$FAKE_FETCH_MARKER" ;;\nesac\nexit 2\n`);
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_CHECKOUT_DIR: checkout,
+        AI_LEARNING_PUBLISH_LOG: join(root, "publisher.log"),
+        FAKE_CURRENT_UID: String(process.getuid!()),
+        FAKE_FETCH_MARKER: fetchMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Cached deployment Git metadata must be owned by the publisher user");
     expect(existsSync(fetchMarker)).toBe(false);
     expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
   });

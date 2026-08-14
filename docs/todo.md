@@ -610,3 +610,8 @@
 
 - [x] publisher 每轮校验缓存 checkout 的 `origin` 与配置仓库完全一致，再解析和归档 `origin/main`
 - [x] 来源不一致时在 fetch、归档和上传前明确失败，避免旧缓存或本地篡改静默改变部署来源
+
+### P108：dev 发布缓存边界校验
+
+- [x] publisher 在 Git 网络或归档操作前拒绝符号链接形式的 checkout 与 `.git` 元数据目录
+- [x] 新建缓存时先验证父目录归当前发布用户所有，并在 clone 后重新验证 checkout 与 `.git` 所有权

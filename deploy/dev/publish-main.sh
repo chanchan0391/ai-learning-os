@@ -11,6 +11,23 @@ publisher_log=${AI_LEARNING_PUBLISH_LOG:-"$HOME/Library/Logs/ai-learning-os-depl
 publisher_log_max_bytes=${AI_LEARNING_PUBLISH_LOG_MAX_BYTES:-5242880}
 ssh_options="-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
+require_owned_directory() {
+  directory_label=$1
+  directory_path=$2
+  if [ -L "$directory_path" ] || [ ! -d "$directory_path" ]; then
+    echo "$directory_label must be a real directory, not a symlink" >&2
+    exit 2
+  fi
+  directory_owner=$(stat -f '%u' "$directory_path" 2>/dev/null || true)
+  case "$directory_owner" in
+    ''|*[!0-9]*) echo "Could not verify $directory_label ownership" >&2; exit 2 ;;
+  esac
+  if [ "$directory_owner" != "$(id -u)" ]; then
+    echo "$directory_label must be owned by the publisher user" >&2
+    exit 2
+  fi
+}
+
 if [ -z "$shlock_bin" ] || [ ! -x "$shlock_bin" ]; then
   echo "shlock is required for crash-safe publisher locking" >&2
   exit 1
@@ -45,9 +62,16 @@ if [ -f "$publisher_log" ] && [ ! -L "$publisher_log" ]; then
   fi
 fi
 
-if [ ! -d "$checkout_dir/.git" ]; then
-  mkdir -p "$(dirname "$checkout_dir")"
+if [ -e "$checkout_dir" ] || [ -L "$checkout_dir" ]; then
+  require_owned_directory "Cached deployment checkout" "$checkout_dir"
+  require_owned_directory "Cached deployment Git metadata" "$checkout_dir/.git"
+else
+  checkout_parent=$(dirname "$checkout_dir")
+  mkdir -p "$checkout_parent"
+  require_owned_directory "Deployment cache parent" "$checkout_parent"
   git clone --quiet --no-checkout "$repository" "$checkout_dir"
+  require_owned_directory "Cached deployment checkout" "$checkout_dir"
+  require_owned_directory "Cached deployment Git metadata" "$checkout_dir/.git"
 fi
 
 cd "$checkout_dir"
