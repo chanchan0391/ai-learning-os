@@ -248,6 +248,7 @@ describe("dev operational runner updates", () => {
     const revision = "b".repeat(40);
     mkdirSync(join(checkout, ".git"), { recursive: true });
     mkdirSync(fakeBin);
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
     executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
     executable(join(fakeBin, "ssh"), `#!/bin/sh\nset -eu\ncase "$*" in\n  *DEPLOYED_COMMIT*) printf '%s\\n' '${revision}' ;;\n  *) printf '%s\\n' "$*" >> "$FAKE_SSH_LOG" ;;\nesac\n`);
 
@@ -268,6 +269,32 @@ describe("dev operational runner updates", () => {
     expect(readFileSync(sshLog, "utf8")).toBe(
       `-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 dev-host '/srv/ai-learning-os/deploy-main.sh' '${revision}'\n`,
     );
+    expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
+  });
+
+  it("stops before repository access when another publisher owns the lock", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-locked-"));
+    temporaryDirectories.push(root);
+    const fakeBin = join(root, "bin");
+    const gitMarker = join(root, "git-called");
+    mkdirSync(fakeBin);
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nexit 1\n");
+    executable(join(fakeBin, "git"), "#!/bin/sh\ntouch \"$FAKE_GIT_MARKER\"\nexit 2\n");
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_SHLOCK_BIN: join(fakeBin, "shlock"),
+        FAKE_GIT_MARKER: gitMarker,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Another publisher is already running");
+    expect(existsSync(gitMarker)).toBe(false);
   });
 
   it("bounds deployment network operations so a partial outage cannot wedge the publisher", () => {
@@ -284,5 +311,6 @@ describe("dev operational runner updates", () => {
       'ssh_options="-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"',
     );
     expect(publisher).toContain('scp -q $ssh_options');
+    expect(publisher).toContain('"$shlock_bin" -f "$lock_file" -p $$');
   });
 });

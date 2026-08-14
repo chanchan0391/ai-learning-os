@@ -5,17 +5,22 @@ repository=${AI_LEARNING_REPOSITORY:-"https://github.com/chanchan0391/ai-learnin
 checkout_dir=${AI_LEARNING_CHECKOUT_DIR:-"$HOME/Library/Caches/ai-learning-os-deploy/repository"}
 deploy_host=${AI_LEARNING_DEPLOY_HOST:-dev}
 remote_base=${AI_LEARNING_REMOTE_BASE:-"/home/chanchan/services/ai-learning-os"}
-lock_dir=${TMPDIR:-/tmp}/ai-learning-os-publish-main.lock
+lock_file=${TMPDIR:-/tmp}/ai-learning-os-publish-main.lock
+shlock_bin=${AI_LEARNING_SHLOCK_BIN:-$(command -v shlock || true)}
 ssh_options="-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
-if ! mkdir "$lock_dir" 2>/dev/null; then
+if [ -z "$shlock_bin" ] || [ ! -x "$shlock_bin" ]; then
+  echo "shlock is required for crash-safe publisher locking" >&2
+  exit 1
+fi
+if ! "$shlock_bin" -f "$lock_file" -p $$; then
   echo "Another publisher is already running"
   exit 0
 fi
 temporary_archive=
 cleanup() {
   if [ -n "$temporary_archive" ]; then rm -f "$temporary_archive"; fi
-  rmdir "$lock_dir"
+  rm -f "$lock_file"
 }
 trap cleanup EXIT HUP INT TERM
 
