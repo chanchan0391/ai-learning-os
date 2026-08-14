@@ -48,6 +48,7 @@ export const DEFAULT_AGENT_CONCURRENCY_LIMIT = 20;
 const BROWSER_SECURITY_HEADERS = {
   "Content-Security-Policy": "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
   "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Resource-Policy": "same-origin",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
