@@ -564,6 +564,13 @@ describe("dev operational runner updates", () => {
     expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
   });
 
+  it("falls back to GNU stat when validating cache ownership", () => {
+    const publisher = readFileSync(publishScript, "utf8");
+
+    expect(publisher).toContain("stat -f '%u'");
+    expect(publisher).toContain("stat -c '%u'");
+  });
+
   it("bounds deployment network operations so a partial outage cannot wedge the publisher", () => {
     const deployment = readFileSync(deployScript, "utf8");
     const publisher = readFileSync(publishScript, "utf8");

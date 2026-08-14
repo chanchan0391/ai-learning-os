@@ -20,6 +20,9 @@ require_owned_directory() {
   fi
   directory_owner=$(stat -f '%u' "$directory_path" 2>/dev/null || true)
   case "$directory_owner" in
+    ''|*[!0-9]*) directory_owner=$(stat -c '%u' "$directory_path" 2>/dev/null || true) ;;
+  esac
+  case "$directory_owner" in
     ''|*[!0-9]*) echo "Could not verify $directory_label ownership" >&2; exit 2 ;;
   esac
   if [ "$directory_owner" != "$(id -u)" ]; then
