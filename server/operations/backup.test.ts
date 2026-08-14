@@ -322,7 +322,7 @@ describe("dev operational runner updates", () => {
     const fakeBin = join(root, "bin");
     const sshLog = join(root, "ssh.log");
     const revision = "b".repeat(40);
-    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(join(checkout, ".git"), { recursive: true, mode: 0o700 });
     mkdirSync(fakeBin);
     executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
     executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  remote) printf '%s\\n' 'https://github.com/chanchan0391/ai-learning-os.git' ;;\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
@@ -382,7 +382,7 @@ describe("dev operational runner updates", () => {
     const fakeBin = join(root, "bin");
     const log = join(root, "publisher.log");
     const revision = "e".repeat(40);
-    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(join(checkout, ".git"), { recursive: true, mode: 0o700 });
     mkdirSync(fakeBin);
     writeFileSync(log, "current log exceeds limit\n");
     writeFileSync(`${log}.1`, "previous one\n");
@@ -418,7 +418,7 @@ describe("dev operational runner updates", () => {
     const fakeBin = join(root, "bin");
     const log = join(root, "publisher.log");
     const revision = "f".repeat(40);
-    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(join(checkout, ".git"), { recursive: true, mode: 0o700 });
     mkdirSync(fakeBin);
     writeFileSync(log, "small\n");
     executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
@@ -448,7 +448,7 @@ describe("dev operational runner updates", () => {
     const checkout = join(root, "checkout");
     const fakeBin = join(root, "bin");
     const fetchMarker = join(root, "fetch-called");
-    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(join(checkout, ".git"), { recursive: true, mode: 0o700 });
     mkdirSync(fakeBin);
     executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
     executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  remote) printf '%s\\n' 'https://example.invalid/untrusted.git' ;;\n  fetch) touch "$FAKE_FETCH_MARKER" ;;\n  *) exit 2 ;;\nesac\n`);
@@ -508,7 +508,7 @@ describe("dev operational runner updates", () => {
     const checkout = join(root, "checkout");
     const fakeBin = join(root, "bin");
     const gitMarker = join(root, "git-called");
-    mkdirSync(checkout);
+    mkdirSync(checkout, { mode: 0o700 });
     mkdirSync(join(root, "actual-git"));
     symlinkSync(join(root, "actual-git"), join(checkout, ".git"));
     mkdirSync(fakeBin);
@@ -539,7 +539,7 @@ describe("dev operational runner updates", () => {
     const checkout = join(root, "checkout");
     const fakeBin = join(root, "bin");
     const fetchMarker = join(root, "fetch-called");
-    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(join(checkout, ".git"), { recursive: true, mode: 0o700 });
     mkdirSync(fakeBin);
     executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
     executable(join(fakeBin, "stat"), `#!/bin/sh\nset -eu\ncase "$3" in\n  */.git) printf '%s\\n' '0' ;;\n  *) printf '%s\\n' "$FAKE_CURRENT_UID" ;;\nesac\n`);
@@ -570,7 +570,7 @@ describe("dev operational runner updates", () => {
     const checkout = join(root, "checkout");
     const fakeBin = join(root, "bin");
     const gitMarker = join(root, "git-called");
-    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(join(checkout, ".git"), { recursive: true, mode: 0o700 });
     chmodSync(checkout, 0o775);
     mkdirSync(fakeBin);
     executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
@@ -601,7 +601,7 @@ describe("dev operational runner updates", () => {
     const checkout = join(cacheParent, "checkout");
     const fakeBin = join(root, "bin");
     const gitMarker = join(root, "git-called");
-    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(join(checkout, ".git"), { recursive: true, mode: 0o700 });
     chmodSync(cacheParent, 0o777);
     mkdirSync(fakeBin);
     executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
