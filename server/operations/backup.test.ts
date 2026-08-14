@@ -271,23 +271,30 @@ describe("dev operational runner updates", () => {
     );
   });
 
-  it("removes failed and stale incoming deployment archives", () => {
+  it("removes failed uploads and stale deployment artifacts", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-incoming-"));
     temporaryDirectories.push(root);
     const baseDir = join(root, "service");
     const incoming = join(baseDir, "incoming");
+    const releases = join(baseDir, "releases");
     const fakeBin = join(root, "bin");
     const revision = "e".repeat(40);
     mkdirSync(incoming, { recursive: true });
+    mkdirSync(releases, { recursive: true });
     mkdirSync(fakeBin);
     const requestedArchive = join(incoming, `${revision}.tar.gz`);
     const staleUpload = join(incoming, `${"f".repeat(40)}.tar.gz.uploading`);
     const recentUpload = join(incoming, `${"a".repeat(40)}.tar.gz.uploading`);
+    const staleWorkspace = join(releases, `.deploy-${"b".repeat(40)}.abandoned`);
+    const recentWorkspace = join(releases, `.deploy-${"c".repeat(40)}.active`);
     writeFileSync(requestedArchive, "corrupt archive");
     writeFileSync(staleUpload, "abandoned partial archive");
     writeFileSync(recentUpload, "active partial archive");
+    mkdirSync(staleWorkspace);
+    mkdirSync(recentWorkspace);
     const staleAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1_000);
     utimesSync(staleUpload, staleAt, staleAt);
+    utimesSync(staleWorkspace, staleAt, staleAt);
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
 
     const result = spawnSync("sh", [deployScript, revision, requestedArchive, "0".repeat(64)], {
@@ -304,6 +311,8 @@ describe("dev operational runner updates", () => {
     expect(existsSync(requestedArchive)).toBe(false);
     expect(existsSync(staleUpload)).toBe(false);
     expect(existsSync(recentUpload)).toBe(true);
+    expect(existsSync(staleWorkspace)).toBe(false);
+    expect(existsSync(recentWorkspace)).toBe(true);
   });
 
   it("reconciles remote runners when the application revision is already current", () => {

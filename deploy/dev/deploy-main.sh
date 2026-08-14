@@ -96,6 +96,17 @@ trap cleanup EXIT HUP INT TERM
 find "$base_dir/incoming" -maxdepth 1 -type f \
   \( -name '*.tar.gz' -o -name '*.tar.gz.uploading' \) -mtime +1 -delete
 
+# A non-catchable termination or host restart can bypass the EXIT trap after
+# extraction or npm install. Reclaim only old workspaces created by this script;
+# the deployment lock ensures a live deployment cannot be pruned concurrently.
+find "$base_dir/releases" -mindepth 1 -maxdepth 1 -type d -name '.deploy-*' -mtime +1 -print \
+  | while IFS= read -r stale_workspace; do
+      case "$stale_workspace" in
+        "$base_dir"/releases/.deploy-*) rm -rf "$stale_workspace" ;;
+        *) echo "Refusing to prune unexpected workspace: $stale_workspace" >&2; exit 1 ;;
+      esac
+    done
+
 if [ -n "$provided_archive" ]; then
   expected_archive="$base_dir/incoming/$revision.tar.gz"
   if [ "$provided_archive" != "$expected_archive" ] || [ ! -f "$provided_archive" ] || [ -L "$provided_archive" ]; then
