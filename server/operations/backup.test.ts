@@ -354,6 +354,8 @@ exec /usr/bin/readlink "$@"
     expect(result.stderr).toContain(`Health check failed for ${newRevision}; rolling back`);
     expect(result.stderr).toContain(`Rolled back to ${oldRevision} and verified service health`);
     expect(readFileSync(join(baseDir, "current", "DEPLOYED_COMMIT"), "utf8")).toBe(`${oldRevision}\n`);
+    expect(existsSync(join(baseDir, "releases", newRevision))).toBe(false);
+    expect(existsSync(oldRelease)).toBe(true);
     expect(readFileSync(systemctlLog, "utf8").match(/--user restart/g)).toHaveLength(2);
   }, 15_000);
 

@@ -37,6 +37,22 @@ update_operational_runners() {
   done
 }
 
+discard_failed_release() {
+  failed_release=$1
+  active_release=
+  if [ -L "$current_link" ]; then
+    active_release=$(readlink -f "$current_link")
+  fi
+  if [ -n "$active_release" ] && [ "$active_release" = "$(readlink -f "$failed_release")" ]; then
+    echo "Refusing to remove the active release after a failed deployment" >&2
+    return 1
+  fi
+  case "$failed_release" in
+    "$base_dir"/releases/"$revision") rm -rf "$failed_release" ;;
+    *) echo "Refusing to remove unexpected failed release path: $failed_release" >&2; return 1 ;;
+  esac
+}
+
 service_uses_selected_node() {
   service_name=$1
   service_pid=$(systemctl --user show --property MainPID --value "$service_name")
@@ -220,6 +236,7 @@ if ! wait_for_healthy_deployment "$revision"; then
     rm -f "$current_link"
     systemctl --user stop ai-learning-os-web.service ai-learning-os-api.service
   fi
+  discard_failed_release "$release_dir"
   exit 1
 fi
 
