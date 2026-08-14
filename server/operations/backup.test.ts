@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
@@ -14,6 +14,7 @@ const temporaryDirectories: string[] = [];
 interface Fixture {
   backupDir: string;
   docker: string;
+  flock: string;
 }
 
 function addHealthyDeploymentCommands(fakeBin: string, revision: string) {
@@ -34,16 +35,19 @@ function makeFixture(): Fixture {
   return {
     backupDir: join(root, "backups"),
     docker: executable(join(root, "docker"), "#!/bin/sh\nset -eu\ncase \"$*\" in\n  'exec pg pg_dump --format=custom --no-owner --no-privileges -U postgres -d ai_learning_os') printf 'valid custom archive' ;;\n  'exec -i pg pg_restore --list') [ \"$(cat)\" = 'valid custom archive' ] ;;\n  *) exit 2 ;;\nesac\n"),
+    flock: executable(join(root, "flock"), "#!/bin/sh\n[ \"${FAKE_FLOCK_AVAILABLE:-true}\" = true ]\n"),
   };
 }
 
-function runBackup(fixture: Fixture) {
+function runBackup(fixture: Fixture, extraEnv: NodeJS.ProcessEnv = {}) {
   return spawnSync("sh", [backupScript], {
     encoding: "utf8",
     env: {
       ...process.env,
       AI_LEARNING_BACKUP_DIR: fixture.backupDir,
       AI_LEARNING_DOCKER_BIN: fixture.docker,
+      AI_LEARNING_FLOCK_BIN: fixture.flock,
+      ...extraEnv,
     },
   });
 }
@@ -62,7 +66,8 @@ describe("dev database backup", () => {
 
     expect(result.status, result.stderr).toBe(0);
     const files = readdirSync(fixture.backupDir);
-    expect(files).toHaveLength(2);
+    expect(files).toHaveLength(3);
+    expect(files).toContain(".backup.lock");
     const backupName = files.find((file) => file.endsWith(".dump"));
     expect(backupName).toMatch(/^ai-learning-os-\d{8}T\d{6}Z-[A-Za-z0-9]+\.dump$/);
     const backup = join(fixture.backupDir, backupName!);
@@ -72,6 +77,7 @@ describe("dev database backup", () => {
       `${createHash("sha256").update("valid custom archive").digest("hex")}  ${backupName}\n`,
     );
     expect(statSync(fixture.backupDir).mode & 0o777).toBe(0o700);
+    expect(statSync(join(fixture.backupDir, ".backup.lock")).mode & 0o777).toBe(0o600);
     expect(statSync(backup).mode & 0o777).toBe(0o600);
     expect(statSync(checksum).mode & 0o777).toBe(0o600);
   });
@@ -85,7 +91,7 @@ describe("dev database backup", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("failed PostgreSQL archive verification");
     expect(existsSync(fixture.backupDir)).toBe(true);
-    expect(readdirSync(fixture.backupDir)).toEqual([]);
+    expect(readdirSync(fixture.backupDir)).toEqual([".backup.lock"]);
   });
 
   it("rejects an empty dump without publishing an artifact", () => {
@@ -96,7 +102,7 @@ describe("dev database backup", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Database backup is empty");
-    expect(readdirSync(fixture.backupDir)).toEqual([]);
+    expect(readdirSync(fixture.backupDir)).toEqual([".backup.lock"]);
   });
 
   it("removes expired archives and their checksum sidecars together", () => {
@@ -115,7 +121,33 @@ describe("dev database backup", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(expiredBackup)).toBe(false);
     expect(existsSync(expiredChecksum)).toBe(false);
-    expect(readdirSync(fixture.backupDir)).toHaveLength(2);
+    expect(readdirSync(fixture.backupDir)).toHaveLength(3);
+  });
+
+  it("does not let a stale lock artifact block a later backup", () => {
+    const fixture = makeFixture();
+    mkdirSync(fixture.backupDir);
+    writeFileSync(join(fixture.backupDir, ".backup.lock"), "stale owner\n");
+
+    const result = runBackup(fixture);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readdirSync(fixture.backupDir).filter((file) => file.endsWith(".dump"))).toHaveLength(1);
+  });
+
+  it("refuses a concurrent backup before starting PostgreSQL work", () => {
+    const fixture = makeFixture();
+    const dockerMarker = join(dirname(fixture.docker), "docker-called");
+    executable(fixture.docker, "#!/bin/sh\ntouch \"$FAKE_DOCKER_MARKER\"\nexit 2\n");
+
+    const result = runBackup(fixture, {
+      FAKE_DOCKER_MARKER: dockerMarker,
+      FAKE_FLOCK_AVAILABLE: "false",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Another database backup is already running");
+    expect(existsSync(dockerMarker)).toBe(false);
   });
 });
 

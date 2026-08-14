@@ -3,6 +3,7 @@ set -eu
 
 backup_dir=${AI_LEARNING_BACKUP_DIR:-"$HOME/backups/ai-learning-os"}
 docker_bin=${AI_LEARNING_DOCKER_BIN:-docker}
+flock_bin=${AI_LEARNING_FLOCK_BIN:-flock}
 if command -v sha256sum >/dev/null 2>&1; then
   sha256_command=sha256sum
 else
@@ -10,6 +11,17 @@ else
 fi
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
+if ! command -v "$flock_bin" >/dev/null 2>&1; then
+  echo "flock is required for crash-safe backup locking" >&2
+  exit 1
+fi
+lock_file="$backup_dir/.backup.lock"
+exec 9>"$lock_file"
+chmod 600 "$lock_file"
+if ! "$flock_bin" -n 9; then
+  echo "Another database backup is already running" >&2
+  exit 1
+fi
 
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 temporary=$(mktemp "$backup_dir/.ai-learning-os-$timestamp.XXXXXX")
