@@ -7,6 +7,8 @@ deploy_host=${AI_LEARNING_DEPLOY_HOST:-dev}
 remote_base=${AI_LEARNING_REMOTE_BASE:-"/home/chanchan/services/ai-learning-os"}
 lock_file=${TMPDIR:-/tmp}/ai-learning-os-publish-main.lock
 shlock_bin=${AI_LEARNING_SHLOCK_BIN:-$(command -v shlock || true)}
+publisher_log=${AI_LEARNING_PUBLISH_LOG:-"$HOME/Library/Logs/ai-learning-os-deploy.log"}
+publisher_log_max_bytes=${AI_LEARNING_PUBLISH_LOG_MAX_BYTES:-5242880}
 ssh_options="-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 
 if [ -z "$shlock_bin" ] || [ ! -x "$shlock_bin" ]; then
@@ -23,6 +25,25 @@ cleanup() {
   rm -f "$lock_file"
 }
 trap cleanup EXIT HUP INT TERM
+
+case "$publisher_log_max_bytes" in
+  ''|*[!0-9]*|0) echo "AI_LEARNING_PUBLISH_LOG_MAX_BYTES must be a positive integer" >&2; exit 2 ;;
+esac
+if [ -f "$publisher_log" ] && [ ! -L "$publisher_log" ]; then
+  publisher_log_bytes=$(wc -c < "$publisher_log")
+  if [ "$publisher_log_bytes" -ge "$publisher_log_max_bytes" ]; then
+    rm -f "$publisher_log.4"
+    publisher_log_generation=3
+    while [ "$publisher_log_generation" -ge 1 ]; do
+      if [ -f "$publisher_log.$publisher_log_generation" ] && [ ! -L "$publisher_log.$publisher_log_generation" ]; then
+        next_generation=$((publisher_log_generation + 1))
+        mv "$publisher_log.$publisher_log_generation" "$publisher_log.$next_generation"
+      fi
+      publisher_log_generation=$((publisher_log_generation - 1))
+    done
+    mv "$publisher_log" "$publisher_log.1"
+  fi
+fi
 
 if [ ! -d "$checkout_dir/.git" ]; then
   mkdir -p "$(dirname "$checkout_dir")"

@@ -337,6 +337,7 @@ describe("dev operational runner updates", () => {
         AI_LEARNING_CHECKOUT_DIR: checkout,
         AI_LEARNING_DEPLOY_HOST: "dev-host",
         AI_LEARNING_REMOTE_BASE: "/srv/ai-learning-os",
+        AI_LEARNING_PUBLISH_LOG: join(root, "publisher.log"),
         FAKE_SSH_LOG: sshLog,
       },
     });
@@ -364,6 +365,7 @@ describe("dev operational runner updates", () => {
         PATH: `${fakeBin}:${process.env.PATH}`,
         TMPDIR: root,
         AI_LEARNING_SHLOCK_BIN: join(fakeBin, "shlock"),
+        AI_LEARNING_PUBLISH_LOG: join(root, "publisher.log"),
         FAKE_GIT_MARKER: gitMarker,
       },
     });
@@ -371,6 +373,73 @@ describe("dev operational runner updates", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("Another publisher is already running");
     expect(existsSync(gitMarker)).toBe(false);
+  });
+
+  it("rotates a bounded number of publisher logs after acquiring the lock", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-logs-"));
+    temporaryDirectories.push(root);
+    const checkout = join(root, "checkout");
+    const fakeBin = join(root, "bin");
+    const log = join(root, "publisher.log");
+    const revision = "e".repeat(40);
+    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(fakeBin);
+    writeFileSync(log, "current log exceeds limit\n");
+    writeFileSync(`${log}.1`, "previous one\n");
+    writeFileSync(`${log}.3`, "previous three\n");
+    writeFileSync(`${log}.4`, "expired oldest\n");
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
+    executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
+    executable(join(fakeBin, "ssh"), `#!/bin/sh\ncase "$*" in\n  *DEPLOYED_COMMIT*) printf '%s\\n' '${revision}' ;;\n  *) exit 0 ;;\nesac\n`);
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_CHECKOUT_DIR: checkout,
+        AI_LEARNING_PUBLISH_LOG: log,
+        AI_LEARNING_PUBLISH_LOG_MAX_BYTES: "10",
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(log)).toBe(false);
+    expect(readFileSync(`${log}.1`, "utf8")).toBe("current log exceeds limit\n");
+    expect(readFileSync(`${log}.2`, "utf8")).toBe("previous one\n");
+    expect(readFileSync(`${log}.4`, "utf8")).toBe("previous three\n");
+  });
+
+  it("leaves a publisher log below the capacity threshold in place", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-log-small-"));
+    temporaryDirectories.push(root);
+    const checkout = join(root, "checkout");
+    const fakeBin = join(root, "bin");
+    const log = join(root, "publisher.log");
+    const revision = "f".repeat(40);
+    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(fakeBin);
+    writeFileSync(log, "small\n");
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
+    executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
+    executable(join(fakeBin, "ssh"), `#!/bin/sh\ncase "$*" in\n  *DEPLOYED_COMMIT*) printf '%s\\n' '${revision}' ;;\n  *) exit 0 ;;\nesac\n`);
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_CHECKOUT_DIR: checkout,
+        AI_LEARNING_PUBLISH_LOG: log,
+        AI_LEARNING_PUBLISH_LOG_MAX_BYTES: "10",
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(log, "utf8")).toBe("small\n");
+    expect(existsSync(`${log}.1`)).toBe(false);
   });
 
   it("bounds deployment network operations so a partial outage cannot wedge the publisher", () => {
