@@ -62,6 +62,41 @@ describe("AI Learning OS API", () => {
     });
   });
 
+  it("returns a stable server error when an adapter produces a non-JSON health value", async () => {
+    const loggedErrors: unknown[][] = [];
+    const consoleError = console.error;
+    console.error = (...values: unknown[]) => { loggedErrors.push(values); };
+    try {
+      const baseUrl = await startApi(new DeterministicModelProvider(), {
+        databasePoolCapacity: {
+          snapshot: () => ({
+            limit: 10n,
+            total: 0,
+            idle: 0,
+            inUse: 0,
+            waiting: 0,
+            saturated: false,
+          }) as never,
+        },
+      });
+
+      const failed = await fetch(`${baseUrl}/api/health`);
+      expect(failed.status).toBe(500);
+      await expect(failed.json()).resolves.toEqual({ error: "Internal server error" });
+      expect(JSON.parse(String(loggedErrors[0]?.[0]))).toMatchObject({
+        category: "api",
+        path: "/api/health",
+        errorType: "JsonResponseSerializationError",
+      });
+
+      const healthy = await fetch(`${baseUrl}/unmatched`);
+      expect(healthy.status).toBe(404);
+      await expect(healthy.json()).resolves.toEqual({ error: "Not found" });
+    } finally {
+      console.error = consoleError;
+    }
+  });
+
   it("hardens every API response against browser content injection and embedding", async () => {
     const baseUrl = await startApi();
     const response = await fetch(`${baseUrl}/api/health`);

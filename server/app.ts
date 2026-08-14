@@ -80,8 +80,21 @@ export function observabilityPath(pathname: string): string {
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(body);
+  } catch {
+    const error = new Error("API response could not be serialized");
+    error.name = "JsonResponseSerializationError";
+    throw error;
+  }
+  if (serialized === undefined) {
+    const error = new Error("API response could not be serialized");
+    error.name = "JsonResponseSerializationError";
+    throw error;
+  }
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers });
-  response.end(JSON.stringify(body));
+  response.end(serialized);
 }
 
 function publicModelProviderError(error: ModelProviderError): {
@@ -690,6 +703,10 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (error instanceof Error && error.name === "ForbiddenOriginError") return sendJson(response, 403, { error: error.message });
       if (error instanceof Error && error.name === "UnsupportedMediaTypeError") return sendJson(response, 415, { error: error.message });
       if (error instanceof Error && error.name === "InvalidRequestEncodingError") return sendJson(response, 400, { error: error.message });
+      if (error instanceof Error && error.name === "JsonResponseSerializationError") {
+        reportInternalError("api", requestId, loggedPath, releaseRevision, error);
+        return sendJson(response, 500, { error: "Internal server error" });
+      }
       if (error instanceof Error && error.name === "PreconditionRequiredError") return sendJson(response, 428, { error: error.message });
       if (error instanceof AuthDeviceLimitError) return sendJson(response, 429, { error: error.message }, { "Retry-After": "3600" });
       if (error instanceof SyntaxError) return sendJson(response, 400, { error: "Request body must be valid JSON" });
