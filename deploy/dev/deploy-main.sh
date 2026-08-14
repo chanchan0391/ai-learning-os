@@ -8,6 +8,13 @@ npm_bin=${AI_LEARNING_NPM_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/npm"}
 requested_revision=${1:-}
 provided_archive=${2:-}
 provided_checksum=${3:-}
+temporary_dir=
+managed_archive=
+
+cleanup() {
+  if [ -n "$temporary_dir" ]; then rm -rf "$temporary_dir"; fi
+  if [ -n "$managed_archive" ]; then rm -f "$managed_archive"; fi
+}
 
 update_operational_runners() {
   for runner in deploy-main.sh backup.sh; do
@@ -75,11 +82,27 @@ if [ "${#revision}" -ne 40 ]; then
   exit 2
 fi
 
-mkdir -p "$base_dir/releases" "$base_dir/deploy-logs"
+mkdir -p "$base_dir/releases" "$base_dir/deploy-logs" "$base_dir/incoming"
 exec 9>"$base_dir/deploy.lock"
 if ! flock -n 9; then
   echo "Another deployment is already running"
   exit 0
+fi
+trap cleanup EXIT HUP INT TERM
+
+# A publisher interruption can leave a partial upload, while a deployment that
+# never starts can leave a complete archive. Keep only recent retry candidates
+# so successive failed revisions cannot consume the dev host indefinitely.
+find "$base_dir/incoming" -maxdepth 1 -type f \
+  \( -name '*.tar.gz' -o -name '*.tar.gz.uploading' \) -mtime +1 -delete
+
+if [ -n "$provided_archive" ]; then
+  expected_archive="$base_dir/incoming/$revision.tar.gz"
+  if [ "$provided_archive" != "$expected_archive" ] || [ ! -f "$provided_archive" ] || [ -L "$provided_archive" ]; then
+    echo "Provided archive must be the expected incoming revision archive" >&2
+    exit 2
+  fi
+  managed_archive=$provided_archive
 fi
 
 current_link="$base_dir/current"
@@ -109,10 +132,6 @@ previous_target=
 if [ -L "$current_link" ]; then
   previous_target=$(readlink -f "$current_link")
 fi
-cleanup() {
-  rm -rf "$temporary_dir"
-}
-trap cleanup EXIT HUP INT TERM
 
 if [ -e "$release_dir" ]; then
   case "$release_dir" in
@@ -122,11 +141,6 @@ if [ -e "$release_dir" ]; then
 fi
 
 if [ -n "$provided_archive" ]; then
-  expected_archive="$base_dir/incoming/$revision.tar.gz"
-  if [ "$provided_archive" != "$expected_archive" ] || [ ! -f "$provided_archive" ]; then
-    echo "Provided archive must be the expected incoming revision archive" >&2
-    exit 2
-  fi
   case "$provided_checksum" in
     ""|*[!0-9a-f]*) echo "A lowercase SHA-256 checksum is required for an uploaded archive" >&2; exit 2 ;;
   esac
@@ -141,6 +155,7 @@ if [ -n "$provided_archive" ]; then
   fi
   tar -xzf "$provided_archive" -C "$temporary_dir"
   rm -f "$provided_archive"
+  managed_archive=
 else
   archive_url="https://github.com/chanchan0391/ai-learning-os/archive/$revision.tar.gz"
   curl --fail --location --silent --show-error --retry 3 \
@@ -167,6 +182,7 @@ echo "Using $("$node_bin" --version) with $("$npm_bin" --version)"
 printf '%s\n' "$revision" > DEPLOYED_COMMIT
 chmod -R u=rwX,go=rX "$temporary_dir"
 mv "$temporary_dir" "$release_dir"
+temporary_dir=
 trap - EXIT HUP INT TERM
 
 next_link="$base_dir/.current-$revision"

@@ -271,6 +271,41 @@ describe("dev operational runner updates", () => {
     );
   });
 
+  it("removes failed and stale incoming deployment archives", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-incoming-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const incoming = join(baseDir, "incoming");
+    const fakeBin = join(root, "bin");
+    const revision = "e".repeat(40);
+    mkdirSync(incoming, { recursive: true });
+    mkdirSync(fakeBin);
+    const requestedArchive = join(incoming, `${revision}.tar.gz`);
+    const staleUpload = join(incoming, `${"f".repeat(40)}.tar.gz.uploading`);
+    const recentUpload = join(incoming, `${"a".repeat(40)}.tar.gz.uploading`);
+    writeFileSync(requestedArchive, "corrupt archive");
+    writeFileSync(staleUpload, "abandoned partial archive");
+    writeFileSync(recentUpload, "active partial archive");
+    const staleAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1_000);
+    utimesSync(staleUpload, staleAt, staleAt);
+    executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+
+    const result = spawnSync("sh", [deployScript, revision, requestedArchive, "0".repeat(64)], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        AI_LEARNING_DEPLOY_DIR: baseDir,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Uploaded archive checksum does not match");
+    expect(existsSync(requestedArchive)).toBe(false);
+    expect(existsSync(staleUpload)).toBe(false);
+    expect(existsSync(recentUpload)).toBe(true);
+  });
+
   it("reconciles remote runners when the application revision is already current", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-"));
     temporaryDirectories.push(root);
