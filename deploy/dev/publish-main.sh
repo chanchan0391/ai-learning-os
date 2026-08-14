@@ -51,6 +51,11 @@ if [ ! -d "$checkout_dir/.git" ]; then
 fi
 
 cd "$checkout_dir"
+configured_repository=$(git remote get-url origin)
+if [ "$configured_repository" != "$repository" ]; then
+  echo "Cached deployment repository origin does not match configuration" >&2
+  exit 2
+fi
 git fetch --quiet origin main
 revision=$(git rev-parse origin/main)
 case "$revision" in

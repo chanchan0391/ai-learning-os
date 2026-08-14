@@ -325,7 +325,7 @@ describe("dev operational runner updates", () => {
     mkdirSync(join(checkout, ".git"), { recursive: true });
     mkdirSync(fakeBin);
     executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
-    executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
+    executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  remote) printf '%s\\n' 'https://github.com/chanchan0391/ai-learning-os.git' ;;\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
     executable(join(fakeBin, "ssh"), `#!/bin/sh\nset -eu\ncase "$*" in\n  *DEPLOYED_COMMIT*) printf '%s\\n' '${revision}' ;;\n  *) printf '%s\\n' "$*" >> "$FAKE_SSH_LOG" ;;\nesac\n`);
 
     const result = spawnSync("sh", [publishScript], {
@@ -389,7 +389,7 @@ describe("dev operational runner updates", () => {
     writeFileSync(`${log}.3`, "previous three\n");
     writeFileSync(`${log}.4`, "expired oldest\n");
     executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
-    executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
+    executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  remote) printf '%s\\n' 'https://github.com/chanchan0391/ai-learning-os.git' ;;\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
     executable(join(fakeBin, "ssh"), `#!/bin/sh\ncase "$*" in\n  *DEPLOYED_COMMIT*) printf '%s\\n' '${revision}' ;;\n  *) exit 0 ;;\nesac\n`);
 
     const result = spawnSync("sh", [publishScript], {
@@ -422,7 +422,7 @@ describe("dev operational runner updates", () => {
     mkdirSync(fakeBin);
     writeFileSync(log, "small\n");
     executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
-    executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
+    executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  remote) printf '%s\\n' 'https://github.com/chanchan0391/ai-learning-os.git' ;;\n  fetch) exit 0 ;;\n  rev-parse) printf '%s\\n' '${revision}' ;;\n  *) exit 2 ;;\nesac\n`);
     executable(join(fakeBin, "ssh"), `#!/bin/sh\ncase "$*" in\n  *DEPLOYED_COMMIT*) printf '%s\\n' '${revision}' ;;\n  *) exit 0 ;;\nesac\n`);
 
     const result = spawnSync("sh", [publishScript], {
@@ -440,6 +440,35 @@ describe("dev operational runner updates", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(log, "utf8")).toBe("small\n");
     expect(existsSync(`${log}.1`)).toBe(false);
+  });
+
+  it("rejects a cached checkout whose origin differs from the configured repository", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-origin-"));
+    temporaryDirectories.push(root);
+    const checkout = join(root, "checkout");
+    const fakeBin = join(root, "bin");
+    const fetchMarker = join(root, "fetch-called");
+    mkdirSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(fakeBin);
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
+    executable(join(fakeBin, "git"), `#!/bin/sh\nset -eu\ncase "$1" in\n  remote) printf '%s\\n' 'https://example.invalid/untrusted.git' ;;\n  fetch) touch "$FAKE_FETCH_MARKER" ;;\n  *) exit 2 ;;\nesac\n`);
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_CHECKOUT_DIR: checkout,
+        AI_LEARNING_PUBLISH_LOG: join(root, "publisher.log"),
+        FAKE_FETCH_MARKER: fetchMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Cached deployment repository origin does not match configuration");
+    expect(existsSync(fetchMarker)).toBe(false);
+    expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
   });
 
   it("bounds deployment network operations so a partial outage cannot wedge the publisher", () => {
