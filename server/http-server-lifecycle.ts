@@ -30,6 +30,60 @@ interface ShutdownOptions {
   onForcedShutdown?: () => void;
 }
 
+interface StartupFailureOptions {
+  timeoutMs?: number;
+  setTimer?: typeof setTimeout;
+  onStartupFailure?: (errorType: string) => void;
+  onCleanupFailure?: (errorType: string) => void;
+  onForcedCleanup?: () => void;
+}
+
+function stableErrorType(error: unknown): string {
+  if (!(error instanceof Error)) return "UnknownError";
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  if (/^[A-Z][A-Z0-9_]{0,63}$/.test(code)) return code;
+  return /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error.name) ? error.name : "UnknownError";
+}
+
+/** Closes initialized dependencies and exits once when the HTTP listener cannot start. */
+export function createStartupFailureHandler(
+  closeDependencies: () => Promise<void>,
+  exit: (code: number) => void,
+  options: StartupFailureOptions = {},
+): (error: unknown) => void {
+  let handling = false;
+  let finished = false;
+  const timeoutMs = options.timeoutMs ?? HTTP_SERVER_LIMITS.shutdownTimeoutMs;
+  const setTimer = options.setTimer ?? setTimeout;
+
+  return (error) => {
+    if (handling) return;
+    handling = true;
+    options.onStartupFailure?.(stableErrorType(error));
+
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(deadline);
+      exit(1);
+    };
+    const deadline = setTimer(() => {
+      if (finished) return;
+      options.onForcedCleanup?.();
+      finish();
+    }, timeoutMs);
+    deadline.unref?.();
+
+    void Promise.resolve()
+      .then(closeDependencies)
+      .then(finish)
+      .catch((cleanupError) => {
+        options.onCleanupFailure?.(stableErrorType(cleanupError));
+        finish();
+      });
+  };
+}
+
 /** Returns an idempotent signal handler that drains requests before forcing a bounded exit. */
 export function createShutdownHandler(
   server: ShutdownServer,
@@ -59,7 +113,8 @@ export function createShutdownHandler(
     server.close((error) => {
       if (finished || closingDependencies) return;
       closingDependencies = true;
-      void closeDependencies()
+      void Promise.resolve()
+        .then(closeDependencies)
         .then(() => {
           if (finished) return;
           finished = true;
