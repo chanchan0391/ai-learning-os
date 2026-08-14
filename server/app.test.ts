@@ -578,6 +578,37 @@ describe("AI Learning OS API", () => {
     await expect(response.json()).resolves.toEqual({ error: "Request body must be valid JSON" });
   });
 
+  it("rejects malformed UTF-8 JSON before invoking the model", async () => {
+    let providerCalls = 0;
+    const provider: ModelProvider = {
+      id: "live-test",
+      isAiEnabled: true,
+      generateStructured: async () => {
+        providerCalls += 1;
+        throw new Error("must not run");
+      },
+    };
+    const baseUrl = await startApi(provider);
+    const target = new URL("/api/plans", baseUrl);
+
+    const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const outgoing = httpRequest(target, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      }, (incoming) => {
+        const chunks: Buffer[] = [];
+        incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        incoming.on("end", () => resolve({ status: incoming.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
+      });
+      outgoing.on("error", reject);
+      outgoing.end(Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d]));
+    });
+
+    expect(result.status).toBe(400);
+    expect(JSON.parse(result.body)).toEqual({ error: "Request body must be valid UTF-8 JSON" });
+    expect(providerCalls).toBe(0);
+  });
+
   it("automatically scores an active-recall answer", async () => {
     const baseUrl = await startApi();
     const answer = "重试是再次执行失败步骤，恢复是从检查点继续。我会画出状态路径并标出失败分支。";

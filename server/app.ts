@@ -265,7 +265,15 @@ async function readJson(request: IncomingMessage, maxBytes = MAX_BODY_BYTES): Pr
     if (size > maxBytes) throw new RangeError("Request body is too large");
     chunks.push(buffer);
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  let body: string;
+  try {
+    body = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+  } catch {
+    const error = new Error("Request body must be valid UTF-8 JSON");
+    error.name = "InvalidRequestEncodingError";
+    throw error;
+  }
+  return JSON.parse(body);
 }
 
 export function createApp(provider: ModelProvider, options: AppOptions = {}) {
@@ -681,6 +689,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       if (error instanceof Error && error.name === "ModelBudgetConfigurationError") return sendJson(response, 503, { error: error.message });
       if (error instanceof Error && error.name === "ForbiddenOriginError") return sendJson(response, 403, { error: error.message });
       if (error instanceof Error && error.name === "UnsupportedMediaTypeError") return sendJson(response, 415, { error: error.message });
+      if (error instanceof Error && error.name === "InvalidRequestEncodingError") return sendJson(response, 400, { error: error.message });
       if (error instanceof Error && error.name === "PreconditionRequiredError") return sendJson(response, 428, { error: error.message });
       if (error instanceof AuthDeviceLimitError) return sendJson(response, 429, { error: error.message }, { "Retry-After": "3600" });
       if (error instanceof SyntaxError) return sendJson(response, 400, { error: "Request body must be valid JSON" });
