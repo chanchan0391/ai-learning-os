@@ -564,11 +564,74 @@ describe("dev operational runner updates", () => {
     expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
   });
 
+  it("rejects a group-writable cached checkout before repository access", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-mode-"));
+    temporaryDirectories.push(root);
+    const checkout = join(root, "checkout");
+    const fakeBin = join(root, "bin");
+    const gitMarker = join(root, "git-called");
+    mkdirSync(join(checkout, ".git"), { recursive: true });
+    chmodSync(checkout, 0o775);
+    mkdirSync(fakeBin);
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
+    executable(join(fakeBin, "git"), "#!/bin/sh\ntouch \"$FAKE_GIT_MARKER\"\nexit 2\n");
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_CHECKOUT_DIR: checkout,
+        AI_LEARNING_PUBLISH_LOG: join(root, "publisher.log"),
+        FAKE_GIT_MARKER: gitMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Cached deployment checkout must not be writable by group or other users");
+    expect(existsSync(gitMarker)).toBe(false);
+    expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
+  });
+
+  it("rejects a writable cache parent on a reused checkout before repository access", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-parent-mode-"));
+    temporaryDirectories.push(root);
+    const cacheParent = join(root, "cache");
+    const checkout = join(cacheParent, "checkout");
+    const fakeBin = join(root, "bin");
+    const gitMarker = join(root, "git-called");
+    mkdirSync(join(checkout, ".git"), { recursive: true });
+    chmodSync(cacheParent, 0o777);
+    mkdirSync(fakeBin);
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
+    executable(join(fakeBin, "git"), "#!/bin/sh\ntouch \"$FAKE_GIT_MARKER\"\nexit 2\n");
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_CHECKOUT_DIR: checkout,
+        AI_LEARNING_PUBLISH_LOG: join(root, "publisher.log"),
+        FAKE_GIT_MARKER: gitMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Deployment cache parent must not be writable by group or other users");
+    expect(existsSync(gitMarker)).toBe(false);
+    expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
+  });
+
   it("falls back to GNU stat when validating cache ownership", () => {
     const publisher = readFileSync(publishScript, "utf8");
 
     expect(publisher).toContain("stat -f '%u'");
     expect(publisher).toContain("stat -c '%u'");
+    expect(publisher).toContain("stat -f '%Lp'");
+    expect(publisher).toContain("stat -c '%a'");
   });
 
   it("bounds deployment network operations so a partial outage cannot wedge the publisher", () => {

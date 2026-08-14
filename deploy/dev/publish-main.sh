@@ -29,6 +29,17 @@ require_owned_directory() {
     echo "$directory_label must be owned by the publisher user" >&2
     exit 2
   fi
+  directory_mode=$(stat -f '%Lp' "$directory_path" 2>/dev/null || true)
+  case "$directory_mode" in
+    ''|*[!0-7]*) directory_mode=$(stat -c '%a' "$directory_path" 2>/dev/null || true) ;;
+  esac
+  case "$directory_mode" in
+    ''|*[!0-7]*) echo "Could not verify $directory_label permissions" >&2; exit 2 ;;
+  esac
+  if [ $((0$directory_mode & 022)) -ne 0 ]; then
+    echo "$directory_label must not be writable by group or other users" >&2
+    exit 2
+  fi
 }
 
 if [ -z "$shlock_bin" ] || [ ! -x "$shlock_bin" ]; then
@@ -66,6 +77,7 @@ if [ -f "$publisher_log" ] && [ ! -L "$publisher_log" ]; then
 fi
 
 if [ -e "$checkout_dir" ] || [ -L "$checkout_dir" ]; then
+  require_owned_directory "Deployment cache parent" "$(dirname "$checkout_dir")"
   require_owned_directory "Cached deployment checkout" "$checkout_dir"
   require_owned_directory "Cached deployment Git metadata" "$checkout_dir/.git"
 else

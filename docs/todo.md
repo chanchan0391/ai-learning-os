@@ -615,3 +615,8 @@
 
 - [x] publisher 在 Git 网络或归档操作前拒绝符号链接形式的 checkout 与 `.git` 元数据目录
 - [x] 新建缓存时先验证父目录归当前发布用户所有，并在 clone 后重新验证 checkout 与 `.git` 所有权
+
+### P109：dev 发布缓存权限边界
+
+- [x] publisher 在首次 clone 与复用缓存前拒绝允许组或其他用户写入的缓存父目录
+- [x] 对 checkout 与 `.git` 执行跨 macOS/Linux 的权限校验，在 Git 网络访问前拒绝共享可写缓存
