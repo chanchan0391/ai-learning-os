@@ -955,6 +955,7 @@ describe("AI Learning OS API", () => {
     expect(login.status).toBe(302);
     expect(login.headers.get("location")).toBe("https://identity.example/authorize");
     expect(login.headers.get("set-cookie")).toContain("oidc_txn=signed-transaction");
+    expect(login.headers.get("set-cookie")).toContain("Path=/; HttpOnly; Secure; SameSite=Lax");
 
     const callback = await fetch(`${baseUrl}/api/auth/callback?code=code&state=state`, { redirect: "manual" });
     expect(callback.status).toBe(302);

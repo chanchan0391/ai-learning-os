@@ -213,7 +213,7 @@ function sessionCookie(name: string, token?: string, maxAgeSeconds?: number): st
 
 function transientCookie(name: string, value?: string): string {
   const maxAge = value ? "; Max-Age=600" : "; Max-Age=0";
-  return `${name}=${value ?? ""}; Path=/api/auth/callback; HttpOnly; Secure; SameSite=Lax${maxAge}`;
+  return `${name}=${value ?? ""}; Path=/; HttpOnly; Secure; SameSite=Lax${maxAge}`;
 }
 
 function requireHeader(request: IncomingMessage, name: string): string {

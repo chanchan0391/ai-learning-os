@@ -9,6 +9,8 @@ const DISCOVERY_TTL_MS = 60 * 60 * 1000;
 const MAX_OIDC_DISCOVERY_BYTES = 64 * 1_024;
 const MAX_OIDC_TOKEN_RESPONSE_BYTES = 256 * 1_024;
 const MAX_OIDC_JWKS_RESPONSE_BYTES = 256 * 1_024;
+const MAX_RETURN_TO_CHARACTERS = 2_048;
+export const DEFAULT_OIDC_TRANSACTION_COOKIE_NAME = "__Host-ai_learning_os_oidc";
 export const DEFAULT_OIDC_UPSTREAM_TIMEOUT_MS = 10_000;
 export const MAX_OIDC_UPSTREAM_TIMEOUT_MS = 60_000;
 
@@ -65,18 +67,25 @@ function base64url(value: Buffer | string): string {
 
 function safeReturnTo(value: string | undefined): string {
   if (!value) return "/";
-  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
+  if (value.length > MAX_RETURN_TO_CHARACTERS) {
+    throw new PublicHttpError(400, `returnTo must be no greater than ${MAX_RETURN_TO_CHARACTERS} characters`);
+  }
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\") || /[\u0000-\u001F\u007F]/.test(value)) {
     throw new PublicHttpError(400, "returnTo must be a same-origin absolute path");
   }
   return value;
 }
 
 function cookieValue(header: string | undefined, name: string): string | null {
+  const values = new Set<string>();
   for (const entry of header?.split(";") ?? []) {
     const [key, ...rest] = entry.trim().split("=");
-    if (key === name) return rest.join("=") || null;
+    if (key !== name) continue;
+    const value = rest.join("=");
+    if (!value) return null;
+    values.add(value);
   }
-  return null;
+  return values.size === 1 ? values.values().next().value ?? null : null;
 }
 
 function isSafeProviderUrl(value: string, issuer: string): boolean {
@@ -126,7 +135,7 @@ export class StandardOidcClient implements OidcAuthenticator {
       return { issuer: verified.payload.iss!, subject: verified.payload.sub };
     },
   ) {
-    this.transactionCookieName = config.transactionCookieName ?? "ai_learning_oidc";
+    this.transactionCookieName = config.transactionCookieName ?? DEFAULT_OIDC_TRANSACTION_COOKIE_NAME;
     this.upstreamTimeoutMs = config.upstreamTimeoutMs ?? DEFAULT_OIDC_UPSTREAM_TIMEOUT_MS;
     if (config.transactionSecret.length < 32) throw new TypeError("OIDC transaction secret must be at least 32 characters");
     if (!Number.isSafeInteger(this.upstreamTimeoutMs) || this.upstreamTimeoutMs <= 0
@@ -136,6 +145,7 @@ export class StandardOidcClient implements OidcAuthenticator {
   }
 
   async begin(returnTo?: string): Promise<OidcAuthorization> {
+    const validatedReturnTo = safeReturnTo(returnTo);
     const discovery = await this.discover();
     const verifier = base64url(this.random(32));
     const challenge = base64url(createHash("sha256").update(verifier).digest());
@@ -143,7 +153,7 @@ export class StandardOidcClient implements OidcAuthenticator {
       state: base64url(this.random(24)),
       nonce: base64url(this.random(24)),
       verifier,
-      returnTo: safeReturnTo(returnTo),
+      returnTo: validatedReturnTo,
       expiresAt: this.now() + TRANSACTION_TTL_MS,
     };
     const authorizationUrl = new URL(discovery.authorization_endpoint);

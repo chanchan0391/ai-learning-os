@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { PublicHttpError } from "../http/public-http-error";
-import { StandardOidcClient } from "./oidc-client";
+import { DEFAULT_OIDC_TRANSACTION_COOKIE_NAME, StandardOidcClient } from "./oidc-client";
 
 const config = {
   issuer: "https://identity.example",
@@ -58,6 +58,27 @@ describe("standard OIDC client", () => {
     expect(authorization.searchParams.get("code_challenge")).toBe(expectedChallenge);
     expect(authorization.searchParams.get("nonce")).toBe(Buffer.alloc(24, 3).toString("base64url"));
     expect(result.transactionCookie).not.toContain(verifier);
+    expect(client.transactionCookieName).toBe(DEFAULT_OIDC_TRANSACTION_COOKIE_NAME);
+  });
+
+  it("rejects ambiguous transaction cookies and oversized return paths", async () => {
+    const randomValues = [Buffer.alloc(32, 1), Buffer.alloc(24, 2), Buffer.alloc(24, 3)];
+    const client = new StandardOidcClient(
+      config,
+      () => 1_000,
+      () => randomValues.shift()!,
+      vi.fn(async () => discovery()) as typeof fetch,
+    );
+    const started = await client.begin();
+    const state = new URL(started.authorizationUrl).searchParams.get("state");
+
+    await expect(client.complete(
+      new URL(`https://learn.example/api/auth/callback?code=x&state=${state}`),
+      `${client.transactionCookieName}=${started.transactionCookie}; ${client.transactionCookieName}=shadowed`,
+      "Browser",
+    )).rejects.toThrow(/missing or expired/);
+    await expect(client.begin(`/${"a".repeat(2_048)}`)).rejects.toThrow(/no greater than 2048/);
+    await expect(client.begin("/progress\r\nset-cookie: shadowed=true")).rejects.toThrow(/same-origin/);
   });
 
   it("exchanges the code and returns only a verified identity", async () => {
