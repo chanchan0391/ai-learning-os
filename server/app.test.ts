@@ -6,6 +6,7 @@ import { DeterministicModelProvider } from "./ai/deterministic-provider";
 import { ModelProviderError, type ModelProvider, type StructuredGenerationRequest } from "./ai/model-provider";
 import { AuthDeviceLimitError } from "./auth/postgres-session-lifecycle";
 import type { SubscriptionEntitlementDecision } from "./billing/subscription-entitlement";
+import { PublicHttpError } from "./http/public-http-error";
 import type { RequestLogEvent } from "./observability/request-observability";
 import { InMemoryConcurrencyLimiter, RollingRequestCapacityMonitor, type SecurityAuditEvent } from "./security/request-security";
 import type { SyncStore } from "./sync/sync-store";
@@ -228,6 +229,43 @@ describe("AI Learning OS API", () => {
 
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({ error: "Model provider request failed" });
+  });
+
+  it.each([
+    ["TypeError", () => new TypeError("secret-token from private-adapter.example")],
+    ["RangeError", () => new RangeError("secret-token from private-adapter.example")],
+    ["SyntaxError", () => new SyntaxError("secret-token from private-adapter.example")],
+  ])("does not expose unexpected %s values from internal adapters", async (errorType, createError) => {
+    const loggedErrors: unknown[][] = [];
+    const consoleError = console.error;
+    console.error = (...values: unknown[]) => { loggedErrors.push(values); };
+    try {
+      const provider: ModelProvider = {
+        id: "unexpected-built-in-error-test",
+        isAiEnabled: true,
+        generateStructured: async () => {
+          throw createError();
+        },
+      };
+      const baseUrl = await startApi(provider);
+
+      const response = await fetch(`${baseUrl}/api/plans`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(goal),
+      });
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({ error: "Internal server error" });
+      expect(JSON.parse(String(loggedErrors[0]?.[0]))).toMatchObject({
+        category: "api",
+        path: "/api/plans",
+        errorType,
+      });
+      expect(JSON.stringify(loggedErrors)).not.toMatch(/secret-token|private-adapter/);
+    } finally {
+      console.error = consoleError;
+    }
   });
 
   it("templates dynamic paths and suppresses unknown path content in telemetry", async () => {
@@ -898,7 +936,7 @@ describe("AI Learning OS API", () => {
       oidcAuthenticator: {
         transactionCookieName: "oidc_txn",
         begin: async () => ({ authorizationUrl: "https://identity.example/authorize", transactionCookie: "transaction" }),
-        complete: async () => { throw new TypeError("OIDC provider rejected login"); },
+        complete: async () => { throw new PublicHttpError(400, "OIDC provider rejected login"); },
       },
       sessionLifecycle: {
         establishFromOidc: async () => { throw new Error("not used"); },

@@ -2,6 +2,7 @@ import type { DailyTask } from "../../src/types";
 export { AGENT_INPUT_LIMITS } from "../../src/agent-limits";
 export { AGENT_OUTPUT_LIMITS } from "../../src/agent-limits";
 import { AGENT_INPUT_LIMITS } from "../../src/agent-limits";
+export { PublicHttpError } from "../http/public-http-error";
 
 export function hasOnlyKeys(value: unknown, allowedKeys: readonly string[]): value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;

@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { createRemoteJWKSet, customFetch, jwtVerify } from "jose";
 import type { VerifiedOidcIdentity } from "./postgres-session-lifecycle";
 import { readBoundedJson } from "../http/bounded-json-response";
+import { PublicHttpError } from "../http/public-http-error";
 
 const TRANSACTION_TTL_MS = 10 * 60 * 1000;
 const DISCOVERY_TTL_MS = 60 * 60 * 1000;
@@ -65,7 +66,7 @@ function base64url(value: Buffer | string): string {
 function safeReturnTo(value: string | undefined): string {
   if (!value) return "/";
   if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
-    throw new TypeError("returnTo must be a same-origin absolute path");
+    throw new PublicHttpError(400, "returnTo must be a same-origin absolute path");
   }
   return value;
 }
@@ -161,14 +162,14 @@ export class StandardOidcClient implements OidcAuthenticator {
 
   async complete(callbackUrl: URL, cookieHeader: string | undefined, deviceLabel: string): Promise<OidcCallbackResult> {
     const providerError = callbackUrl.searchParams.get("error");
-    if (providerError) throw new TypeError("OIDC provider rejected login");
+    if (providerError) throw new PublicHttpError(400, "OIDC provider rejected login");
     const code = callbackUrl.searchParams.get("code");
     const state = callbackUrl.searchParams.get("state");
-    if (!code || !state) throw new TypeError("OIDC callback requires code and state");
+    if (!code || !state) throw new PublicHttpError(400, "OIDC callback requires code and state");
     const encoded = cookieValue(cookieHeader, this.transactionCookieName);
     const transaction = encoded ? this.verify(encoded) : null;
-    if (!transaction || transaction.expiresAt <= this.now()) throw new TypeError("OIDC login transaction is missing or expired");
-    if (transaction.state !== state) throw new TypeError("OIDC state mismatch");
+    if (!transaction || transaction.expiresAt <= this.now()) throw new PublicHttpError(400, "OIDC login transaction is missing or expired");
+    if (transaction.state !== state) throw new PublicHttpError(400, "OIDC state mismatch");
 
     const discovery = await this.discover();
     const tokenResponse = await this.fetcher(discovery.token_endpoint, {

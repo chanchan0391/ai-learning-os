@@ -18,6 +18,7 @@ import type { SubscriptionEntitlementResolver } from "./billing/subscription-ent
 import type { DatabasePoolCapacityMonitor } from "./observability/database-capacity";
 import { requestOutcome, type RequestLogEvent, type RequestLogSink } from "./observability/request-observability";
 import { coalesceReadinessCheck } from "./observability/readiness-check";
+import { PublicHttpError } from "./http/public-http-error";
 import {
   InMemoryFixedWindowRateLimiter,
   InMemoryConcurrencyLimiter,
@@ -34,6 +35,7 @@ import {
 } from "./security/request-security";
 import {
   SyncConflictError,
+  MAX_SYNC_IDENTIFIER_LENGTH,
   SyncRequestError,
   type DailyRecordSyncValue,
   type SyncStore,
@@ -211,22 +213,22 @@ function transientCookie(name: string, value?: string): string {
 
 function requireHeader(request: IncomingMessage, name: string): string {
   const value = request.headers[name.toLowerCase()];
-  if (typeof value !== "string" || !value.trim()) throw new TypeError(`${name} header is required`);
-  if (value.length > 200) throw new TypeError(`${name} header is too long`);
+  if (typeof value !== "string" || !value.trim()) throw new PublicHttpError(400, `${name} header is required`);
+  if (value.length > 200) throw new PublicHttpError(400, `${name} header is too long`);
   return value;
 }
 
 function parseBaseRevision(request: IncomingMessage): number | null {
   const ifMatch = request.headers["if-match"];
   const ifNoneMatch = request.headers["if-none-match"];
-  if (ifMatch && ifNoneMatch) throw new TypeError("Use either If-Match or If-None-Match, not both");
+  if (ifMatch && ifNoneMatch) throw new PublicHttpError(400, "Use either If-Match or If-None-Match, not both");
   if (ifNoneMatch === "*") return null;
-  if (ifNoneMatch) throw new TypeError("If-None-Match must be * when creating an entity");
+  if (ifNoneMatch) throw new PublicHttpError(400, "If-None-Match must be * when creating an entity");
   if (typeof ifMatch === "string") {
     const match = /^\"([1-9]\d*)\"$/.exec(ifMatch);
     const revision = match ? Number(match[1]) : Number.NaN;
     if (Number.isSafeInteger(revision)) return revision;
-    throw new TypeError('If-Match must be a quoted positive revision, for example "1"');
+    throw new PublicHttpError(400, 'If-Match must be a quoted positive revision, for example "1"');
   }
   const error = new Error("A write precondition is required");
   error.name = "PreconditionRequiredError";
@@ -251,12 +253,17 @@ function entityIdFromPath(pathname: string, prefix: string): string | null {
   if (!pathname.startsWith(prefix)) return null;
   const encoded = pathname.slice(prefix.length);
   if (!encoded || encoded.includes("/")) return null;
+  let id: string;
   try {
-    const id = decodeURIComponent(encoded);
-    return id.trim() ? id : null;
+    id = decodeURIComponent(encoded);
   } catch {
-    throw new TypeError("Entity ID is not valid URL encoding");
+    throw new PublicHttpError(400, "Entity ID is not valid URL encoding");
   }
+  if (!id.trim()) return null;
+  if (id.length > MAX_SYNC_IDENTIFIER_LENGTH) {
+    throw new PublicHttpError(400, `Entity ID must contain 1-${MAX_SYNC_IDENTIFIER_LENGTH} characters`);
+  }
+  return id;
 }
 
 async function readJson(request: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<unknown> {
@@ -268,14 +275,14 @@ async function readJson(request: IncomingMessage, maxBytes = MAX_BODY_BYTES): Pr
   }
   const declaredSize = request.headers["content-length"];
   if (typeof declaredSize === "string" && Number(declaredSize) > maxBytes) {
-    throw new RangeError("Request body is too large");
+    throw new PublicHttpError(413, "Request body is too large");
   }
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const buffer = Buffer.from(chunk);
     size += buffer.length;
-    if (size > maxBytes) throw new RangeError("Request body is too large");
+    if (size > maxBytes) throw new PublicHttpError(413, "Request body is too large");
     chunks.push(buffer);
   }
   let body: string;
@@ -286,7 +293,11 @@ async function readJson(request: IncomingMessage, maxBytes = MAX_BODY_BYTES): Pr
     error.name = "InvalidRequestEncodingError";
     throw error;
   }
-  return JSON.parse(body);
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new PublicHttpError(400, "Request body must be valid JSON");
+  }
 }
 
 export function createApp(provider: ModelProvider, options: AppOptions = {}) {
@@ -655,7 +666,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
         if (request.method === "PUT" && planId) {
           requireAllowedOrigin(request, options.allowedSyncOrigins);
           const value = await readJson(request);
-          if (!isLearningPlan(value) || value.id !== planId) throw new TypeError("Body must be a valid learning plan matching the route ID");
+          if (!isLearningPlan(value) || value.id !== planId) throw new PublicHttpError(400, "Body must be a valid learning plan matching the route ID");
           const write: SyncWriteRequest<typeof value> = {
             operationId: requireHeader(request, "Idempotency-Key"),
             entityId: planId,
@@ -671,7 +682,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
           requireAllowedOrigin(request, options.allowedSyncOrigins);
           const value = await readJson(request) as Partial<DailyRecordSyncValue>;
           if (typeof value.planId !== "string" || !value.planId.trim() || !isDailyRecord(value.record)) {
-            throw new TypeError("Body must contain a valid planId and daily record");
+            throw new PublicHttpError(400, "Body must contain a valid planId and daily record");
           }
           const write: SyncWriteRequest<DailyRecordSyncValue> = {
             operationId: requireHeader(request, "Idempotency-Key"),
@@ -698,6 +709,7 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
             : error.code === "unknown-principal" ? 401 : 400;
         return sendJson(response, status, { error: error.code, message: error.message });
       }
+      if (error instanceof PublicHttpError) return sendJson(response, error.status, { error: error.message });
       if (error instanceof Error && error.name === "SyncConfigurationError") return sendJson(response, 503, { error: error.message });
       if (error instanceof Error && error.name === "ModelBudgetConfigurationError") return sendJson(response, 503, { error: error.message });
       if (error instanceof Error && error.name === "ForbiddenOriginError") return sendJson(response, 403, { error: error.message });
@@ -709,9 +721,6 @@ export function createApp(provider: ModelProvider, options: AppOptions = {}) {
       }
       if (error instanceof Error && error.name === "PreconditionRequiredError") return sendJson(response, 428, { error: error.message });
       if (error instanceof AuthDeviceLimitError) return sendJson(response, 429, { error: error.message }, { "Retry-After": "3600" });
-      if (error instanceof SyntaxError) return sendJson(response, 400, { error: "Request body must be valid JSON" });
-      if (error instanceof TypeError) return sendJson(response, 400, { error: error.message });
-      if (error instanceof RangeError) return sendJson(response, 413, { error: error.message });
       if (error instanceof AgentOutputError) return sendJson(response, 502, { error: error.message });
       if (error instanceof ModelProviderError) {
         const publicError = publicModelProviderError(error);

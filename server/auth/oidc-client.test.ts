@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import { PublicHttpError } from "../http/public-http-error";
 import { StandardOidcClient } from "./oidc-client";
 
 const config = {
@@ -109,7 +110,7 @@ describe("standard OIDC client", () => {
       new URL("https://learn.example/api/auth/callback?error=secret-token%20private-context"),
       undefined,
       "Browser",
-    )).rejects.toEqual(new TypeError("OIDC provider rejected login"));
+    )).rejects.toEqual(new PublicHttpError(400, "OIDC provider rejected login"));
   });
 
   it("rejects oversized discovery responses before parsing them", async () => {
