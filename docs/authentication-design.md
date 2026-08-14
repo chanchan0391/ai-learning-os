@@ -23,7 +23,7 @@
 ```
 
 - `GET /api/auth/login` 通过 issuer discovery 发起授权码流程，生成短期签名事务 Cookie，并绑定随机 `state`、`nonce` 和 S256 PKCE verifier。`GET /api/auth/callback` 交换授权码，通过提供商 JWKS 验证 ID Token 的签名、issuer、audience、nonce 和 subject。
-- OIDC discovery、授权码交换和 JWKS 密钥获取共享可配置的上游请求时限，默认 10 秒且不允许超过 60 秒；discovery 限制为 64 KiB，令牌响应和 JWKS 各限制为 256 KiB，并在 JSON 解析或签名验证前取消超限流，避免身份提供商异常长期占用 API 连接或进程内存。三类请求都拒绝 HTTP 重定向，防止 discovery 响应或上游配置把授权码和身份请求转发到未经校验的主机；提供商迁移端点时必须显式更新可信配置。
+- OIDC discovery、授权码交换和 JWKS 密钥获取共享可配置的上游请求时限，默认 10 秒且不允许超过 60 秒；discovery 限制为 64 KiB，令牌响应和 JWKS 各限制为 256 KiB，并在 JSON 解析或签名验证前取消超限流，避免身份提供商异常长期占用 API 连接或进程内存。同一实例同时发生的 discovery 会共享一个在途请求，失败后立即允许下一次登录重试，避免突发登录或身份上游故障按请求数放大外部流量。三类请求都拒绝 HTTP 重定向，防止 discovery 响应或上游配置把授权码和身份请求转发到未经校验的主机；提供商迁移端点时必须显式更新可信配置。
 - 已实现的会话生命周期只在上述验证全部通过后接收 OIDC issuer + subject，并于事务中创建 `users`、`oidc_identities` 和 `sync_devices` 记录；访问令牌和 ID Token 不写入应用会话或学习记录。
 - 会话以高熵不透明令牌签发，数据库只保存 SHA-256 哈希；解析器同时检查会话有效期、会话撤销、账号删除和设备撤销。
 - `PostgresSyncStore` 只接受已存在、未删除的用户和未撤销设备。

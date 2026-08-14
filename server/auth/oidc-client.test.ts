@@ -61,6 +61,31 @@ describe("standard OIDC client", () => {
     expect(client.transactionCookieName).toBe(DEFAULT_OIDC_TRANSACTION_COOKIE_NAME);
   });
 
+  it("coalesces concurrent discovery and retries after a failed shared request", async () => {
+    let releaseDiscovery: ((response: Response) => void) | undefined;
+    const pendingDiscovery = new Promise<Response>((resolve) => { releaseDiscovery = resolve; });
+    const fetcher = vi.fn<typeof fetch>()
+      .mockImplementationOnce(async () => pendingDiscovery)
+      .mockImplementationOnce(async () => { throw new Error("identity provider unavailable"); })
+      .mockImplementationOnce(async () => discovery());
+    const client = new StandardOidcClient(config, () => 1_000, (bytes) => Buffer.alloc(bytes, 1), fetcher);
+
+    const first = client.begin();
+    const second = client.begin();
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    releaseDiscovery!(discovery());
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    const expiredClient = new StandardOidcClient(config, () => 3_601_001, (bytes) => Buffer.alloc(bytes, 2), fetcher);
+    const failedFirst = expiredClient.begin();
+    const failedSecond = expiredClient.begin();
+    await expect(Promise.all([failedFirst, failedSecond])).rejects.toThrow(/identity provider unavailable/);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await expect(expiredClient.begin()).resolves.toHaveProperty("authorizationUrl");
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
   it("rejects ambiguous transaction cookies and oversized return paths", async () => {
     const randomValues = [Buffer.alloc(32, 1), Buffer.alloc(24, 2), Buffer.alloc(24, 3)];
     const client = new StandardOidcClient(

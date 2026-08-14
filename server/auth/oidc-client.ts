@@ -105,6 +105,7 @@ export class StandardOidcClient implements OidcAuthenticator {
   readonly transactionCookieName: string;
   private readonly upstreamTimeoutMs: number;
   private discoveryCache?: { value: OidcDiscovery; expiresAt: number };
+  private discoveryInFlight?: Promise<OidcDiscovery>;
   private readonly jwks = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
   constructor(
@@ -207,6 +208,17 @@ export class StandardOidcClient implements OidcAuthenticator {
 
   private async discover(): Promise<OidcDiscovery> {
     if (this.discoveryCache && this.discoveryCache.expiresAt > this.now()) return this.discoveryCache.value;
+    if (this.discoveryInFlight) return this.discoveryInFlight;
+    const discovery = this.fetchDiscovery();
+    this.discoveryInFlight = discovery;
+    try {
+      return await discovery;
+    } finally {
+      if (this.discoveryInFlight === discovery) this.discoveryInFlight = undefined;
+    }
+  }
+
+  private async fetchDiscovery(): Promise<OidcDiscovery> {
     const issuer = this.config.issuer.replace(/\/$/, "");
     const response = await this.fetcher(`${issuer}/.well-known/openid-configuration`, {
       headers: { Accept: "application/json" },
