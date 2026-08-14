@@ -61,9 +61,10 @@ import { completionRate, LEARNING_GOAL_LIMITS, validateGoal } from "./planner";
 import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import { readBoundedJson } from "./bounded-json-response";
+import { agentResponseError, validateEvaluationResponse, validateLearningPlanResponse, validateRecoveryPlanResponse, validateReviewAssessmentResponse, validateTeachingSessionResponse } from "./agent-response-validation";
 import { AGENT_INPUT_LIMITS } from "./agent-limits";
 import type { LearningStateExport, PortfolioLearningStateExport } from "./learning-state";
-import type { DailyTask, EvaluationResult, LearningGoal, LearningPlan, LearningState, RecoveryPlan, ReviewAssessment, StageLearningNote, StageRetrospective, TaskDifficulty, TeachingSession } from "./types";
+import type { DailyTask, LearningGoal, LearningState, RecoveryPlan, StageLearningNote, StageRetrospective, TaskDifficulty } from "./types";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const MAX_AGENT_RESPONSE_BYTES = 1024 * 1024;
@@ -350,9 +351,9 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(goal),
       });
-      const body = await readBoundedJson<LearningPlan | { error: string }>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
-      if (!response.ok) throw new Error("error" in body ? body.error : "学习计划生成失败");
-      saveState(initializeLearningState(body as LearningPlan));
+      const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
+      if (!response.ok) throw new Error(agentResponseError(body, "学习计划生成失败"));
+      saveState(initializeLearningState(validateLearningPlanResponse(body)));
       setStorageNotice("");
     } catch (error) {
       setErrors([error instanceof Error ? error.message : "学习计划生成失败"]);
@@ -378,9 +379,9 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: plan?.goal, task, learnerContext: { knownConcepts: [plan?.goal.currentLevel ?? ""], recentErrors } }),
       });
-      const body = await readBoundedJson<TeachingSession | { error: string }>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
-      if (!response.ok) throw new Error("error" in body ? body.error : "教学会话生成失败");
-      updateState((current) => saveTeachingSession(current, task.id, body as TeachingSession));
+      const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
+      if (!response.ok) throw new Error(agentResponseError(body, "教学会话生成失败"));
+      updateState((current) => saveTeachingSession(current, task.id, validateTeachingSessionResponse(body)));
     } catch (error) {
       setAgentError(error instanceof Error ? error.message : "教学会话生成失败");
     } finally {
@@ -416,11 +417,12 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: plan.goal, items, answer }),
       });
-      const body = await readBoundedJson<ReviewAssessment | { error: string }>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
-      if (!response.ok) throw new Error("error" in body ? body.error : "主动回忆判分失败");
+      const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
+      if (!response.ok) throw new Error(agentResponseError(body, "主动回忆判分失败"));
+      const assessment = validateReviewAssessmentResponse(body, answer);
       saveState(linkedInsight
-        ? saveCrossStageReviewAssessment(learningState, task.id, linkedInsight.misconception, body as ReviewAssessment)
-        : saveReviewAssessment(learningState, task.id, body as ReviewAssessment));
+        ? saveCrossStageReviewAssessment(learningState, task.id, linkedInsight.misconception, assessment)
+        : saveReviewAssessment(learningState, task.id, assessment));
     } catch (error) {
       setAgentError(error instanceof Error ? error.message : "主动回忆判分失败");
     } finally {
@@ -440,9 +442,9 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: plan.goal, task, submission }),
       });
-      const body = await readBoundedJson<EvaluationResult | { error: string }>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
-      if (!response.ok) throw new Error("error" in body ? body.error : "学习成果评估失败");
-      updateState((current) => saveEvaluation(current, task.id, submission, body as EvaluationResult));
+      const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
+      if (!response.ok) throw new Error(agentResponseError(body, "学习成果评估失败"));
+      updateState((current) => saveEvaluation(current, task.id, submission, validateEvaluationResponse(body)));
     } catch (error) {
       setAgentError(error instanceof Error ? error.message : "学习成果评估失败");
     } finally {
@@ -461,9 +463,9 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: learningState.plan.goal, currentTask, interruption }),
       });
-      const body = await readBoundedJson<RecoveryPlan | { error: string }>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
-      if (!response.ok) throw new Error("error" in body ? body.error : "恢复计划生成失败");
-      setRecoveryPlan(body as RecoveryPlan);
+      const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
+      if (!response.ok) throw new Error(agentResponseError(body, "恢复计划生成失败"));
+      setRecoveryPlan(validateRecoveryPlanResponse(body, learningState.plan.goal.dailyMinutes));
     } catch (error) {
       setAgentError(error instanceof Error ? error.message : "恢复计划生成失败");
     } finally {
