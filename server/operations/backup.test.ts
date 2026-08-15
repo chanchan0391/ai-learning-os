@@ -504,6 +504,28 @@ esac
     expect(log).not.toContain("ai_learning_os -");
   });
 
+  it("selects the newest managed backup for a scheduled drill", () => {
+    const fixture = makeRestoreFixture();
+    const newestBackup = join(dirname(fixture.backup), "ai-learning-os-20260815T120000Z-newest.dump");
+    writeFileSync(newestBackup, "valid custom archive");
+    writeFileSync(join(dirname(fixture.backup), "operator-notes.dump"), "do not restore");
+
+    const result = spawnSync("sh", [restoreDrillScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AI_LEARNING_BACKUP_DIR: dirname(fixture.backup),
+        AI_LEARNING_DOCKER_BIN: fixture.docker,
+        AI_LEARNING_VERIFY_BACKUP_BIN: fixture.verify,
+        FAKE_BACKUP: newestBackup,
+        FAKE_DOCKER_LOG: fixture.dockerLog,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Restore drill passed");
+  });
+
   it("removes the isolated database when restore fails", () => {
     const fixture = makeRestoreFixture();
     executable(fixture.docker, `#!/bin/sh

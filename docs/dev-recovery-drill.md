@@ -38,7 +38,7 @@
 
 ## 下次演练
 
-1. 选择最新备份，执行 `~/services/ai-learning-os/restore-drill.sh /home/chanchan/backups/ai-learning-os/<backup>.dump`；命令会先确认验证运行器由当前用户独占且不可被其他用户写入，再只读验证绝对路径、文件归属、私有权限、sidecar 文件名、SHA-256 和 PostgreSQL custom archive 可读性。
+1. 受版本控制的 `ai-learning-os-restore-drill.timer` 每周自动执行 `~/services/ai-learning-os/restore-drill.sh`，从私有备份目录选择最新受管归档；也可传入绝对备份路径手动演练。命令会先确认验证运行器由当前用户独占且不可被其他用户写入，再只读验证绝对路径、文件归属、私有权限、sidecar 文件名、SHA-256 和 PostgreSQL custom archive 可读性。
 2. 命令只会使用唯一命名的隔离数据库，完整恢复后验证核心表、迁移数量和非敏感行数，并在成功、失败或中断后删除临时库；禁止手工改为运行中的应用数据库。
 3. 记录备份生成时间、文件大小、预检结果和演练输出的数量，不记录标识符、文件内容或学习正文；再运行只读同步仓库检查。
 4. 通过真实浏览器完成 OIDC 回调，验证会话轮换、一次上传和一次云端恢复。

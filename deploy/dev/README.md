@@ -101,6 +101,8 @@ cat ~/services/ai-learning-os/current/DEPLOYED_COMMIT
 
 远端由受版本控制的 `ai-learning-os-backup.timer` 每日 03:00 UTC 后随机错峰 30 分钟运行 `backup.sh`；`Persistent=true` 会在用户管理器离线后补跑错过的轮次。独立的 `ai-learning-os-backup-monitor.timer` 每 15 分钟运行隐私安全的 `backup-health.sh`，每次备份成功或失败后也会立即触发。`ai-learning-os-application-monitor.timer` 每 5 分钟检查 API/Web unit 仍处于 active、Web 可达，并严格解析 `/api/health`，要求数据库 ready、实时模型与同步启用且 release revision 等于活动 `DEPLOYED_COMMIT`。两类监控都只输出受管文件名、年龄或提交标识，不输出学习正文或健康响应内容；失败会形成 failed monitor service，`control-plane.sh status` 因而失败并可被主机级采集发现。当前 dev 尚未配置集中告警目的地，生产前必须将失败 unit 接入受控通知路由。控制面安装会原子安装并启用三个 timer，状态检查同时验证 schedule unit 没有漂移且处于 enabled/active。备份 service 复用应用服务沙箱，并只给默认备份目录开放写权限。以 PostgreSQL custom format 保存数据库备份；备份目录必须使用绝对路径，并在任何权限变更或数据库访问前证明它是真实目录且归当前用户所有，拒绝符号链接、普通文件和跨用户目录。备份、只读验证和隔离恢复会先将 Docker 客户端解析为绝对路径，只接受由 root 或当前用户拥有、不可被组或其他用户写入且没有符号链接或额外硬链接的可执行文件；其直接父目录也必须满足相同归属和写权限边界。可用 `AI_LEARNING_DOCKER_BIN` 显式指定绝对路径。脚本使用 `flock` 串行化定时任务与发布前备份，真实并发会在访问 PostgreSQL 前失败，进程异常退出后内核会自动释放锁；遗留锁只有在当前用户独占普通文件时才会复用，符号链接、硬链接或跨用户目标会在打开、改权和 PostgreSQL 访问前被拒绝。脚本会先拒绝空输出，再用 `pg_restore --list` 验证归档可读取，只有通过验证的临时文件才会以碰撞安全的名称发布。每份归档同时生成只引用文件名的 SHA-256 sidecar；备份目录权限为 `0700`，锁文件、归档与校验文件权限为 `0600`。每轮只清理目录直属、当前用户独占的受管普通文件：超过 7 天的归档、配对或孤立校验文件，以及超过一天的异常终止临时文件；不会删除硬链接制品或递归遍历嵌套路径。该开发基线不代替生产环境的异地加密备份。
 
+控制面现在还会原子安装、回滚并启用第四个 timer：`ai-learning-os-restore-drill.timer`。它每周日 04:00 UTC 后随机错峰最多 2 小时，自动选择最新受管归档，在唯一隔离数据库中完整恢复、验证并删除临时库。任务最多运行 15 分钟；失败会保留为 failed service，并使 `control-plane.sh status` 返回非零。
+
 恢复前必须先运行只读预检；它拒绝相对路径、符号链接、硬链接、非当前用户文件、对组或其他用户开放的权限、错误 sidecar 文件名和校验和，要求归档与 sidecar 都是当前用户独占的私有普通文件，并再次通过容器内 `pg_restore --list` 验证归档：
 
 ```sh
@@ -113,6 +115,7 @@ cat ~/services/ai-learning-os/current/DEPLOYED_COMMIT
 
 ```sh
 ~/services/ai-learning-os/restore-drill.sh /home/chanchan/backups/ai-learning-os/<backup>.dump
+~/services/ai-learning-os/restore-drill.sh # 省略参数时选择最新受管备份
 ```
 
 输出只包含表、迁移、账号、计划和每日记录的数量，不输出标识符或学习正文。删除临时数据库失败会让命令明确失败，必须先完成清理再把演练记为成功。

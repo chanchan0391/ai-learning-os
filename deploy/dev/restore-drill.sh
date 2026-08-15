@@ -2,14 +2,15 @@
 set -eu
 
 backup=${1:-}
+backup_dir=${AI_LEARNING_BACKUP_DIR:-"$HOME/backups/ai-learning-os"}
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 verify_runner=${AI_LEARNING_VERIFY_BACKUP_BIN:-"$script_dir/verify-backup.sh"}
 verify_runner_dir=$(dirname "$verify_runner")
 database=
 cleanup_required=false
 
-if [ "$#" -ne 1 ]; then
-  echo "Usage: restore-drill.sh /absolute/path/to/ai-learning-os-<timestamp>-<suffix>.dump" >&2
+if [ "$#" -gt 1 ]; then
+  echo "Usage: restore-drill.sh [/absolute/path/to/ai-learning-os-<timestamp>-<suffix>.dump]" >&2
   exit 2
 fi
 case "$verify_runner" in
@@ -45,6 +46,31 @@ links_of() {
   case "$links" in ''|*[!0-9]*) echo "Could not verify backup verification runner link count" >&2; exit 2 ;; esac
   printf '%s\n' "$links"
 }
+
+if [ "$#" -eq 0 ]; then
+  case "$backup_dir" in
+    /*) ;;
+    *) echo "Backup directory path must be absolute" >&2; exit 2 ;;
+  esac
+  if [ -L "$backup_dir" ] || [ ! -d "$backup_dir" ]; then
+    echo "Backup directory must be a real directory, not a symlink" >&2
+    exit 2
+  fi
+  if [ "$(owner_of "$backup_dir")" != "$(id -u)" ]; then
+    echo "Backup directory must be owned by the current user" >&2
+    exit 2
+  fi
+  if [ $((0$(mode_of "$backup_dir") & 077)) -ne 0 ]; then
+    echo "Backup directory must not grant group or other access" >&2
+    exit 2
+  fi
+  backup=$(find "$backup_dir" -mindepth 1 -maxdepth 1 -type f \
+    -name 'ai-learning-os-????????T??????Z-*.dump' -print | LC_ALL=C sort -r | sed -n '1p')
+  if [ -z "$backup" ]; then
+    echo "No managed backup is available for the restore drill" >&2
+    exit 1
+  fi
+fi
 
 if [ "$(owner_of "$verify_runner_dir")" != "$(id -u)" ]; then
   echo "Backup verification runner directory must be owned by the current user" >&2

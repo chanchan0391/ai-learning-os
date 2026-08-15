@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule weekly AI Learning OS isolated restore drill
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00 UTC
+RandomizedDelaySec=2h
+Persistent=true
+Unit=ai-learning-os-restore-drill.service
+
+[Install]
+WantedBy=timers.target

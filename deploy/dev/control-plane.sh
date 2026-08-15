@@ -21,9 +21,11 @@ backup_monitor_service="ai-learning-os-backup-monitor.service"
 backup_monitor_timer="ai-learning-os-backup-monitor.timer"
 application_monitor_service="ai-learning-os-application-monitor.service"
 application_monitor_timer="ai-learning-os-application-monitor.timer"
+restore_drill_service="ai-learning-os-restore-drill.service"
+restore_drill_timer="ai-learning-os-restore-drill.timer"
 monitor_services="$backup_monitor_service $application_monitor_service"
-timer_units="$backup_timer $backup_monitor_timer $application_monitor_timer"
-units="$application_units $backup_service $backup_timer $backup_monitor_service $backup_monitor_timer $application_monitor_service $application_monitor_timer"
+timer_units="$backup_timer $backup_monitor_timer $application_monitor_timer $restore_drill_timer"
+units="$application_units $backup_service $backup_timer $backup_monitor_service $backup_monitor_timer $application_monitor_service $application_monitor_timer $restore_drill_service $restore_drill_timer"
 lock_file="$base_dir/control-plane.lock"
 backup_retention_count=5
 staged_unit=
@@ -236,6 +238,39 @@ validate_sources() {
       return 1
     fi
   done
+
+  restore_drill_source="$source_dir/$restore_drill_service"
+  validate_owned_regular_file "$restore_drill_source" "Control-plane source $restore_drill_service" || return 1
+  for directive in \
+    'Type=oneshot' \
+    'ExecStart=%h/services/ai-learning-os/restore-drill.sh' \
+    'TimeoutStartSec=15m' \
+    'After=ai-learning-os-backup.service'; do
+    if ! grep -Fxq "$directive" "$restore_drill_source"; then
+      echo "$restore_drill_service is missing required restore drill directive: $directive" >&2
+      return 1
+    fi
+  done
+  echo "$required_monitor_sandbox_directives" | while IFS= read -r directive; do
+    if ! grep -Fxq "$directive" "$restore_drill_source"; then
+      echo "$restore_drill_service is missing required sandbox directive: $directive" >&2
+      exit 1
+    fi
+  done || return 1
+
+  restore_drill_timer_source="$source_dir/$restore_drill_timer"
+  validate_owned_regular_file "$restore_drill_timer_source" "Control-plane source $restore_drill_timer" || return 1
+  for directive in \
+    'OnCalendar=Sun *-*-* 04:00:00 UTC' \
+    'RandomizedDelaySec=2h' \
+    'Persistent=true' \
+    'Unit=ai-learning-os-restore-drill.service' \
+    'WantedBy=timers.target'; do
+    if ! grep -Fxq "$directive" "$restore_drill_timer_source"; then
+      echo "$restore_drill_timer is missing required schedule directive: $directive" >&2
+      return 1
+    fi
+  done
 }
 
 service_uses_selected_node() {
@@ -265,7 +300,7 @@ status_control_plane() {
       result=1
     else
       case "$unit" in
-        $backup_service|$backup_monitor_service|$application_monitor_service)
+        $backup_service|$backup_monitor_service|$application_monitor_service|$restore_drill_service)
           if $systemctl_bin --user is-failed --quiet "$unit"; then
             echo "$unit: failed"
             result=1
@@ -273,7 +308,7 @@ status_control_plane() {
             echo "$unit: current, timer-triggered"
           fi
           ;;
-        $backup_timer|$backup_monitor_timer|$application_monitor_timer)
+        $backup_timer|$backup_monitor_timer|$application_monitor_timer|$restore_drill_timer)
           if ! $systemctl_bin --user is-enabled --quiet "$unit"; then
             echo "$unit: disabled"
             result=1
