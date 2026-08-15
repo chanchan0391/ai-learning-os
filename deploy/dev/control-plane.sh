@@ -17,7 +17,10 @@ proc_root=${AI_LEARNING_PROC_ROOT:-/proc}
 application_units="ai-learning-os-api.service ai-learning-os-web.service"
 backup_service="ai-learning-os-backup.service"
 backup_timer="ai-learning-os-backup.timer"
-units="$application_units $backup_service $backup_timer"
+backup_monitor_service="ai-learning-os-backup-monitor.service"
+backup_monitor_timer="ai-learning-os-backup-monitor.timer"
+timer_units="$backup_timer $backup_monitor_timer"
+units="$application_units $backup_service $backup_timer $backup_monitor_service $backup_monitor_timer"
 lock_file="$base_dir/control-plane.lock"
 backup_retention_count=5
 staged_unit=
@@ -33,6 +36,19 @@ RestrictRealtime=true
 LockPersonality=true
 RemoveIPC=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native'
+required_monitor_sandbox_directives='UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX
 SystemCallArchitectures=native'
 
 usage() {
@@ -129,12 +145,31 @@ validate_sources() {
   for directive in \
     'Type=oneshot' \
     'ExecStart=%h/services/ai-learning-os/backup.sh' \
+    'OnSuccess=ai-learning-os-backup-monitor.service' \
+    'OnFailure=ai-learning-os-backup-monitor.service' \
     'ReadWritePaths=-%h/backups/ai-learning-os'; do
     if ! grep -Fxq "$directive" "$backup_source"; then
       echo "$backup_service is missing required backup directive: $directive" >&2
       return 1
     fi
   done
+
+  monitor_source="$source_dir/$backup_monitor_service"
+  validate_owned_regular_file "$monitor_source" "Control-plane source $backup_monitor_service" || return 1
+  for directive in \
+    'Type=oneshot' \
+    'ExecStart=%h/services/ai-learning-os/backup-health.sh'; do
+    if ! grep -Fxq "$directive" "$monitor_source"; then
+      echo "$backup_monitor_service is missing required monitor directive: $directive" >&2
+      return 1
+    fi
+  done
+  echo "$required_monitor_sandbox_directives" | while IFS= read -r directive; do
+    if ! grep -Fxq "$directive" "$monitor_source"; then
+      echo "$backup_monitor_service is missing required sandbox directive: $directive" >&2
+      exit 1
+    fi
+  done || return 1
   echo "$required_sandbox_directives" | while IFS= read -r directive; do
     if ! grep -Fxq "$directive" "$backup_source"; then
       echo "$backup_service is missing required sandbox directive: $directive" >&2
@@ -152,6 +187,18 @@ validate_sources() {
     'WantedBy=timers.target'; do
     if ! grep -Fxq "$directive" "$timer_source"; then
       echo "$backup_timer is missing required schedule directive: $directive" >&2
+      return 1
+    fi
+  done
+  monitor_timer_source="$source_dir/$backup_monitor_timer"
+  validate_owned_regular_file "$monitor_timer_source" "Control-plane source $backup_monitor_timer" || return 1
+  for directive in \
+    'OnBootSec=5m' \
+    'OnUnitActiveSec=15m' \
+    'Unit=ai-learning-os-backup-monitor.service' \
+    'WantedBy=timers.target'; do
+    if ! grep -Fxq "$directive" "$monitor_timer_source"; then
+      echo "$backup_monitor_timer is missing required schedule directive: $directive" >&2
       return 1
     fi
   done
@@ -184,10 +231,15 @@ status_control_plane() {
       result=1
     else
       case "$unit" in
-        $backup_service)
-          echo "$unit: current, timer-triggered"
+        $backup_service|$backup_monitor_service)
+          if $systemctl_bin --user is-failed --quiet "$unit"; then
+            echo "$unit: failed"
+            result=1
+          else
+            echo "$unit: current, timer-triggered"
+          fi
           ;;
-        $backup_timer)
+        $backup_timer|$backup_monitor_timer)
           if ! $systemctl_bin --user is-enabled --quiet "$unit"; then
             echo "$unit: disabled"
             result=1
@@ -234,7 +286,7 @@ rollback_units() {
   done
   $systemctl_bin --user daemon-reload
   $systemctl_bin --user restart $application_units || true
-  $systemctl_bin --user enable --now "$backup_timer" || true
+  $systemctl_bin --user enable --now $timer_units || true
 }
 
 install_unit_atomically() {
@@ -258,7 +310,9 @@ apply_units() {
   done
   $systemctl_bin --user daemon-reload \
     && $systemctl_bin --user restart $application_units \
-    && $systemctl_bin --user enable --now "$backup_timer"
+    && $systemctl_bin --user reset-failed "$backup_service" "$backup_monitor_service" \
+    && $systemctl_bin --user enable --now $timer_units \
+    && $systemctl_bin --user start "$backup_monitor_service"
 }
 
 cleanup_control_plane_artifacts() {

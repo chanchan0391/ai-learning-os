@@ -1,6 +1,8 @@
 [Unit]
 Description=AI Learning OS database backup
 After=ai-learning-os-api.service
+OnSuccess=ai-learning-os-backup-monitor.service
+OnFailure=ai-learning-os-backup-monitor.service
 
 [Service]
 Type=oneshot

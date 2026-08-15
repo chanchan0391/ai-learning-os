@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const backupScript = join(repositoryRoot, "deploy/dev/backup.sh");
+const backupHealthScript = join(repositoryRoot, "deploy/dev/backup-health.sh");
 const verifyBackupScript = join(repositoryRoot, "deploy/dev/verify-backup.sh");
 const restoreDrillScript = join(repositoryRoot, "deploy/dev/restore-drill.sh");
 const deployScript = join(repositoryRoot, "deploy/dev/deploy-main.sh");
@@ -281,6 +282,74 @@ describe("dev database backup", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("path must be absolute");
     expect(existsSync(dockerMarker)).toBe(false);
+  });
+});
+
+describe("dev database backup monitoring", () => {
+  function makeHealthFixture() {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-backup-health-"));
+    temporaryDirectories.push(root);
+    const backupDir = join(root, "backups");
+    const backup = join(backupDir, "ai-learning-os-20260815T120000Z-test.dump");
+    const systemctl = executable(join(root, "systemctl"), "#!/bin/sh\nprintf '%s\\n' \"${FAKE_BACKUP_RESULT:-success}\"\n");
+    mkdirSync(backupDir, { mode: 0o700 });
+    writeFileSync(backup, "verified archive", { mode: 0o600 });
+    writeFileSync(`${backup}.sha256`, `checksum  ${basename(backup)}\n`, { mode: 0o600 });
+    return { backup, backupDir, systemctl };
+  }
+
+  function runBackupHealth(
+    fixture: ReturnType<typeof makeHealthFixture>,
+    extraEnv: NodeJS.ProcessEnv = {},
+  ) {
+    return spawnSync("sh", [backupHealthScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AI_LEARNING_BACKUP_DIR: fixture.backupDir,
+        AI_LEARNING_SYSTEMCTL_BIN: fixture.systemctl,
+        ...extraEnv,
+      },
+    });
+  }
+
+  it("accepts a recent private backup after a successful job", () => {
+    const fixture = makeHealthFixture();
+
+    const result = runBackupHealth(fixture);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Database backup healthy");
+  });
+
+  it("reports the latest backup job failure immediately", () => {
+    const fixture = makeHealthFixture();
+
+    const result = runBackupHealth(fixture, { FAKE_BACKUP_RESULT: "exit-code" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Latest database backup job did not succeed: exit-code");
+  });
+
+  it("reports a stale backup even when the last job result was successful", () => {
+    const fixture = makeHealthFixture();
+    const staleTime = new Date(Date.now() - 3_600_000);
+    utimesSync(fixture.backup, staleTime, staleTime);
+
+    const result = runBackupHealth(fixture, { AI_LEARNING_BACKUP_MAX_AGE_SECONDS: "60" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Latest database backup is stale");
+  });
+
+  it("rejects an unsafe managed checksum before reporting health", () => {
+    const fixture = makeHealthFixture();
+    chmodSync(`${fixture.backup}.sha256`, 0o644);
+
+    const result = runBackupHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Managed backup checksum must not be accessible by group or other users");
   });
 });
 
@@ -723,7 +792,7 @@ esac
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
     }
     writeFileSync(runnerTarget, "preserve me", { mode: 0o755 });
@@ -760,7 +829,7 @@ esac
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
     writeFileSync(runnerTarget, "preserve me", { mode: 0o755 });
     linkSync(runnerTarget, join(releaseOperations, "deploy-main.sh"));
-    for (const runner of ["backup.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
+    for (const runner of ["backup.sh", "backup-health.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
     }
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
@@ -828,11 +897,13 @@ esac
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
     writeFileSync(join(releaseOperations, "deploy-main.sh"), "new deploy runner\n");
     writeFileSync(join(releaseOperations, "backup.sh"), "new backup runner\n");
+    writeFileSync(join(releaseOperations, "backup-health.sh"), "new backup monitor\n");
     writeFileSync(join(releaseOperations, "verify-backup.sh"), "new verify runner\n");
     writeFileSync(join(releaseOperations, "restore-drill.sh"), "new restore runner\n");
     writeFileSync(join(releaseOperations, "resolve-docker-bin.sh"), "new Docker resolver\n");
     writeFileSync(join(baseDir, "deploy-main.sh"), "old deploy runner\n");
     writeFileSync(join(baseDir, "backup.sh"), "old backup runner\n");
+    writeFileSync(join(baseDir, "backup-health.sh"), "old backup monitor\n");
     writeFileSync(join(baseDir, "verify-backup.sh"), "old verify runner\n");
     writeFileSync(join(baseDir, "restore-drill.sh"), "old restore runner\n");
     writeFileSync(join(baseDir, "resolve-docker-bin.sh"), "old Docker resolver\n");
@@ -855,11 +926,13 @@ esac
     expect(result.stdout).toContain(`Revision ${revision} is already deployed`);
     expect(readFileSync(join(baseDir, "deploy-main.sh"), "utf8")).toBe("new deploy runner\n");
     expect(readFileSync(join(baseDir, "backup.sh"), "utf8")).toBe("new backup runner\n");
+    expect(readFileSync(join(baseDir, "backup-health.sh"), "utf8")).toBe("new backup monitor\n");
     expect(readFileSync(join(baseDir, "verify-backup.sh"), "utf8")).toBe("new verify runner\n");
     expect(readFileSync(join(baseDir, "restore-drill.sh"), "utf8")).toBe("new restore runner\n");
     expect(readFileSync(join(baseDir, "resolve-docker-bin.sh"), "utf8")).toBe("new Docker resolver\n");
     expect(statSync(join(baseDir, "deploy-main.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "backup.sh")).mode & 0o777).toBe(0o755);
+    expect(statSync(join(baseDir, "backup-health.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "verify-backup.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "restore-drill.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "resolve-docker-bin.sh")).mode & 0o777).toBe(0o755);
@@ -877,7 +950,7 @@ esac
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
       utimesSync(join(baseDir, runner), fixedTime, fixedTime);
@@ -898,7 +971,7 @@ esac
     });
 
     expect(result.status, result.stderr).toBe(0);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       expect(statSync(join(baseDir, runner)).mtimeMs).toBe(fixedTime.getTime());
     }
   }, 15_000);
@@ -916,7 +989,7 @@ esac
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
     }
@@ -969,6 +1042,7 @@ esac
     writeFileSync(join(archiveRoot, "package.json"), "{}\n");
     writeFileSync(join(archiveRoot, "deploy/dev/deploy-main.sh"), "new deploy runner\n");
     writeFileSync(join(archiveRoot, "deploy/dev/backup.sh"), "new backup runner\n");
+    writeFileSync(join(archiveRoot, "deploy/dev/backup-health.sh"), "new backup monitor\n");
     writeFileSync(join(archiveRoot, "deploy/dev/verify-backup.sh"), "new verify runner\n");
     writeFileSync(join(archiveRoot, "deploy/dev/restore-drill.sh"), "new restore runner\n");
     writeFileSync(join(archiveRoot, "deploy/dev/resolve-docker-bin.sh"), "new Docker resolver\n");

@@ -1,0 +1,20 @@
+[Unit]
+Description=Monitor AI Learning OS database backup freshness
+After=ai-learning-os-backup.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/services/ai-learning-os/backup-health.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
