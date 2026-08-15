@@ -14,7 +14,10 @@ systemctl_bin=${AI_LEARNING_SYSTEMCTL_BIN:-systemctl}
 flock_bin=${AI_LEARNING_FLOCK_BIN:-flock}
 stat_bin=${AI_LEARNING_STAT_BIN:-stat}
 proc_root=${AI_LEARNING_PROC_ROOT:-/proc}
-units="ai-learning-os-api.service ai-learning-os-web.service"
+application_units="ai-learning-os-api.service ai-learning-os-web.service"
+backup_service="ai-learning-os-backup.service"
+backup_timer="ai-learning-os-backup.timer"
+units="$application_units $backup_service $backup_timer"
 lock_file="$base_dir/control-plane.lock"
 backup_retention_count=5
 staged_unit=
@@ -105,7 +108,7 @@ validate_sources() {
     return 1
   fi
 
-  for unit in $units; do
+  for unit in $application_units; do
     source_unit="$source_dir/$unit"
     validate_owned_regular_file "$source_unit" "Control-plane source $unit" || return 1
     if ! grep -Fq "ExecStart=$node_bin " "$source_unit" \
@@ -119,6 +122,38 @@ validate_sources() {
         exit 1
       fi
     done || return 1
+  done
+
+  backup_source="$source_dir/$backup_service"
+  validate_owned_regular_file "$backup_source" "Control-plane source $backup_service" || return 1
+  for directive in \
+    'Type=oneshot' \
+    'ExecStart=%h/services/ai-learning-os/backup.sh' \
+    'ReadWritePaths=-%h/backups/ai-learning-os'; do
+    if ! grep -Fxq "$directive" "$backup_source"; then
+      echo "$backup_service is missing required backup directive: $directive" >&2
+      return 1
+    fi
+  done
+  echo "$required_sandbox_directives" | while IFS= read -r directive; do
+    if ! grep -Fxq "$directive" "$backup_source"; then
+      echo "$backup_service is missing required sandbox directive: $directive" >&2
+      exit 1
+    fi
+  done || return 1
+
+  timer_source="$source_dir/$backup_timer"
+  validate_owned_regular_file "$timer_source" "Control-plane source $backup_timer" || return 1
+  for directive in \
+    'OnCalendar=*-*-* 03:00:00 UTC' \
+    'RandomizedDelaySec=30m' \
+    'Persistent=true' \
+    'Unit=ai-learning-os-backup.service' \
+    'WantedBy=timers.target'; do
+    if ! grep -Fxq "$directive" "$timer_source"; then
+      echo "$backup_timer is missing required schedule directive: $directive" >&2
+      return 1
+    fi
   done
 }
 
@@ -147,17 +182,37 @@ status_control_plane() {
     elif ! cmp -s "$source_unit" "$installed_unit"; then
       echo "$unit: drifted"
       result=1
-    elif ! $systemctl_bin --user is-enabled --quiet "$unit"; then
-      echo "$unit: disabled"
-      result=1
-    elif ! $systemctl_bin --user is-active --quiet "$unit"; then
-      echo "$unit: inactive"
-      result=1
-    elif ! service_uses_selected_node "$unit"; then
-      echo "$unit: unexpected runtime"
-      result=1
     else
-      echo "$unit: current, enabled, active, selected runtime"
+      case "$unit" in
+        $backup_service)
+          echo "$unit: current, timer-triggered"
+          ;;
+        $backup_timer)
+          if ! $systemctl_bin --user is-enabled --quiet "$unit"; then
+            echo "$unit: disabled"
+            result=1
+          elif ! $systemctl_bin --user is-active --quiet "$unit"; then
+            echo "$unit: inactive"
+            result=1
+          else
+            echo "$unit: current, enabled, active"
+          fi
+          ;;
+        *)
+          if ! $systemctl_bin --user is-enabled --quiet "$unit"; then
+            echo "$unit: disabled"
+            result=1
+          elif ! $systemctl_bin --user is-active --quiet "$unit"; then
+            echo "$unit: inactive"
+            result=1
+          elif ! service_uses_selected_node "$unit"; then
+            echo "$unit: unexpected runtime"
+            result=1
+          else
+            echo "$unit: current, enabled, active, selected runtime"
+          fi
+          ;;
+      esac
     fi
   done
   return "$result"
@@ -178,7 +233,8 @@ rollback_units() {
     fi
   done
   $systemctl_bin --user daemon-reload
-  $systemctl_bin --user restart $units || true
+  $systemctl_bin --user restart $application_units || true
+  $systemctl_bin --user enable --now "$backup_timer" || true
 }
 
 install_unit_atomically() {
@@ -201,7 +257,8 @@ apply_units() {
     install_unit_atomically "$source_dir/$unit" "$unit_dir/$unit" 0644 || return 1
   done
   $systemctl_bin --user daemon-reload \
-    && $systemctl_bin --user restart $units
+    && $systemctl_bin --user restart $application_units \
+    && $systemctl_bin --user enable --now "$backup_timer"
 }
 
 cleanup_control_plane_artifacts() {

@@ -1,0 +1,21 @@
+[Unit]
+Description=AI Learning OS database backup
+After=ai-learning-os-api.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/services/ai-learning-os/backup.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=-%h/backups/ai-learning-os
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native

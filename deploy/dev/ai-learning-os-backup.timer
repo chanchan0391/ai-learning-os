@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the AI Learning OS database backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+AccuracySec=1m
+Unit=ai-learning-os-backup.service
+
+[Install]
+WantedBy=timers.target
