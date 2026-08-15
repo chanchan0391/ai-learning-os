@@ -5,11 +5,32 @@ base_dir=${AI_LEARNING_DEPLOY_DIR:-"$HOME/services/ai-learning-os"}
 repository=${AI_LEARNING_REPOSITORY:-"https://github.com/chanchan0391/ai-learning-os.git"}
 node_bin=${AI_LEARNING_NODE_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/node"}
 npm_bin=${AI_LEARNING_NPM_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/npm"}
+stat_bin=${AI_LEARNING_STAT_BIN:-stat}
 requested_revision=${1:-}
 provided_archive=${2:-}
 provided_checksum=${3:-}
 temporary_dir=
 managed_archive=
+
+validate_owned_directory() {
+  directory_path=$1
+  directory_label=$2
+  if [ -L "$directory_path" ] || [ ! -d "$directory_path" ]; then
+    echo "$directory_label must be a real directory, not a symlink" >&2
+    return 1
+  fi
+  directory_owner=$($stat_bin -f '%u' "$directory_path" 2>/dev/null || true)
+  case "$directory_owner" in
+    ''|*[!0-9]*) directory_owner=$($stat_bin -c '%u' "$directory_path" 2>/dev/null || true) ;;
+  esac
+  case "$directory_owner" in
+    ''|*[!0-9]*) echo "Could not verify $directory_label ownership" >&2; return 1 ;;
+  esac
+  if [ "$directory_owner" != "$(id -u)" ]; then
+    echo "$directory_label must be owned by the deployment user" >&2
+    return 1
+  fi
+}
 
 cleanup() {
   if [ -n "$temporary_dir" ]; then rm -rf "$temporary_dir"; fi
@@ -100,8 +121,46 @@ if [ "${#revision}" -ne 40 ]; then
   exit 2
 fi
 
-mkdir -p "$base_dir/releases" "$base_dir/deploy-logs" "$base_dir/incoming"
-exec 9>"$base_dir/deploy.lock"
+case "$base_dir" in
+  /*) ;;
+  *) echo "Deployment directory path must be absolute" >&2; exit 2 ;;
+esac
+if [ -L "$base_dir" ]; then
+  echo "Deployment directory must be a real directory, not a symlink" >&2
+  exit 1
+fi
+mkdir -p "$base_dir"
+validate_owned_directory "$base_dir" "Deployment directory"
+for managed_directory in releases deploy-logs incoming; do
+  managed_path="$base_dir/$managed_directory"
+  if [ -L "$managed_path" ]; then
+    echo "Managed deployment directory must be a real directory, not a symlink: $managed_path" >&2
+    exit 1
+  fi
+  mkdir -p "$managed_path"
+  validate_owned_directory "$managed_path" "Managed deployment directory"
+done
+deploy_lock="$base_dir/deploy.lock"
+if [ -L "$deploy_lock" ] || { [ -e "$deploy_lock" ] && [ ! -f "$deploy_lock" ]; }; then
+  echo "Deployment lock must be a regular file, not a symlink" >&2
+  exit 1
+fi
+if [ -e "$deploy_lock" ]; then
+  deploy_lock_owner=$($stat_bin -f '%u' "$deploy_lock" 2>/dev/null || true)
+  case "$deploy_lock_owner" in
+    ''|*[!0-9]*) deploy_lock_owner=$($stat_bin -c '%u' "$deploy_lock" 2>/dev/null || true) ;;
+  esac
+  case "$deploy_lock_owner" in
+    ''|*[!0-9]*) echo "Could not verify deployment lock ownership" >&2; exit 1 ;;
+  esac
+  if [ "$deploy_lock_owner" != "$(id -u)" ]; then
+    echo "Deployment lock must be owned by the deployment user" >&2
+    exit 1
+  fi
+fi
+umask 077
+exec 9>>"$deploy_lock"
+chmod 600 "$deploy_lock"
 if ! flock -n 9; then
   echo "Another deployment is already running"
   exit 0

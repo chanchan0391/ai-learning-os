@@ -376,6 +376,100 @@ esac
 });
 
 describe("dev operational runner updates", () => {
+  it("rejects a symlinked deployment directory before writing managed state", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-deploy-base-symlink-"));
+    temporaryDirectories.push(root);
+    const redirected = join(root, "redirected");
+    const baseDir = join(root, "service");
+    mkdirSync(redirected);
+    writeFileSync(join(redirected, "operator-file"), "preserve me");
+    symlinkSync(redirected, baseDir);
+
+    const result = spawnSync("sh", [deployScript, "a".repeat(40)], {
+      encoding: "utf8",
+      env: { ...process.env, AI_LEARNING_DEPLOY_DIR: baseDir },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Deployment directory must be a real directory, not a symlink");
+    expect(readFileSync(join(redirected, "operator-file"), "utf8")).toBe("preserve me");
+    expect(existsSync(join(redirected, "deploy.lock"))).toBe(false);
+  });
+
+  it("rejects a symlinked deployment lock without changing its target", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-deploy-lock-symlink-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const lockTarget = join(root, "operator-lock-target");
+    mkdirSync(join(baseDir, "releases"), { recursive: true });
+    mkdirSync(join(baseDir, "deploy-logs"));
+    mkdirSync(join(baseDir, "incoming"));
+    writeFileSync(lockTarget, "preserve me", { mode: 0o644 });
+    symlinkSync(lockTarget, join(baseDir, "deploy.lock"));
+
+    const result = spawnSync("sh", [deployScript, "a".repeat(40)], {
+      encoding: "utf8",
+      env: { ...process.env, AI_LEARNING_DEPLOY_DIR: baseDir },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Deployment lock must be a regular file, not a symlink");
+    expect(readFileSync(lockTarget, "utf8")).toBe("preserve me");
+    expect(statSync(lockTarget).mode & 0o777).toBe(0o644);
+  });
+
+  it("rejects deployment directories not owned by the deployment user", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-deploy-owner-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const fakeStat = executable(join(root, "stat"), "#!/bin/sh\nprintf '%s\\n' 999999\n");
+
+    const result = spawnSync("sh", [deployScript, "a".repeat(40)], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AI_LEARNING_DEPLOY_DIR: baseDir,
+        AI_LEARNING_STAT_BIN: fakeStat,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Deployment directory must be owned by the deployment user");
+    expect(existsSync(join(baseDir, "deploy.lock"))).toBe(false);
+  });
+
+  it("rejects an existing deployment lock not owned by the deployment user", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-deploy-lock-owner-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const deployLock = join(baseDir, "deploy.lock");
+    const realStat = executable(join(root, "real-stat"), `#!/bin/sh\nexec stat "$@"\n`);
+    const fakeStat = executable(join(root, "stat"), `#!/bin/sh
+case "$3" in
+  *deploy.lock) printf '%s\\n' 999999 ;;
+  *) exec "${realStat}" "$@" ;;
+esac
+`);
+    mkdirSync(join(baseDir, "releases"), { recursive: true });
+    mkdirSync(join(baseDir, "deploy-logs"));
+    mkdirSync(join(baseDir, "incoming"));
+    writeFileSync(deployLock, "preserve me", { mode: 0o644 });
+
+    const result = spawnSync("sh", [deployScript, "a".repeat(40)], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AI_LEARNING_DEPLOY_DIR: baseDir,
+        AI_LEARNING_STAT_BIN: fakeStat,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Deployment lock must be owned by the deployment user");
+    expect(readFileSync(deployLock, "utf8")).toBe("preserve me");
+    expect(statSync(deployLock).mode & 0o777).toBe(0o644);
+  });
+
   it("refreshes deployment, backup, and verification runners for an already deployed revision", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-runners-"));
     temporaryDirectories.push(root);
