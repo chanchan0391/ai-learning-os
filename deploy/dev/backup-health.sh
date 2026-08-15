@@ -90,8 +90,6 @@ latest_backup=
 latest_mtime=0
 for candidate in "$backup_dir"/ai-learning-os-*.dump; do
   if [ ! -e "$candidate" ] && [ ! -L "$candidate" ]; then continue; fi
-  validate_private_file "$candidate" "Managed backup" || exit 1
-  validate_private_file "$candidate.sha256" "Managed backup checksum" || exit 1
   candidate_mtime=$(mtime_of "$candidate")
   case "$candidate_mtime" in ''|*[!0-9]*) echo "Could not verify managed backup modification time" >&2; exit 1 ;; esac
   if [ "$candidate_mtime" -gt "$latest_mtime" ]; then
@@ -104,6 +102,8 @@ if [ -z "$latest_backup" ]; then
   echo "No managed database backup is available" >&2
   exit 1
 fi
+validate_private_file "$latest_backup" "Latest managed backup" || exit 1
+validate_private_file "$latest_backup.sha256" "Latest managed backup checksum" || exit 1
 current_time=$(date +%s)
 backup_age=$((current_time - latest_mtime))
 if [ "$backup_age" -lt 0 ]; then

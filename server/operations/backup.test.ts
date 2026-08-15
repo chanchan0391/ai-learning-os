@@ -315,6 +315,10 @@ describe("dev database backup monitoring", () => {
 
   it("accepts a recent private backup after a successful job", () => {
     const fixture = makeHealthFixture();
+    const legacyBackup = join(fixture.backupDir, "ai-learning-os-20260801T120000Z-legacy.dump");
+    writeFileSync(legacyBackup, "legacy archive", { mode: 0o600 });
+    const legacyTime = new Date(Date.now() - 86_400_000);
+    utimesSync(legacyBackup, legacyTime, legacyTime);
 
     const result = runBackupHealth(fixture);
 
@@ -349,7 +353,7 @@ describe("dev database backup monitoring", () => {
     const result = runBackupHealth(fixture);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("Managed backup checksum must not be accessible by group or other users");
+    expect(result.stderr).toContain("Latest managed backup checksum must not be accessible by group or other users");
   });
 });
 
