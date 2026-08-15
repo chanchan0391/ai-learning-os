@@ -164,6 +164,23 @@ describe("dev database backup", () => {
     expect(readdirSync(fixture.backupDir).filter((file) => file.endsWith(".dump"))).toHaveLength(1);
   });
 
+  it("rejects a symlinked backup lock without truncating its target or accessing PostgreSQL", () => {
+    const fixture = makeFixture();
+    const lockTarget = join(dirname(fixture.backupDir), "operator-lock-target");
+    const dockerMarker = join(dirname(fixture.docker), "docker-called");
+    mkdirSync(fixture.backupDir);
+    writeFileSync(lockTarget, "preserve me");
+    symlinkSync(lockTarget, join(fixture.backupDir, ".backup.lock"));
+    executable(fixture.docker, "#!/bin/sh\ntouch \"$FAKE_DOCKER_MARKER\"\nexit 2\n");
+
+    const result = runBackup(fixture, { FAKE_DOCKER_MARKER: dockerMarker });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Backup lock must be a regular file, not a symlink");
+    expect(readFileSync(lockTarget, "utf8")).toBe("preserve me");
+    expect(existsSync(dockerMarker)).toBe(false);
+  });
+
   it("refuses a concurrent backup before starting PostgreSQL work", () => {
     const fixture = makeFixture();
     const dockerMarker = join(dirname(fixture.docker), "docker-called");

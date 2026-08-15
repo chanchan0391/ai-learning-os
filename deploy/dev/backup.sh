@@ -40,6 +40,10 @@ if ! command -v "$flock_bin" >/dev/null 2>&1; then
   exit 1
 fi
 lock_file="$backup_dir/.backup.lock"
+if [ -L "$lock_file" ]; then
+  echo "Backup lock must be a regular file, not a symlink" >&2
+  exit 1
+fi
 exec 9>"$lock_file"
 chmod 600 "$lock_file"
 if ! "$flock_bin" -n 9; then
