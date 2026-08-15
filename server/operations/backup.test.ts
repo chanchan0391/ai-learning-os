@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -468,6 +468,133 @@ esac
     expect(result.stderr).toContain("Deployment lock must be owned by the deployment user");
     expect(readFileSync(deployLock, "utf8")).toBe("preserve me");
     expect(statSync(deployLock).mode & 0o777).toBe(0o644);
+  });
+
+  it("rejects a hard-linked deployment lock without changing the shared inode", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-deploy-lock-hardlink-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const lockTarget = join(root, "operator-lock-target");
+    mkdirSync(join(baseDir, "releases"), { recursive: true });
+    mkdirSync(join(baseDir, "deploy-logs"));
+    mkdirSync(join(baseDir, "incoming"));
+    writeFileSync(lockTarget, "preserve me", { mode: 0o644 });
+    linkSync(lockTarget, join(baseDir, "deploy.lock"));
+
+    const result = spawnSync("sh", [deployScript, "a".repeat(40)], {
+      encoding: "utf8",
+      env: { ...process.env, AI_LEARNING_DEPLOY_DIR: baseDir },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Deployment lock must not be hard-linked");
+    expect(readFileSync(lockTarget, "utf8")).toBe("preserve me");
+    expect(statSync(lockTarget).mode & 0o777).toBe(0o644);
+    expect(statSync(lockTarget).nlink).toBe(2);
+  });
+
+  it("rejects hard-linked installed runners without replacing the shared inode", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-runner-hardlink-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const current = join(baseDir, "current");
+    const releaseOperations = join(current, "deploy/dev");
+    const fakeBin = join(root, "bin");
+    const runnerTarget = join(root, "operator-runner");
+    const revision = "a".repeat(40);
+    mkdirSync(releaseOperations, { recursive: true });
+    mkdirSync(fakeBin);
+    writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh"]) {
+      writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
+    }
+    writeFileSync(runnerTarget, "preserve me", { mode: 0o755 });
+    linkSync(runnerTarget, join(baseDir, "deploy-main.sh"));
+    executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+
+    const result = spawnSync("sh", [deployScript, revision], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        AI_LEARNING_DEPLOY_DIR: baseDir,
+        AI_LEARNING_NODE_BIN: process.execPath,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Installed deploy-main.sh must not be hard-linked");
+    expect(readFileSync(runnerTarget, "utf8")).toBe("preserve me");
+    expect(statSync(runnerTarget).nlink).toBe(2);
+  });
+
+  it("rejects hard-linked runner sources from the active release", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-runner-source-hardlink-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const current = join(baseDir, "current");
+    const releaseOperations = join(current, "deploy/dev");
+    const fakeBin = join(root, "bin");
+    const runnerTarget = join(root, "operator-runner-source");
+    const revision = "a".repeat(40);
+    mkdirSync(releaseOperations, { recursive: true });
+    mkdirSync(fakeBin);
+    writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
+    writeFileSync(runnerTarget, "preserve me", { mode: 0o755 });
+    linkSync(runnerTarget, join(releaseOperations, "deploy-main.sh"));
+    for (const runner of ["backup.sh", "verify-backup.sh", "restore-drill.sh"]) {
+      writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
+    }
+    executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+
+    const result = spawnSync("sh", [deployScript, revision], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        AI_LEARNING_DEPLOY_DIR: baseDir,
+        AI_LEARNING_NODE_BIN: process.execPath,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Active release deploy-main.sh must not be hard-linked");
+    expect(readFileSync(runnerTarget, "utf8")).toBe("preserve me");
+    expect(statSync(runnerTarget).nlink).toBe(2);
+  });
+
+  it("rejects a symlinked existing release without removing its target", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-release-symlink-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const incoming = join(baseDir, "incoming");
+    const releases = join(baseDir, "releases");
+    const fakeBin = join(root, "bin");
+    const revision = "a".repeat(40);
+    const archive = join(incoming, `${revision}.tar.gz`);
+    const releaseTarget = join(root, "operator-release");
+    mkdirSync(incoming, { recursive: true });
+    mkdirSync(releases);
+    mkdirSync(fakeBin);
+    mkdirSync(releaseTarget);
+    writeFileSync(join(releaseTarget, "operator-file"), "preserve me");
+    writeFileSync(archive, "unused archive");
+    symlinkSync(releaseTarget, join(releases, revision));
+    executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+
+    const result = spawnSync("sh", [deployScript, revision, archive, "0".repeat(64)], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        AI_LEARNING_DEPLOY_DIR: baseDir,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Existing release directory must be a real directory, not a symlink");
+    expect(readFileSync(join(releaseTarget, "operator-file"), "utf8")).toBe("preserve me");
+    expect(existsSync(releaseTarget)).toBe(true);
   });
 
   it("refreshes deployment, backup, and verification runners for an already deployed revision", () => {

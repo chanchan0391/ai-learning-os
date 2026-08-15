@@ -11,6 +11,25 @@ provided_archive=${2:-}
 provided_checksum=${3:-}
 temporary_dir=
 managed_archive=
+operational_stage=
+
+read_file_owner() {
+  file_path=$1
+  file_owner=$($stat_bin -f '%u' "$file_path" 2>/dev/null || true)
+  case "$file_owner" in
+    ''|*[!0-9]*) file_owner=$($stat_bin -c '%u' "$file_path" 2>/dev/null || true) ;;
+  esac
+  printf '%s\n' "$file_owner"
+}
+
+read_file_links() {
+  file_path=$1
+  file_links=$($stat_bin -f '%l' "$file_path" 2>/dev/null || true)
+  case "$file_links" in
+    ''|*[!0-9]*) file_links=$($stat_bin -c '%h' "$file_path" 2>/dev/null || true) ;;
+  esac
+  printf '%s\n' "$file_links"
+}
 
 validate_owned_directory() {
   directory_path=$1
@@ -19,10 +38,7 @@ validate_owned_directory() {
     echo "$directory_label must be a real directory, not a symlink" >&2
     return 1
   fi
-  directory_owner=$($stat_bin -f '%u' "$directory_path" 2>/dev/null || true)
-  case "$directory_owner" in
-    ''|*[!0-9]*) directory_owner=$($stat_bin -c '%u' "$directory_path" 2>/dev/null || true) ;;
-  esac
+  directory_owner=$(read_file_owner "$directory_path")
   case "$directory_owner" in
     ''|*[!0-9]*) echo "Could not verify $directory_label ownership" >&2; return 1 ;;
   esac
@@ -32,29 +48,57 @@ validate_owned_directory() {
   fi
 }
 
+validate_owned_regular_file() {
+  file_path=$1
+  file_label=$2
+  if [ -L "$file_path" ] || [ ! -f "$file_path" ]; then
+    echo "$file_label must be a regular file, not a symlink" >&2
+    return 1
+  fi
+  file_owner=$(read_file_owner "$file_path")
+  case "$file_owner" in
+    ''|*[!0-9]*) echo "Could not verify $file_label ownership" >&2; return 1 ;;
+  esac
+  if [ "$file_owner" != "$(id -u)" ]; then
+    echo "$file_label must be owned by the deployment user" >&2
+    return 1
+  fi
+  file_links=$(read_file_links "$file_path")
+  case "$file_links" in
+    ''|*[!0-9]*) echo "Could not verify $file_label link count" >&2; return 1 ;;
+  esac
+  if [ "$file_links" != 1 ]; then
+    echo "$file_label must not be hard-linked" >&2
+    return 1
+  fi
+}
+
 cleanup() {
   if [ -n "$temporary_dir" ]; then rm -rf "$temporary_dir"; fi
   if [ -n "$managed_archive" ]; then rm -f "$managed_archive"; fi
+  if [ -n "$operational_stage" ]; then rm -f "$operational_stage"; fi
 }
 
 update_operational_runners() {
   for runner in deploy-main.sh backup.sh verify-backup.sh restore-drill.sh; do
     candidate=$current_link/deploy/dev/$runner
-    if [ ! -f "$candidate" ] || [ -L "$candidate" ]; then
-      echo "Active release does not contain a safe $runner" >&2
-      return 1
-    fi
+    validate_owned_regular_file "$candidate" "Active release $runner" || return 1
   done
   for runner in deploy-main.sh backup.sh verify-backup.sh restore-drill.sh; do
     candidate=$current_link/deploy/dev/$runner
     installed_runner=$base_dir/$runner
+    if [ -e "$installed_runner" ] || [ -L "$installed_runner" ]; then
+      validate_owned_regular_file "$installed_runner" "Installed $runner" || return 1
+    fi
     if [ -f "$installed_runner" ] && [ ! -L "$installed_runner" ] \
       && [ -x "$installed_runner" ] && cmp -s "$candidate" "$installed_runner"; then
       continue
     fi
-    staged_runner="$base_dir/.$runner.next"
-    install -m 0755 "$candidate" "$staged_runner"
-    mv -f "$staged_runner" "$installed_runner"
+    operational_stage=$(mktemp "$base_dir/.$runner.next.XXXXXX")
+    install -m 0755 "$candidate" "$operational_stage"
+    validate_owned_regular_file "$operational_stage" "Staged $runner" || return 1
+    mv -f "$operational_stage" "$installed_runner"
+    operational_stage=
   done
 }
 
@@ -69,7 +113,10 @@ discard_failed_release() {
     return 1
   fi
   case "$failed_release" in
-    "$base_dir"/releases/"$revision") rm -rf "$failed_release" ;;
+    "$base_dir"/releases/"$revision")
+      validate_owned_directory "$failed_release" "Failed release directory" || return 1
+      rm -rf "$failed_release"
+      ;;
     *) echo "Refusing to remove unexpected failed release path: $failed_release" >&2; return 1 ;;
   esac
 }
@@ -141,26 +188,15 @@ for managed_directory in releases deploy-logs incoming; do
   validate_owned_directory "$managed_path" "Managed deployment directory"
 done
 deploy_lock="$base_dir/deploy.lock"
-if [ -L "$deploy_lock" ] || { [ -e "$deploy_lock" ] && [ ! -f "$deploy_lock" ]; }; then
+if [ -e "$deploy_lock" ]; then
+  validate_owned_regular_file "$deploy_lock" "Deployment lock"
+  chmod 600 "$deploy_lock"
+elif [ -L "$deploy_lock" ]; then
   echo "Deployment lock must be a regular file, not a symlink" >&2
   exit 1
 fi
-if [ -e "$deploy_lock" ]; then
-  deploy_lock_owner=$($stat_bin -f '%u' "$deploy_lock" 2>/dev/null || true)
-  case "$deploy_lock_owner" in
-    ''|*[!0-9]*) deploy_lock_owner=$($stat_bin -c '%u' "$deploy_lock" 2>/dev/null || true) ;;
-  esac
-  case "$deploy_lock_owner" in
-    ''|*[!0-9]*) echo "Could not verify deployment lock ownership" >&2; exit 1 ;;
-  esac
-  if [ "$deploy_lock_owner" != "$(id -u)" ]; then
-    echo "Deployment lock must be owned by the deployment user" >&2
-    exit 1
-  fi
-fi
 umask 077
 exec 9>>"$deploy_lock"
-chmod 600 "$deploy_lock"
 if ! flock -n 9; then
   echo "Another deployment is already running"
   exit 0
@@ -179,7 +215,10 @@ find "$base_dir/incoming" -maxdepth 1 -type f \
 find "$base_dir/releases" -mindepth 1 -maxdepth 1 -type d -name '.deploy-*' -mtime +1 -print \
   | while IFS= read -r stale_workspace; do
       case "$stale_workspace" in
-        "$base_dir"/releases/.deploy-*) rm -rf "$stale_workspace" ;;
+        "$base_dir"/releases/.deploy-*)
+          validate_owned_directory "$stale_workspace" "Stale deployment workspace" || exit 1
+          rm -rf "$stale_workspace"
+          ;;
         *) echo "Refusing to prune unexpected workspace: $stale_workspace" >&2; exit 1 ;;
       esac
     done
@@ -221,9 +260,12 @@ if [ -L "$current_link" ]; then
   previous_target=$(readlink -f "$current_link")
 fi
 
-if [ -e "$release_dir" ]; then
+if [ -e "$release_dir" ] || [ -L "$release_dir" ]; then
   case "$release_dir" in
-    "$base_dir"/releases/"$revision") rm -rf "$release_dir" ;;
+    "$base_dir"/releases/"$revision")
+      validate_owned_directory "$release_dir" "Existing release directory"
+      rm -rf "$release_dir"
+      ;;
     *) echo "Refusing to replace unexpected release path: $release_dir" >&2; exit 1 ;;
   esac
 fi
@@ -271,7 +313,6 @@ printf '%s\n' "$revision" > DEPLOYED_COMMIT
 chmod -R u=rwX,go=rX "$temporary_dir"
 mv "$temporary_dir" "$release_dir"
 temporary_dir=
-trap - EXIT HUP INT TERM
 
 next_link="$base_dir/.current-$revision"
 ln -s "$release_dir" "$next_link"
@@ -307,7 +348,10 @@ find "$base_dir/releases" -mindepth 1 -maxdepth 1 -type d ! -name '.deploy-*' -p
   | while IFS= read -r stale_release; do
       if [ -n "$stale_release" ] && [ "$stale_release" != "$active_target" ]; then
         case "$stale_release" in
-          "$base_dir"/releases/*) rm -rf "$stale_release" ;;
+          "$base_dir"/releases/*)
+            validate_owned_directory "$stale_release" "Stale release directory" || exit 1
+            rm -rf "$stale_release"
+            ;;
           *) echo "Refusing to prune unexpected path: $stale_release" >&2; exit 1 ;;
         esac
       fi
