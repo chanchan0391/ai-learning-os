@@ -12,6 +12,7 @@ case "$node_bin" in
 esac
 systemctl_bin=${AI_LEARNING_SYSTEMCTL_BIN:-systemctl}
 flock_bin=${AI_LEARNING_FLOCK_BIN:-flock}
+stat_bin=${AI_LEARNING_STAT_BIN:-stat}
 proc_root=${AI_LEARNING_PROC_ROOT:-/proc}
 units="ai-learning-os-api.service ai-learning-os-web.service"
 lock_file="$base_dir/control-plane.lock"
@@ -33,6 +34,26 @@ SystemCallArchitectures=native'
 usage() {
   echo "Usage: $0 [status|install]" >&2
   exit 2
+}
+
+validate_owned_directory() {
+  directory_path=$1
+  directory_label=$2
+  if [ -L "$directory_path" ] || [ ! -d "$directory_path" ]; then
+    echo "$directory_label must be a real directory, not a symlink" >&2
+    return 1
+  fi
+  directory_owner=$($stat_bin -f '%u' "$directory_path" 2>/dev/null || true)
+  case "$directory_owner" in
+    ''|*[!0-9]*) directory_owner=$($stat_bin -c '%u' "$directory_path" 2>/dev/null || true) ;;
+  esac
+  case "$directory_owner" in
+    ''|*[!0-9]*) echo "Could not verify $directory_label ownership" >&2; return 1 ;;
+  esac
+  if [ "$directory_owner" != "$(id -u)" ]; then
+    echo "$directory_label must be owned by the current user" >&2
+    return 1
+  fi
 }
 
 validate_sources() {
@@ -149,13 +170,37 @@ cleanup_control_plane_artifacts() {
 }
 
 install_control_plane() {
-  mkdir -p "$base_dir" "$unit_dir" "$base_dir/control-plane-backups"
+  if [ -L "$base_dir" ]; then
+    echo "Deployment directory must be a real directory, not a symlink" >&2
+    exit 1
+  fi
+  mkdir -p "$base_dir"
+  validate_owned_directory "$base_dir" "Deployment directory"
+
+  if [ -L "$unit_dir" ]; then
+    echo "Systemd user unit directory must be a real directory, not a symlink" >&2
+    exit 1
+  fi
+  mkdir -p "$unit_dir"
+  validate_owned_directory "$unit_dir" "Systemd user unit directory"
+
+  if [ -L "$base_dir/control-plane-backups" ]; then
+    echo "Control-plane backup directory must be a real directory, not a symlink" >&2
+    exit 1
+  fi
+  mkdir -p "$base_dir/control-plane-backups"
+  validate_owned_directory "$base_dir/control-plane-backups" "Control-plane backup directory"
   chmod 700 "$base_dir/control-plane-backups"
   if ! command -v "$flock_bin" >/dev/null 2>&1; then
     echo "flock is required for crash-safe control-plane locking" >&2
     exit 1
   fi
+  if [ -L "$lock_file" ]; then
+    echo "Control-plane lock must be a regular file, not a symlink" >&2
+    exit 1
+  fi
   exec 9>"$lock_file"
+  chmod 600 "$lock_file"
   if ! "$flock_bin" -n 9; then
     echo "Another control-plane operation is already running" >&2
     exit 1

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -119,6 +119,51 @@ describe("dev control-plane management", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("selected runtime");
+    expect(statSync(join(fixture.baseDir, "control-plane.lock")).mode & 0o777).toBe(0o600);
+  });
+
+  it("rejects a symlinked control-plane backup directory before changing its target", () => {
+    const fixture = makeFixture();
+    const redirected = join(dirname(fixture.baseDir), "redirected-backups");
+    mkdirSync(fixture.baseDir, { recursive: true });
+    mkdirSync(redirected);
+    writeFileSync(join(redirected, "operator-file"), "preserve me");
+    symlinkSync(redirected, join(fixture.baseDir, "control-plane-backups"));
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Control-plane backup directory must be a real directory, not a symlink");
+    expect(readFileSync(join(redirected, "operator-file"), "utf8")).toBe("preserve me");
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
+  });
+
+  it("rejects a symlinked control-plane lock without truncating its target", () => {
+    const fixture = makeFixture();
+    mkdirSync(fixture.baseDir, { recursive: true });
+    const target = join(dirname(fixture.baseDir), "operator-lock-target");
+    writeFileSync(target, "preserve me");
+    symlinkSync(target, join(fixture.baseDir, "control-plane.lock"));
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("lock must be a regular file, not a symlink");
+    expect(readFileSync(target, "utf8")).toBe("preserve me");
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
+  });
+
+  it("rejects control-plane directories not owned by the current user", () => {
+    const fixture = makeFixture();
+    const fakeStat = join(dirname(fixture.baseDir), "stat");
+    writeFileSync(fakeStat, "#!/bin/sh\nprintf '%s\\n' 999999\n");
+    chmodSync(fakeStat, 0o755);
+
+    const result = runControlPlane(fixture, "install", { AI_LEARNING_STAT_BIN: fakeStat });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Deployment directory must be owned by the current user");
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
   });
 
   it("keeps only the five newest managed control-plane backups", () => {
