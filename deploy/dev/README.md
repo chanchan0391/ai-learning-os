@@ -103,6 +103,8 @@ cat ~/services/ai-learning-os/current/DEPLOYED_COMMIT
 
 控制面现在还会原子安装、回滚并启用第四个 timer：`ai-learning-os-restore-drill.timer`。它每周日 04:00 UTC 后随机错峰最多 2 小时，自动选择最新受管归档，在唯一隔离数据库中完整恢复、验证并删除临时库。任务最多运行 15 分钟；失败会保留为 failed service，并使 `control-plane.sh status` 返回非零。
 
+应用周期健康检查要求 `current` 保持为部署管理的符号链接，并严格指向 `releases/<DEPLOYED_COMMIT>` 对应的当前用户真实目录。错指 release 或手工目录即使复用合法 revision 文件，也会在网络探测前失败。
+
 恢复前必须先运行只读预检；它拒绝相对路径、符号链接、硬链接、非当前用户文件、对组或其他用户开放的权限、错误 sidecar 文件名和校验和，要求归档与 sidecar 都是当前用户独占的私有普通文件，并再次通过容器内 `pg_restore --list` 验证归档：
 
 ```sh

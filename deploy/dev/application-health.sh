@@ -32,7 +32,12 @@ if [ ! -x "$node_bin" ]; then
   exit 2
 fi
 
-revision_file="$base_dir/current/DEPLOYED_COMMIT"
+current_link="$base_dir/current"
+if [ ! -L "$current_link" ]; then
+  echo "Current release must be a deployment-managed symlink" >&2
+  exit 1
+fi
+revision_file="$current_link/DEPLOYED_COMMIT"
 if [ -L "$revision_file" ] || [ ! -f "$revision_file" ]; then
   echo "Deployed revision file must be a regular file, not a symlink" >&2
   exit 1
@@ -58,6 +63,23 @@ case "$revision" in
 esac
 if [ "${#revision}" -ne 40 ]; then
   echo "Deployed revision must be a full lowercase Git commit SHA" >&2
+  exit 1
+fi
+
+base_physical=$(cd "$base_dir" && pwd -P)
+expected_release="$base_physical/releases/$revision"
+if [ -L "$expected_release" ] || [ ! -d "$expected_release" ]; then
+  echo "Expected release must be a real directory, not a symlink" >&2
+  exit 1
+fi
+active_release=$(cd "$current_link" && pwd -P)
+if [ "$active_release" != "$expected_release" ]; then
+  echo "Current release target does not match the deployed revision" >&2
+  exit 1
+fi
+release_owner=$(read_stat_value '%u' '%u' "$expected_release")
+if [ "$release_owner" != "$(id -u)" ]; then
+  echo "Active release directory must be owned by the current user" >&2
   exit 1
 fi
 

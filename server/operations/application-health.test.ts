@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -19,6 +19,7 @@ function makeFixture() {
   const root = mkdtempSync(join(tmpdir(), "ai-learning-application-health-"));
   temporaryDirectories.push(root);
   const baseDir = join(root, "service");
+  const release = join(baseDir, "releases", revision);
   const current = join(baseDir, "current");
   const systemctl = executable(join(root, "systemctl"), `#!/bin/sh
 set -eu
@@ -38,8 +39,9 @@ case "$*" in
   *) exit 2 ;;
 esac
 `);
-  mkdirSync(current, { recursive: true });
-  writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
+  mkdirSync(release, { recursive: true });
+  writeFileSync(join(release, "DEPLOYED_COMMIT"), `${revision}\n`);
+  symlinkSync(release, current);
   return { baseDir, curl, systemctl };
 }
 
@@ -129,6 +131,34 @@ describe("dev application health monitoring", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("must not be hard-linked");
+  });
+
+  it("rejects a current release that is not a deployment-managed symlink", () => {
+    const fixture = makeFixture();
+    const current = join(fixture.baseDir, "current");
+    unlinkSync(current);
+    mkdirSync(current);
+    writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must be a deployment-managed symlink");
+  });
+
+  it("rejects a current release target that does not match its revision", () => {
+    const fixture = makeFixture();
+    const current = join(fixture.baseDir, "current");
+    const unexpectedRelease = join(fixture.baseDir, "releases", "unexpected");
+    mkdirSync(unexpectedRelease);
+    writeFileSync(join(unexpectedRelease, "DEPLOYED_COMMIT"), `${revision}\n`);
+    unlinkSync(current);
+    symlinkSync(unexpectedRelease, current);
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("does not match the deployed revision");
   });
 
   it("rejects a health response for a different release", () => {
