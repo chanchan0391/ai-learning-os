@@ -1,5 +1,17 @@
 #!/bin/sh
 
+is_systemd_mapped_root_docker() {
+  mapped_file_owner=$1
+  mapped_dir_owner=$2
+  mapped_docker_path=$3
+  mapped_docker_dir=$4
+  [ "$mapped_file_owner" = 65534 ] \
+    && [ "$mapped_dir_owner" = 65534 ] \
+    && [ -n "${INVOCATION_ID:-}" ] \
+    && [ "$mapped_docker_path" = /usr/bin/docker ] \
+    && [ "$mapped_docker_dir" = /usr/bin ]
+}
+
 resolve_trusted_docker_bin() {
   candidate=${AI_LEARNING_DOCKER_BIN:-docker}
   case "$candidate" in
@@ -31,8 +43,10 @@ resolve_trusted_docker_bin() {
   case "$docker_dir_owner" in ''|*[!0-9]*) docker_dir_owner=$(stat -c '%u' "$docker_bin_dir" 2>/dev/null || true) ;; esac
   case "$docker_dir_owner" in ''|*[!0-9]*) echo "Could not verify Docker executable directory ownership" >&2; return 2 ;; esac
   current_uid=$(id -u)
-  case "$docker_owner" in 0|"$current_uid") ;; *) echo "Docker executable must be owned by root or the current user" >&2; return 2 ;; esac
-  case "$docker_dir_owner" in 0|"$current_uid") ;; *) echo "Docker executable directory must be owned by root or the current user" >&2; return 2 ;; esac
+  if ! is_systemd_mapped_root_docker "$docker_owner" "$docker_dir_owner" "$docker_bin" "$docker_bin_dir"; then
+    case "$docker_owner" in 0|"$current_uid") ;; *) echo "Docker executable must be owned by root or the current user" >&2; return 2 ;; esac
+    case "$docker_dir_owner" in 0|"$current_uid") ;; *) echo "Docker executable directory must be owned by root or the current user" >&2; return 2 ;; esac
+  fi
 
   docker_mode=$(stat -f '%Lp' "$docker_bin" 2>/dev/null || true)
   case "$docker_mode" in ''|*[!0-7]*) docker_mode=$(stat -c '%a' "$docker_bin" 2>/dev/null || true) ;; esac

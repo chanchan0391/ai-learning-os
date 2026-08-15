@@ -10,6 +10,7 @@ const backupScript = join(repositoryRoot, "deploy/dev/backup.sh");
 const backupHealthScript = join(repositoryRoot, "deploy/dev/backup-health.sh");
 const verifyBackupScript = join(repositoryRoot, "deploy/dev/verify-backup.sh");
 const restoreDrillScript = join(repositoryRoot, "deploy/dev/restore-drill.sh");
+const resolveDockerScript = join(repositoryRoot, "deploy/dev/resolve-docker-bin.sh");
 const deployScript = join(repositoryRoot, "deploy/dev/deploy-main.sh");
 const publishScript = join(repositoryRoot, "deploy/dev/publish-main.sh");
 const temporaryDirectories: string[] = [];
@@ -59,6 +60,24 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { force: true, recursive: true });
   }
+});
+
+describe("dev Docker client trust", () => {
+  function mappedRootCheck(invocationId: string, dockerPath: string, dockerDir: string) {
+    return spawnSync("sh", ["-c", `. "$1"; is_systemd_mapped_root_docker 65534 65534 "$2" "$3"` , "sh", resolveDockerScript, dockerPath, dockerDir], {
+      encoding: "utf8",
+      env: { ...process.env, INVOCATION_ID: invocationId },
+    });
+  }
+
+  it("accepts root ownership remapped by a hardened user service only for the system Docker path", () => {
+    expect(mappedRootCheck("systemd-invocation", "/usr/bin/docker", "/usr/bin").status).toBe(0);
+    expect(mappedRootCheck("systemd-invocation", "/opt/docker", "/opt").status).toBe(1);
+  });
+
+  it("rejects mapped ownership outside a systemd invocation", () => {
+    expect(mappedRootCheck("", "/usr/bin/docker", "/usr/bin").status).toBe(1);
+  });
 });
 
 describe("dev database backup", () => {
