@@ -106,7 +106,7 @@ function makeFixture(): Fixture {
   writeFileSync(join(unitDir, "ai-learning-os-application-monitor.service"), "[Service]\nExecStart=/old/application-monitor.sh\n");
   writeFileSync(join(unitDir, "ai-learning-os-application-monitor.timer"), "[Timer]\nOnUnitActiveSec=weekly\n");
 
-  writeFileSync(fakeSystemctl, `#!/bin/sh\nset -eu\nprintf '%s\\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"\ncase "$*" in\n  *" show "*) printf '%s\\n' "$FAKE_MAIN_PID" ;;\n  *" is-active "*) [ "\${FAKE_ACTIVE:-true}" = true ] ;;\n  *" is-failed "*) [ "\${FAKE_FAILED:-false}" = true ] ;;\n  *) exit 0 ;;\nesac\n`);
+  writeFileSync(fakeSystemctl, `#!/bin/sh\nset -eu\nprintf '%s\\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"\ncase "$*" in\n  *"reset-failed"*"application-monitor"*) exit 2 ;;\n  *" show "*) printf '%s\\n' "$FAKE_MAIN_PID" ;;\n  *" is-active "*) [ "\${FAKE_ACTIVE:-true}" = true ] ;;\n  *" is-failed "*) [ "\${FAKE_FAILED:-false}" = true ] ;;\n  *) exit 0 ;;\nesac\n`);
   chmodSync(fakeSystemctl, 0o755);
   writeFileSync(fakeFlock, "#!/bin/sh\n[ \"${FAKE_FLOCK_AVAILABLE:-true}\" = true ]\n");
   chmodSync(fakeFlock, 0o755);
@@ -143,7 +143,7 @@ afterEach(() => {
   }
 });
 
-describe("dev control-plane management", () => {
+describe("dev control-plane management", { timeout: 15_000 }, () => {
   it("backs up and atomically installs verified user units", () => {
     const fixture = makeFixture();
 

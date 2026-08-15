@@ -344,7 +344,7 @@ apply_units() {
   done
   $systemctl_bin --user daemon-reload \
     && $systemctl_bin --user restart $application_units \
-    && $systemctl_bin --user reset-failed "$backup_service" $monitor_services \
+    && $systemctl_bin --user reset-failed "$backup_service" "$backup_monitor_service" \
     && $systemctl_bin --user enable --now $timer_units \
     && $systemctl_bin --user start $monitor_services
 }
