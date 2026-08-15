@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -119,6 +119,48 @@ describe("dev control-plane management", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("selected runtime");
+  });
+
+  it("keeps only the five newest managed control-plane backups", () => {
+    const fixture = makeFixture();
+    const backupRoot = join(fixture.baseDir, "control-plane-backups");
+    mkdirSync(backupRoot, { recursive: true });
+    for (let index = 0; index < 7; index += 1) {
+      const backup = join(backupRoot, `2026080${index + 1}T000000Z.fixture`);
+      mkdirSync(backup);
+      writeFileSync(join(backup, "ai-learning-os-api.service"), `backup ${index}`);
+      const modifiedAt = new Date(Date.UTC(2026, 7, index + 1));
+      utimesSync(backup, modifiedAt, modifiedAt);
+    }
+    const unrelated = join(backupRoot, "operator-notes");
+    mkdirSync(unrelated);
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status, result.stderr).toBe(0);
+    const managed = readdirSync(backupRoot).filter((entry) => /^\d{8}T\d{6}Z\./.test(entry));
+    expect(managed).toHaveLength(5);
+    expect(managed).not.toContain("20260801T000000Z.fixture");
+    expect(managed).not.toContain("20260802T000000Z.fixture");
+    expect(managed).not.toContain("20260803T000000Z.fixture");
+    expect(existsSync(unrelated)).toBe(true);
+  });
+
+  it("reclaims abandoned managed unit stages while preserving symlinks and unrelated files", () => {
+    const fixture = makeFixture();
+    const abandoned = join(fixture.unitDir, ".ai-learning-os-api.service.next.1234");
+    const unrelated = join(fixture.unitDir, ".operator.next.1234");
+    const linked = join(fixture.unitDir, ".ai-learning-os-web.service.next.1234");
+    writeFileSync(abandoned, "partial unit");
+    writeFileSync(unrelated, "operator file");
+    symlinkSync(unrelated, linked);
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(abandoned)).toBe(false);
+    expect(readFileSync(unrelated, "utf8")).toBe("operator file");
+    expect(existsSync(linked)).toBe(true);
   });
 
   it("refuses a concurrent control-plane install", () => {

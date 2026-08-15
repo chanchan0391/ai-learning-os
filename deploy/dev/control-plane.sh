@@ -15,6 +15,7 @@ flock_bin=${AI_LEARNING_FLOCK_BIN:-flock}
 proc_root=${AI_LEARNING_PROC_ROOT:-/proc}
 units="ai-learning-os-api.service ai-learning-os-web.service"
 lock_file="$base_dir/control-plane.lock"
+backup_retention_count=5
 required_sandbox_directives='UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
@@ -124,6 +125,29 @@ apply_units() {
     && $systemctl_bin --user restart $units
 }
 
+cleanup_control_plane_artifacts() {
+  for unit in $units; do
+    find "$unit_dir" -mindepth 1 -maxdepth 1 -type f -name ".$unit.next.*" -print \
+      | while IFS= read -r abandoned_stage; do
+          case "$abandoned_stage" in
+            "$unit_dir"/.$unit.next.*) rm -f "$abandoned_stage" ;;
+            *) echo "Refusing to remove unexpected staged unit: $abandoned_stage" >&2; return 1 ;;
+          esac
+        done || return 1
+  done
+
+  find "$base_dir/control-plane-backups" -mindepth 1 -maxdepth 1 -type d \
+    -name '????????T??????Z.*' -print \
+    | sort -r \
+    | awk -v keep="$backup_retention_count" 'NR > keep { print }' \
+    | while IFS= read -r stale_backup; do
+        case "$stale_backup" in
+          "$base_dir"/control-plane-backups/????????T??????Z.*) rm -rf "$stale_backup" ;;
+          *) echo "Refusing to remove unexpected control-plane backup: $stale_backup" >&2; return 1 ;;
+        esac
+      done
+}
+
 install_control_plane() {
   mkdir -p "$base_dir" "$unit_dir" "$base_dir/control-plane-backups"
   chmod 700 "$base_dir/control-plane-backups"
@@ -136,6 +160,8 @@ install_control_plane() {
     echo "Another control-plane operation is already running" >&2
     exit 1
   fi
+
+  cleanup_control_plane_artifacts
 
   if status_control_plane >/dev/null 2>&1; then
     echo "Control plane is already current"
@@ -154,9 +180,11 @@ install_control_plane() {
 
   if ! apply_units || ! status_control_plane; then
     rollback_units "$backup_dir"
+    cleanup_control_plane_artifacts
     exit 1
   fi
 
+  cleanup_control_plane_artifacts
   echo "Installed control plane; backup: $backup_dir"
 }
 
