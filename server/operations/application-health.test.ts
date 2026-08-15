@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -108,6 +108,27 @@ describe("dev application health monitoring", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("ai-learning-os-api.service is not active");
+  });
+
+  it("rejects an oversized deployed revision before reading it", () => {
+    const fixture = makeFixture();
+    writeFileSync(join(fixture.baseDir, "current", "DEPLOYED_COMMIT"), `${revision}\nextra\n`);
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must contain exactly one full Git commit SHA");
+  });
+
+  it("rejects a hard-linked deployed revision artifact", () => {
+    const fixture = makeFixture();
+    const revisionFile = join(fixture.baseDir, "current", "DEPLOYED_COMMIT");
+    linkSync(revisionFile, join(fixture.baseDir, "shared-revision"));
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must not be hard-linked");
   });
 
   it("rejects a health response for a different release", () => {

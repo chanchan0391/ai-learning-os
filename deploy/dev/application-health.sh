@@ -5,8 +5,19 @@ base_dir=${AI_LEARNING_DEPLOY_DIR:-"$HOME/services/ai-learning-os"}
 systemctl_bin=${AI_LEARNING_SYSTEMCTL_BIN:-systemctl}
 curl_bin=${AI_LEARNING_CURL_BIN:-curl}
 node_bin=${AI_LEARNING_NODE_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/node"}
+stat_bin=${AI_LEARNING_STAT_BIN:-stat}
 web_url=${AI_LEARNING_WEB_HEALTH_URL:-http://127.0.0.1:8088/}
 api_url=${AI_LEARNING_API_HEALTH_URL:-http://127.0.0.1:8787/api/health}
+
+read_stat_value() {
+  bsd_format=$1
+  gnu_format=$2
+  target=$3
+  value=$($stat_bin -f "$bsd_format" "$target" 2>/dev/null || true)
+  case "$value" in ''|*[!0-9]*) value=$($stat_bin -c "$gnu_format" "$target" 2>/dev/null || true) ;; esac
+  case "$value" in ''|*[!0-9]*) echo "Could not verify deployed revision metadata" >&2; exit 1 ;; esac
+  printf '%s\n' "$value"
+}
 
 case "$base_dir" in
   /*) ;;
@@ -24,6 +35,21 @@ fi
 revision_file="$base_dir/current/DEPLOYED_COMMIT"
 if [ -L "$revision_file" ] || [ ! -f "$revision_file" ]; then
   echo "Deployed revision file must be a regular file, not a symlink" >&2
+  exit 1
+fi
+revision_owner=$(read_stat_value '%u' '%u' "$revision_file")
+revision_links=$(read_stat_value '%l' '%h' "$revision_file")
+revision_bytes=$(read_stat_value '%z' '%s' "$revision_file")
+if [ "$revision_owner" != "$(id -u)" ]; then
+  echo "Deployed revision file must be owned by the current user" >&2
+  exit 1
+fi
+if [ "$revision_links" != 1 ]; then
+  echo "Deployed revision file must not be hard-linked" >&2
+  exit 1
+fi
+if [ "$revision_bytes" -ne 41 ]; then
+  echo "Deployed revision file must contain exactly one full Git commit SHA" >&2
   exit 1
 fi
 revision=$(cat "$revision_file")
