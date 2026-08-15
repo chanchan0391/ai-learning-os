@@ -201,6 +201,7 @@ describe("dev database backup", () => {
     const realBackupDir = join(dirname(fixture.backupDir), "redirected-backups");
     const dockerMarker = join(dirname(fixture.docker), "docker-called");
     mkdirSync(realBackupDir, { mode: 0o755 });
+    const initialMode = statSync(realBackupDir).mode & 0o777;
     symlinkSync(realBackupDir, fixture.backupDir);
     executable(fixture.docker, "#!/bin/sh\ntouch \"$FAKE_DOCKER_MARKER\"\nexit 2\n");
 
@@ -208,7 +209,7 @@ describe("dev database backup", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("must be a real directory, not a symlink");
-    expect(statSync(realBackupDir).mode & 0o777).toBe(0o755);
+    expect(statSync(realBackupDir).mode & 0o777).toBe(initialMode);
     expect(readdirSync(realBackupDir)).toEqual([]);
     expect(existsSync(dockerMarker)).toBe(false);
   });
@@ -405,6 +406,7 @@ describe("dev operational runner updates", () => {
     mkdirSync(join(baseDir, "deploy-logs"));
     mkdirSync(join(baseDir, "incoming"));
     writeFileSync(lockTarget, "preserve me", { mode: 0o644 });
+    const initialMode = statSync(lockTarget).mode & 0o777;
     symlinkSync(lockTarget, join(baseDir, "deploy.lock"));
 
     const result = spawnSync("sh", [deployScript, "a".repeat(40)], {
@@ -415,7 +417,7 @@ describe("dev operational runner updates", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Deployment lock must be a regular file, not a symlink");
     expect(readFileSync(lockTarget, "utf8")).toBe("preserve me");
-    expect(statSync(lockTarget).mode & 0o777).toBe(0o644);
+    expect(statSync(lockTarget).mode & 0o777).toBe(initialMode);
   });
 
   it("rejects deployment directories not owned by the deployment user", () => {
@@ -454,6 +456,7 @@ esac
     mkdirSync(join(baseDir, "deploy-logs"));
     mkdirSync(join(baseDir, "incoming"));
     writeFileSync(deployLock, "preserve me", { mode: 0o644 });
+    const initialMode = statSync(deployLock).mode & 0o777;
 
     const result = spawnSync("sh", [deployScript, "a".repeat(40)], {
       encoding: "utf8",
@@ -467,7 +470,7 @@ esac
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Deployment lock must be owned by the deployment user");
     expect(readFileSync(deployLock, "utf8")).toBe("preserve me");
-    expect(statSync(deployLock).mode & 0o777).toBe(0o644);
+    expect(statSync(deployLock).mode & 0o777).toBe(initialMode);
   });
 
   it("rejects a hard-linked deployment lock without changing the shared inode", () => {
@@ -479,6 +482,7 @@ esac
     mkdirSync(join(baseDir, "deploy-logs"));
     mkdirSync(join(baseDir, "incoming"));
     writeFileSync(lockTarget, "preserve me", { mode: 0o644 });
+    const initialMode = statSync(lockTarget).mode & 0o777;
     linkSync(lockTarget, join(baseDir, "deploy.lock"));
 
     const result = spawnSync("sh", [deployScript, "a".repeat(40)], {
@@ -489,7 +493,7 @@ esac
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Deployment lock must not be hard-linked");
     expect(readFileSync(lockTarget, "utf8")).toBe("preserve me");
-    expect(statSync(lockTarget).mode & 0o777).toBe(0o644);
+    expect(statSync(lockTarget).mode & 0o777).toBe(initialMode);
     expect(statSync(lockTarget).nlink).toBe(2);
   });
 
