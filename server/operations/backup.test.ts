@@ -126,6 +126,33 @@ describe("dev database backup", () => {
     expect(readdirSync(fixture.backupDir)).toHaveLength(3);
   });
 
+  it("reclaims abandoned temporary files and orphan checksums without traversing nested directories", () => {
+    const fixture = makeFixture();
+    mkdirSync(fixture.backupDir);
+    const abandonedDump = join(fixture.backupDir, ".ai-learning-os-20260801T000000Z.abandoned");
+    const abandonedChecksum = `${abandonedDump}.sha256`;
+    const orphanChecksum = join(fixture.backupDir, "ai-learning-os-20260801T000000Z-orphan.dump.sha256");
+    const nestedDir = join(fixture.backupDir, "nested");
+    const nestedBackup = join(nestedDir, "ai-learning-os-20260801T000000Z-nested.dump");
+    writeFileSync(abandonedDump, "partial archive");
+    writeFileSync(abandonedChecksum, "partial checksum");
+    writeFileSync(orphanChecksum, "orphan checksum");
+    mkdirSync(nestedDir);
+    writeFileSync(nestedBackup, "nested archive");
+    const expiredAt = new Date(Date.now() - 9 * 24 * 60 * 60 * 1_000);
+    for (const file of [abandonedDump, abandonedChecksum, orphanChecksum, nestedBackup]) {
+      utimesSync(file, expiredAt, expiredAt);
+    }
+
+    const result = runBackup(fixture);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(abandonedDump)).toBe(false);
+    expect(existsSync(abandonedChecksum)).toBe(false);
+    expect(existsSync(orphanChecksum)).toBe(false);
+    expect(readFileSync(nestedBackup, "utf8")).toBe("nested archive");
+  });
+
   it("does not let a stale lock artifact block a later backup", () => {
     const fixture = makeFixture();
     mkdirSync(fixture.backupDir);

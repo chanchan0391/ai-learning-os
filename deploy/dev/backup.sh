@@ -47,6 +47,34 @@ if ! "$flock_bin" -n 9; then
   exit 1
 fi
 
+is_stale_regular_file() {
+  candidate=$1
+  age_days=$2
+  [ ! -L "$candidate" ] || return 1
+  [ -f "$candidate" ] || return 1
+  [ "$(find "$candidate" -prune -mtime "+$age_days" -print)" = "$candidate" ]
+}
+
+# Converge after uncatchable termination without traversing below the managed
+# directory. A valid archive pair keeps the longer retention period; partial
+# publication artifacts are safe to reclaim sooner.
+for abandoned in "$backup_dir"/.ai-learning-os-*; do
+  if is_stale_regular_file "$abandoned" 1; then
+    rm -f "$abandoned"
+  fi
+done
+for stale_backup in "$backup_dir"/ai-learning-os-*.dump; do
+  if is_stale_regular_file "$stale_backup" 7; then
+    rm -f "$stale_backup" "$stale_backup.sha256"
+  fi
+done
+for orphan_checksum in "$backup_dir"/ai-learning-os-*.dump.sha256; do
+  matching_backup=${orphan_checksum%.sha256}
+  if [ ! -e "$matching_backup" ] && is_stale_regular_file "$orphan_checksum" 7; then
+    rm -f "$orphan_checksum"
+  fi
+done
+
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 temporary=$(mktemp "$backup_dir/.ai-learning-os-$timestamp.XXXXXX")
 temporary_checksum="$temporary.sha256"
@@ -79,8 +107,3 @@ printf '%s  %s\n' "$checksum" "$backup_name" > "$temporary_checksum"
 chmod 600 "$temporary_checksum"
 mv "$temporary" "$final_backup"
 mv "$temporary_checksum" "$final_checksum"
-
-find "$backup_dir" -type f -name 'ai-learning-os-*.dump' -mtime +7 -print \
-  | while IFS= read -r stale_backup; do
-      rm -f "$stale_backup" "$stale_backup.sha256"
-    done
