@@ -102,6 +102,16 @@ update_operational_runners() {
   done
 }
 
+reconcile_control_plane() {
+  control_plane_runner=$current_link/deploy/dev/control-plane.sh
+  validate_owned_regular_file "$control_plane_runner" "Active release control-plane.sh" || return 1
+  if [ ! -x "$control_plane_runner" ]; then
+    echo "Active release control-plane.sh must be executable" >&2
+    return 1
+  fi
+  "$control_plane_runner" install
+}
+
 discard_failed_release() {
   failed_release=$1
   active_release=
@@ -239,6 +249,7 @@ if [ -f "$current_link/DEPLOYED_COMMIT" ]; then
 fi
 if [ "$current_revision" = "$revision" ]; then
   update_operational_runners
+  reconcile_control_plane
   if deployment_is_healthy "$revision"; then
     echo "Revision $revision is already deployed and healthy"
     exit 0
@@ -358,4 +369,5 @@ find "$base_dir/releases" -mindepth 1 -maxdepth 1 -type d ! -name '.deploy-*' -p
     done
 
 update_operational_runners
+reconcile_control_plane
 echo "Deployed $revision successfully"

@@ -936,6 +936,7 @@ esac
     const current = join(baseDir, "current");
     const releaseOperations = join(current, "deploy/dev");
     const fakeBin = join(root, "bin");
+    const controlPlaneLog = join(root, "control-plane.log");
     const revision = "a".repeat(40);
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
@@ -948,6 +949,7 @@ esac
     writeFileSync(join(releaseOperations, "verify-backup.sh"), "new verify runner\n");
     writeFileSync(join(releaseOperations, "restore-drill.sh"), "new restore runner\n");
     writeFileSync(join(releaseOperations, "resolve-docker-bin.sh"), "new Docker resolver\n");
+    executable(join(releaseOperations, "control-plane.sh"), "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FAKE_CONTROL_PLANE_LOG\"\n");
     writeFileSync(join(baseDir, "deploy-main.sh"), "old deploy runner\n");
     writeFileSync(join(baseDir, "backup.sh"), "old backup runner\n");
     writeFileSync(join(baseDir, "backup-health.sh"), "old backup monitor\n");
@@ -968,6 +970,7 @@ esac
         AI_LEARNING_NODE_BIN: process.execPath,
         FAKE_MAIN_PID: String(process.pid),
         FAKE_NODE_BIN: process.execPath,
+        FAKE_CONTROL_PLANE_LOG: controlPlaneLog,
       },
     });
 
@@ -989,6 +992,7 @@ esac
     expect(statSync(join(baseDir, "verify-backup.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "restore-drill.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "resolve-docker-bin.sh")).mode & 0o777).toBe(0o755);
+    expect(readFileSync(controlPlaneLog, "utf8")).toBe("install\n");
   }, 15_000);
 
   it("does not rewrite operational runners that already match the active release", () => {
@@ -1008,6 +1012,7 @@ esac
       executable(join(baseDir, runner), `${runner} current\n`);
       utimesSync(join(baseDir, runner), fixedTime, fixedTime);
     }
+    executable(join(releaseOperations, "control-plane.sh"), "#!/bin/sh\nexit 0\n");
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
     addHealthyDeploymentCommands(fakeBin, revision);
 
@@ -1046,6 +1051,7 @@ esac
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
     }
+    executable(join(releaseOperations, "control-plane.sh"), "#!/bin/sh\nexit 0\n");
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
     executable(join(fakeBin, "systemctl"), `#!/bin/sh\nset -eu\nprintf '%s\\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"\ncase "$*" in\n  *" restart "*) touch "$FAKE_HEALTH_STATE" ;;\n  *" show "*) printf '%s\\n' "$FAKE_MAIN_PID" ;;\n  *" is-active "*) [ -f "$FAKE_HEALTH_STATE" ] ;;\n  *) exit 0 ;;\nesac\n`);
     executable(join(fakeBin, "curl"), `#!/bin/sh\nset -eu\n[ -f "$FAKE_HEALTH_STATE" ]\ncase "$*" in\n  *8787/api/health*) printf '%s\\n' '{"status":"ok","releaseRevision":"${revision}","aiEnabled":true,"syncEnabled":true}' ;;\n  *) exit 0 ;;\nesac\n`);
