@@ -109,7 +109,7 @@ cat ~/services/ai-learning-os/current/DEPLOYED_COMMIT
 
 恢复时必须新建隔离的临时数据库，禁止覆盖运行中的应用数据库。验证清单和演练结果记录在 [`../../docs/dev-recovery-drill.md`](../../docs/dev-recovery-drill.md)。
 
-仓库提供的演练命令会先执行上述只读预检，再创建不可复用的唯一临时数据库，完整恢复归档，验证核心表、迁移数和不含内容的行数，最后在成功、失败或中断时删除临时数据库：
+仓库提供的演练命令只通过绝对路径执行上述只读预检，并要求验证助手的父目录由当前用户拥有且不可被组或其他用户写入，避免工作目录或共享可写目录替换待执行助手。随后它会创建不可复用的唯一临时数据库，完整恢复归档，验证核心表、迁移数和不含内容的行数，最后在成功、失败或中断时删除临时数据库：
 
 ```sh
 ~/services/ai-learning-os/restore-drill.sh /home/chanchan/backups/ai-learning-os/<backup>.dump

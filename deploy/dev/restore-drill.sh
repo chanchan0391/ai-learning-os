@@ -5,11 +5,20 @@ backup=${1:-}
 docker_bin=${AI_LEARNING_DOCKER_BIN:-docker}
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 verify_runner=${AI_LEARNING_VERIFY_BACKUP_BIN:-"$script_dir/verify-backup.sh"}
+verify_runner_dir=$(dirname "$verify_runner")
 database=
 cleanup_required=false
 
 if [ "$#" -ne 1 ]; then
   echo "Usage: restore-drill.sh /absolute/path/to/ai-learning-os-<timestamp>-<suffix>.dump" >&2
+  exit 2
+fi
+case "$verify_runner" in
+  /*) ;;
+  *) echo "Backup verification runner path must be absolute" >&2; exit 2 ;;
+esac
+if [ -L "$verify_runner_dir" ] || [ ! -d "$verify_runner_dir" ]; then
+  echo "Backup verification runner directory must be a real directory, not a symlink" >&2
   exit 2
 fi
 if [ ! -f "$verify_runner" ] || [ -L "$verify_runner" ] || [ ! -x "$verify_runner" ]; then
@@ -38,6 +47,14 @@ links_of() {
   printf '%s\n' "$links"
 }
 
+if [ "$(owner_of "$verify_runner_dir")" != "$(id -u)" ]; then
+  echo "Backup verification runner directory must be owned by the current user" >&2
+  exit 2
+fi
+if [ $((0$(mode_of "$verify_runner_dir") & 022)) -ne 0 ]; then
+  echo "Backup verification runner directory must not be group or other writable" >&2
+  exit 2
+fi
 if [ "$(owner_of "$verify_runner")" != "$(id -u)" ]; then
   echo "Backup verification runner must be owned by the current user" >&2
   exit 2

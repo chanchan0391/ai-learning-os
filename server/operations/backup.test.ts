@@ -496,6 +496,55 @@ esac
     expect(existsSync(verifyMarker)).toBe(false);
     expect(existsSync(fixture.dockerLog)).toBe(false);
   });
+
+  it("rejects a verification runner in a group-writable directory before executing it or accessing PostgreSQL", () => {
+    const fixture = makeRestoreFixture();
+    const runnerDirectory = dirname(fixture.verify);
+    const verifyMarker = join(runnerDirectory, "verify-called");
+    executable(fixture.verify, "#!/bin/sh\ntouch \"$FAKE_VERIFY_MARKER\"\nexit 2\n");
+    chmodSync(runnerDirectory, 0o770);
+
+    const result = spawnSync("sh", [restoreDrillScript, fixture.backup], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AI_LEARNING_DOCKER_BIN: fixture.docker,
+        AI_LEARNING_VERIFY_BACKUP_BIN: fixture.verify,
+        FAKE_BACKUP: fixture.backup,
+        FAKE_DOCKER_LOG: fixture.dockerLog,
+        FAKE_VERIFY_MARKER: verifyMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Backup verification runner directory must not be group or other writable");
+    expect(existsSync(verifyMarker)).toBe(false);
+    expect(existsSync(fixture.dockerLog)).toBe(false);
+  });
+
+  it("rejects a relative verification runner path before executing it or accessing PostgreSQL", () => {
+    const fixture = makeRestoreFixture();
+    const verifyMarker = join(dirname(fixture.verify), "verify-called");
+    const relativeRunner = basename(fixture.verify);
+
+    const result = spawnSync("sh", [restoreDrillScript, fixture.backup], {
+      cwd: dirname(fixture.verify),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AI_LEARNING_DOCKER_BIN: fixture.docker,
+        AI_LEARNING_VERIFY_BACKUP_BIN: relativeRunner,
+        FAKE_BACKUP: fixture.backup,
+        FAKE_DOCKER_LOG: fixture.dockerLog,
+        FAKE_VERIFY_MARKER: verifyMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Backup verification runner path must be absolute");
+    expect(existsSync(verifyMarker)).toBe(false);
+    expect(existsSync(fixture.dockerLog)).toBe(false);
+  });
 });
 
 describe("dev operational runner updates", () => {
