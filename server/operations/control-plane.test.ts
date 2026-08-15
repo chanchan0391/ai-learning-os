@@ -62,6 +62,14 @@ function restoreDrillTimerContents() {
   return `[Timer]\nOnCalendar=Sun *-*-* 04:00:00 UTC\nRandomizedDelaySec=2h\nPersistent=true\nUnit=ai-learning-os-restore-drill.service\n[Install]\nWantedBy=timers.target\n`;
 }
 
+function capacityMonitorServiceContents() {
+  return `[Service]\nType=oneshot\nExecStart=%h/services/ai-learning-os/host-capacity.sh\n${monitorSandboxDirectives.join("\n")}\n`;
+}
+
+function capacityMonitorTimerContents() {
+  return `[Timer]\nOnBootSec=5m\nOnUnitActiveSec=15m\nUnit=ai-learning-os-host-capacity-monitor.service\n[Install]\nWantedBy=timers.target\n`;
+}
+
 const managedUnits = [
   "ai-learning-os-api.service",
   "ai-learning-os-web.service",
@@ -73,6 +81,8 @@ const managedUnits = [
   "ai-learning-os-application-monitor.timer",
   "ai-learning-os-restore-drill.service",
   "ai-learning-os-restore-drill.timer",
+  "ai-learning-os-host-capacity-monitor.service",
+  "ai-learning-os-host-capacity-monitor.timer",
 ];
 
 interface Fixture {
@@ -111,6 +121,8 @@ function makeFixture(): Fixture {
   writeFileSync(join(sourceDir, "ai-learning-os-application-monitor.timer"), applicationMonitorTimerContents());
   writeFileSync(join(sourceDir, "ai-learning-os-restore-drill.service"), restoreDrillServiceContents());
   writeFileSync(join(sourceDir, "ai-learning-os-restore-drill.timer"), restoreDrillTimerContents());
+  writeFileSync(join(sourceDir, "ai-learning-os-host-capacity-monitor.service"), capacityMonitorServiceContents());
+  writeFileSync(join(sourceDir, "ai-learning-os-host-capacity-monitor.timer"), capacityMonitorTimerContents());
   writeFileSync(join(unitDir, "ai-learning-os-backup.service"), "[Service]\nExecStart=/old/backup.sh\n");
   writeFileSync(join(unitDir, "ai-learning-os-backup.timer"), "[Timer]\nOnCalendar=weekly\n");
   writeFileSync(join(unitDir, "ai-learning-os-backup-monitor.service"), "[Service]\nExecStart=/old/monitor.sh\n");
@@ -171,16 +183,18 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-application-monitor.timer"), "utf8")).toBe(applicationMonitorTimerContents());
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-restore-drill.service"), "utf8")).toBe(restoreDrillServiceContents());
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-restore-drill.timer"), "utf8")).toBe(restoreDrillTimerContents());
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-host-capacity-monitor.service"), "utf8")).toBe(capacityMonitorServiceContents());
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-host-capacity-monitor.timer"), "utf8")).toBe(capacityMonitorTimerContents());
     const backupRoot = join(fixture.baseDir, "control-plane-backups");
     const backups = readdirSync(backupRoot);
     expect(backups).toHaveLength(1);
     expect(readFileSync(join(backupRoot, backups[0], "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
     expect(result.stdout).toContain("ai-learning-os-backup.timer: current, enabled, active");
     expect(readFileSync(fixture.env.FAKE_SYSTEMCTL_LOG!, "utf8")).toContain(
-      "enable --now ai-learning-os-backup.timer ai-learning-os-backup-monitor.timer ai-learning-os-application-monitor.timer ai-learning-os-restore-drill.timer",
+      "enable --now ai-learning-os-backup.timer ai-learning-os-backup-monitor.timer ai-learning-os-application-monitor.timer ai-learning-os-restore-drill.timer ai-learning-os-host-capacity-monitor.timer",
     );
     expect(readFileSync(fixture.env.FAKE_SYSTEMCTL_LOG!, "utf8")).toContain(
-      "reset-failed ai-learning-os-backup.service ai-learning-os-backup-monitor.service ai-learning-os-restore-drill.service",
+      "reset-failed ai-learning-os-backup.service ai-learning-os-backup-monitor.service ai-learning-os-restore-drill.service ai-learning-os-host-capacity-monitor.service",
     );
   });
 
@@ -383,6 +397,8 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     writeFileSync(join(fixture.unitDir, "ai-learning-os-application-monitor.timer"), applicationMonitorTimerContents());
     writeFileSync(join(fixture.unitDir, "ai-learning-os-restore-drill.service"), restoreDrillServiceContents());
     writeFileSync(join(fixture.unitDir, "ai-learning-os-restore-drill.timer"), restoreDrillTimerContents());
+    writeFileSync(join(fixture.unitDir, "ai-learning-os-host-capacity-monitor.service"), capacityMonitorServiceContents());
+    writeFileSync(join(fixture.unitDir, "ai-learning-os-host-capacity-monitor.timer"), capacityMonitorTimerContents());
 
     const result = runControlPlane(fixture, "status", { HOME: fakeHome });
 
@@ -439,7 +455,7 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     expect(result.stderr).toContain("restoring");
     for (const unit of managedUnits) {
       const installed = join(fixture.unitDir, unit);
-      if (unit.startsWith("ai-learning-os-application-monitor.") || unit.startsWith("ai-learning-os-restore-drill.")) {
+      if (unit.startsWith("ai-learning-os-application-monitor.") || unit.startsWith("ai-learning-os-restore-drill.") || unit.startsWith("ai-learning-os-host-capacity-monitor.")) {
         expect(existsSync(installed)).toBe(false);
         continue;
       }

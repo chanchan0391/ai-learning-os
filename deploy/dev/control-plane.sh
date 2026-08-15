@@ -23,9 +23,11 @@ application_monitor_service="ai-learning-os-application-monitor.service"
 application_monitor_timer="ai-learning-os-application-monitor.timer"
 restore_drill_service="ai-learning-os-restore-drill.service"
 restore_drill_timer="ai-learning-os-restore-drill.timer"
-monitor_services="$backup_monitor_service $application_monitor_service"
-timer_units="$backup_timer $backup_monitor_timer $application_monitor_timer $restore_drill_timer"
-units="$application_units $backup_service $backup_timer $backup_monitor_service $backup_monitor_timer $application_monitor_service $application_monitor_timer $restore_drill_service $restore_drill_timer"
+capacity_monitor_service="ai-learning-os-host-capacity-monitor.service"
+capacity_monitor_timer="ai-learning-os-host-capacity-monitor.timer"
+monitor_services="$backup_monitor_service $application_monitor_service $capacity_monitor_service"
+timer_units="$backup_timer $backup_monitor_timer $application_monitor_timer $restore_drill_timer $capacity_monitor_timer"
+units="$application_units $backup_service $backup_timer $backup_monitor_service $backup_monitor_timer $application_monitor_service $application_monitor_timer $restore_drill_service $restore_drill_timer $capacity_monitor_service $capacity_monitor_timer"
 lock_file="$base_dir/control-plane.lock"
 backup_retention_count=5
 staged_unit=
@@ -271,6 +273,36 @@ validate_sources() {
       return 1
     fi
   done
+
+  capacity_monitor_source="$source_dir/$capacity_monitor_service"
+  validate_owned_regular_file "$capacity_monitor_source" "Control-plane source $capacity_monitor_service" || return 1
+  for directive in \
+    'Type=oneshot' \
+    'ExecStart=%h/services/ai-learning-os/host-capacity.sh'; do
+    if ! grep -Fxq "$directive" "$capacity_monitor_source"; then
+      echo "$capacity_monitor_service is missing required monitor directive: $directive" >&2
+      return 1
+    fi
+  done
+  echo "$required_monitor_sandbox_directives" | while IFS= read -r directive; do
+    if ! grep -Fxq "$directive" "$capacity_monitor_source"; then
+      echo "$capacity_monitor_service is missing required sandbox directive: $directive" >&2
+      exit 1
+    fi
+  done || return 1
+
+  capacity_monitor_timer_source="$source_dir/$capacity_monitor_timer"
+  validate_owned_regular_file "$capacity_monitor_timer_source" "Control-plane source $capacity_monitor_timer" || return 1
+  for directive in \
+    'OnBootSec=5m' \
+    'OnUnitActiveSec=15m' \
+    'Unit=ai-learning-os-host-capacity-monitor.service' \
+    'WantedBy=timers.target'; do
+    if ! grep -Fxq "$directive" "$capacity_monitor_timer_source"; then
+      echo "$capacity_monitor_timer is missing required schedule directive: $directive" >&2
+      return 1
+    fi
+  done
 }
 
 service_uses_selected_node() {
@@ -300,7 +332,7 @@ status_control_plane() {
       result=1
     else
       case "$unit" in
-        $backup_service|$backup_monitor_service|$application_monitor_service|$restore_drill_service)
+        $backup_service|$backup_monitor_service|$application_monitor_service|$restore_drill_service|$capacity_monitor_service)
           if $systemctl_bin --user is-failed --quiet "$unit"; then
             echo "$unit: failed"
             result=1
@@ -383,7 +415,7 @@ apply_units() {
   done
   $systemctl_bin --user daemon-reload \
     && $systemctl_bin --user restart $application_units \
-    && $systemctl_bin --user reset-failed "$backup_service" "$backup_monitor_service" "$restore_drill_service" \
+    && $systemctl_bin --user reset-failed "$backup_service" "$backup_monitor_service" "$restore_drill_service" "$capacity_monitor_service" \
     && $systemctl_bin --user enable --now $timer_units \
     && $systemctl_bin --user start $monitor_services
 }
