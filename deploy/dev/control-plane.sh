@@ -340,7 +340,7 @@ status_control_plane() {
             echo "$unit: current, timer-triggered"
           fi
           ;;
-        $backup_timer|$backup_monitor_timer|$application_monitor_timer|$restore_drill_timer)
+        $backup_timer|$backup_monitor_timer|$application_monitor_timer|$restore_drill_timer|$capacity_monitor_timer)
           if ! $systemctl_bin --user is-enabled --quiet "$unit"; then
             echo "$unit: disabled"
             result=1

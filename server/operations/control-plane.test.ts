@@ -190,6 +190,7 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     expect(backups).toHaveLength(1);
     expect(readFileSync(join(backupRoot, backups[0], "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
     expect(result.stdout).toContain("ai-learning-os-backup.timer: current, enabled, active");
+    expect(result.stdout).toContain("ai-learning-os-host-capacity-monitor.timer: current, enabled, active");
     expect(readFileSync(fixture.env.FAKE_SYSTEMCTL_LOG!, "utf8")).toContain(
       "enable --now ai-learning-os-backup.timer ai-learning-os-backup-monitor.timer ai-learning-os-application-monitor.timer ai-learning-os-restore-drill.timer ai-learning-os-host-capacity-monitor.timer",
     );
