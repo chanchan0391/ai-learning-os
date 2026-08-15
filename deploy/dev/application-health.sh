@@ -42,9 +42,21 @@ for service in ai-learning-os-api.service ai-learning-os-web.service; do
   fi
 done
 
+for service in \
+  ai-learning-os-backup.service \
+  ai-learning-os-backup-monitor.service \
+  ai-learning-os-restore-drill.service \
+  ai-learning-os-host-capacity-monitor.service; do
+  if "$systemctl_bin" --user is-failed --quiet "$service"; then
+    echo "$service is failed" >&2
+    exit 1
+  fi
+done
+
 for timer in \
   ai-learning-os-backup.timer \
   ai-learning-os-backup-monitor.timer \
+  ai-learning-os-application-monitor.timer \
   ai-learning-os-restore-drill.timer \
   ai-learning-os-host-capacity-monitor.timer; do
   if ! "$systemctl_bin" --user is-enabled --quiet "$timer"; then

@@ -24,6 +24,8 @@ function makeFixture() {
 set -eu
 case "$*" in
   *"is-enabled"*"${"${FAKE_DISABLED_TIMER:-none}"}"*) exit 1 ;;
+  *"is-failed"*"${"${FAKE_FAILED_OPERATIONAL_SERVICE:-none}"}"*) exit 0 ;;
+  *"is-failed"*) exit 1 ;;
   *"${"${FAKE_INACTIVE_SERVICE:-none}"}"*) exit 1 ;;
   *) exit 0 ;;
 esac
@@ -82,10 +84,21 @@ describe("dev application health monitoring", () => {
   it("fails before network probes when a required operational timer is disabled", () => {
     const fixture = makeFixture();
 
-    const result = runHealth(fixture, { FAKE_DISABLED_TIMER: "ai-learning-os-restore-drill.timer" });
+    const result = runHealth(fixture, { FAKE_DISABLED_TIMER: "ai-learning-os-application-monitor.timer" });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("ai-learning-os-restore-drill.timer is not enabled");
+    expect(result.stderr).toContain("ai-learning-os-application-monitor.timer is not enabled");
+  });
+
+  it("aggregates failed timer-triggered operational services before network probes", () => {
+    const fixture = makeFixture();
+
+    const result = runHealth(fixture, {
+      FAKE_FAILED_OPERATIONAL_SERVICE: "ai-learning-os-host-capacity-monitor.service",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("ai-learning-os-host-capacity-monitor.service is failed");
   });
 
   it("fails before network probes when an application service is inactive", () => {
