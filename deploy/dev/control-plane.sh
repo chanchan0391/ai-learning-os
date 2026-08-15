@@ -19,8 +19,11 @@ backup_service="ai-learning-os-backup.service"
 backup_timer="ai-learning-os-backup.timer"
 backup_monitor_service="ai-learning-os-backup-monitor.service"
 backup_monitor_timer="ai-learning-os-backup-monitor.timer"
-timer_units="$backup_timer $backup_monitor_timer"
-units="$application_units $backup_service $backup_timer $backup_monitor_service $backup_monitor_timer"
+application_monitor_service="ai-learning-os-application-monitor.service"
+application_monitor_timer="ai-learning-os-application-monitor.timer"
+monitor_services="$backup_monitor_service $application_monitor_service"
+timer_units="$backup_timer $backup_monitor_timer $application_monitor_timer"
+units="$application_units $backup_service $backup_timer $backup_monitor_service $backup_monitor_timer $application_monitor_service $application_monitor_timer"
 lock_file="$base_dir/control-plane.lock"
 backup_retention_count=5
 staged_unit=
@@ -202,6 +205,37 @@ validate_sources() {
       return 1
     fi
   done
+
+  application_monitor_source="$source_dir/$application_monitor_service"
+  validate_owned_regular_file "$application_monitor_source" "Control-plane source $application_monitor_service" || return 1
+  for directive in \
+    'Type=oneshot' \
+    'ExecStart=%h/services/ai-learning-os/application-health.sh' \
+    'After=ai-learning-os-api.service ai-learning-os-web.service'; do
+    if ! grep -Fxq "$directive" "$application_monitor_source"; then
+      echo "$application_monitor_service is missing required monitor directive: $directive" >&2
+      return 1
+    fi
+  done
+  echo "$required_sandbox_directives" | while IFS= read -r directive; do
+    if ! grep -Fxq "$directive" "$application_monitor_source"; then
+      echo "$application_monitor_service is missing required sandbox directive: $directive" >&2
+      exit 1
+    fi
+  done || return 1
+
+  application_monitor_timer_source="$source_dir/$application_monitor_timer"
+  validate_owned_regular_file "$application_monitor_timer_source" "Control-plane source $application_monitor_timer" || return 1
+  for directive in \
+    'OnBootSec=2m' \
+    'OnUnitActiveSec=5m' \
+    'Unit=ai-learning-os-application-monitor.service' \
+    'WantedBy=timers.target'; do
+    if ! grep -Fxq "$directive" "$application_monitor_timer_source"; then
+      echo "$application_monitor_timer is missing required schedule directive: $directive" >&2
+      return 1
+    fi
+  done
 }
 
 service_uses_selected_node() {
@@ -231,7 +265,7 @@ status_control_plane() {
       result=1
     else
       case "$unit" in
-        $backup_service|$backup_monitor_service)
+        $backup_service|$backup_monitor_service|$application_monitor_service)
           if $systemctl_bin --user is-failed --quiet "$unit"; then
             echo "$unit: failed"
             result=1
@@ -239,7 +273,7 @@ status_control_plane() {
             echo "$unit: current, timer-triggered"
           fi
           ;;
-        $backup_timer|$backup_monitor_timer)
+        $backup_timer|$backup_monitor_timer|$application_monitor_timer)
           if ! $systemctl_bin --user is-enabled --quiet "$unit"; then
             echo "$unit: disabled"
             result=1
@@ -310,9 +344,9 @@ apply_units() {
   done
   $systemctl_bin --user daemon-reload \
     && $systemctl_bin --user restart $application_units \
-    && $systemctl_bin --user reset-failed "$backup_service" "$backup_monitor_service" \
+    && $systemctl_bin --user reset-failed "$backup_service" $monitor_services \
     && $systemctl_bin --user enable --now $timer_units \
-    && $systemctl_bin --user start "$backup_monitor_service"
+    && $systemctl_bin --user start $monitor_services
 }
 
 cleanup_control_plane_artifacts() {

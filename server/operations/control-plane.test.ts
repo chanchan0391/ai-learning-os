@@ -46,6 +46,14 @@ function backupMonitorTimerContents() {
   return `[Timer]\nOnBootSec=5m\nOnUnitActiveSec=15m\nUnit=ai-learning-os-backup-monitor.service\n[Install]\nWantedBy=timers.target\n`;
 }
 
+function applicationMonitorServiceContents() {
+  return `[Unit]\nAfter=ai-learning-os-api.service ai-learning-os-web.service\n[Service]\nType=oneshot\nExecStart=%h/services/ai-learning-os/application-health.sh\n${sandboxDirectives.join("\n")}\n`;
+}
+
+function applicationMonitorTimerContents() {
+  return `[Timer]\nOnBootSec=2m\nOnUnitActiveSec=5m\nUnit=ai-learning-os-application-monitor.service\n[Install]\nWantedBy=timers.target\n`;
+}
+
 const managedUnits = [
   "ai-learning-os-api.service",
   "ai-learning-os-web.service",
@@ -53,6 +61,8 @@ const managedUnits = [
   "ai-learning-os-backup.timer",
   "ai-learning-os-backup-monitor.service",
   "ai-learning-os-backup-monitor.timer",
+  "ai-learning-os-application-monitor.service",
+  "ai-learning-os-application-monitor.timer",
 ];
 
 interface Fixture {
@@ -87,10 +97,14 @@ function makeFixture(): Fixture {
   writeFileSync(join(sourceDir, "ai-learning-os-backup.timer"), backupTimerContents());
   writeFileSync(join(sourceDir, "ai-learning-os-backup-monitor.service"), backupMonitorServiceContents());
   writeFileSync(join(sourceDir, "ai-learning-os-backup-monitor.timer"), backupMonitorTimerContents());
+  writeFileSync(join(sourceDir, "ai-learning-os-application-monitor.service"), applicationMonitorServiceContents());
+  writeFileSync(join(sourceDir, "ai-learning-os-application-monitor.timer"), applicationMonitorTimerContents());
   writeFileSync(join(unitDir, "ai-learning-os-backup.service"), "[Service]\nExecStart=/old/backup.sh\n");
   writeFileSync(join(unitDir, "ai-learning-os-backup.timer"), "[Timer]\nOnCalendar=weekly\n");
   writeFileSync(join(unitDir, "ai-learning-os-backup-monitor.service"), "[Service]\nExecStart=/old/monitor.sh\n");
   writeFileSync(join(unitDir, "ai-learning-os-backup-monitor.timer"), "[Timer]\nOnUnitActiveSec=weekly\n");
+  writeFileSync(join(unitDir, "ai-learning-os-application-monitor.service"), "[Service]\nExecStart=/old/application-monitor.sh\n");
+  writeFileSync(join(unitDir, "ai-learning-os-application-monitor.timer"), "[Timer]\nOnUnitActiveSec=weekly\n");
 
   writeFileSync(fakeSystemctl, `#!/bin/sh\nset -eu\nprintf '%s\\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"\ncase "$*" in\n  *" show "*) printf '%s\\n' "$FAKE_MAIN_PID" ;;\n  *" is-active "*) [ "\${FAKE_ACTIVE:-true}" = true ] ;;\n  *" is-failed "*) [ "\${FAKE_FAILED:-false}" = true ] ;;\n  *) exit 0 ;;\nesac\n`);
   chmodSync(fakeSystemctl, 0o755);
@@ -143,13 +157,15 @@ describe("dev control-plane management", () => {
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-backup.timer"), "utf8")).toBe(backupTimerContents());
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-backup-monitor.service"), "utf8")).toBe(backupMonitorServiceContents());
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-backup-monitor.timer"), "utf8")).toBe(backupMonitorTimerContents());
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-application-monitor.service"), "utf8")).toBe(applicationMonitorServiceContents());
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-application-monitor.timer"), "utf8")).toBe(applicationMonitorTimerContents());
     const backupRoot = join(fixture.baseDir, "control-plane-backups");
     const backups = readdirSync(backupRoot);
     expect(backups).toHaveLength(1);
     expect(readFileSync(join(backupRoot, backups[0], "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
     expect(result.stdout).toContain("ai-learning-os-backup.timer: current, enabled, active");
     expect(readFileSync(fixture.env.FAKE_SYSTEMCTL_LOG!, "utf8")).toContain(
-      "enable --now ai-learning-os-backup.timer ai-learning-os-backup-monitor.timer",
+      "enable --now ai-learning-os-backup.timer ai-learning-os-backup-monitor.timer ai-learning-os-application-monitor.timer",
     );
   });
 
@@ -348,6 +364,8 @@ describe("dev control-plane management", () => {
     writeFileSync(join(fixture.unitDir, "ai-learning-os-backup.timer"), backupTimerContents());
     writeFileSync(join(fixture.unitDir, "ai-learning-os-backup-monitor.service"), backupMonitorServiceContents());
     writeFileSync(join(fixture.unitDir, "ai-learning-os-backup-monitor.timer"), backupMonitorTimerContents());
+    writeFileSync(join(fixture.unitDir, "ai-learning-os-application-monitor.service"), applicationMonitorServiceContents());
+    writeFileSync(join(fixture.unitDir, "ai-learning-os-application-monitor.timer"), applicationMonitorTimerContents());
 
     const result = runControlPlane(fixture, "status", { HOME: fakeHome });
 
@@ -407,10 +425,10 @@ describe("dev control-plane management", () => {
       expect(existsSync(installed)).toBe(true);
       const expectedPriorDirective = unit === "ai-learning-os-backup.timer"
         ? "OnCalendar=weekly"
-        : unit === "ai-learning-os-backup-monitor.timer"
+        : unit === "ai-learning-os-backup-monitor.timer" || unit === "ai-learning-os-application-monitor.timer"
           ? "OnUnitActiveSec=weekly"
           : "ExecStart=/old/";
       expect(readFileSync(installed, "utf8")).toContain(expectedPriorDirective);
     }
-  });
+  }, 10_000);
 });
