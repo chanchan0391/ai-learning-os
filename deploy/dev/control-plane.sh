@@ -320,7 +320,11 @@ rollback_units() {
   done
   $systemctl_bin --user daemon-reload
   $systemctl_bin --user restart $application_units || true
-  $systemctl_bin --user enable --now $timer_units || true
+  for timer_unit in $timer_units; do
+    if [ -f "$unit_dir/$timer_unit" ]; then
+      $systemctl_bin --user enable --now "$timer_unit" || true
+    fi
+  done
 }
 
 install_unit_atomically() {

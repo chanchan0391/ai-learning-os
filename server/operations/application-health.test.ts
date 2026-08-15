@@ -30,7 +30,7 @@ esac
   const curl = executable(join(root, "curl"), `#!/bin/sh
 set -eu
 case "$*" in
-  *"--output /dev/null"*) [ "${"${FAKE_WEB_HEALTHY:-true}"}" = true ] ;;
+  *"--output /dev/null"*) [ "${"${FAKE_WEB_HEALTHY:-true}"}" = true ] && printf '%s' "$*" | grep -Fq 'http://127.0.0.1:8088/' ;;
   *"/api/health"*) printf '%s\n' "${"${FAKE_HEALTH_BODY}"}" ;;
   *) exit 2 ;;
 esac

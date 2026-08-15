@@ -5,7 +5,7 @@ base_dir=${AI_LEARNING_DEPLOY_DIR:-"$HOME/services/ai-learning-os"}
 systemctl_bin=${AI_LEARNING_SYSTEMCTL_BIN:-systemctl}
 curl_bin=${AI_LEARNING_CURL_BIN:-curl}
 node_bin=${AI_LEARNING_NODE_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/node"}
-web_url=${AI_LEARNING_WEB_HEALTH_URL:-http://127.0.0.1:4173/}
+web_url=${AI_LEARNING_WEB_HEALTH_URL:-http://127.0.0.1:8088/}
 api_url=${AI_LEARNING_API_HEALTH_URL:-http://127.0.0.1:8787/api/health}
 
 case "$base_dir" in

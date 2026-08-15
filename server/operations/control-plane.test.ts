@@ -103,8 +103,6 @@ function makeFixture(): Fixture {
   writeFileSync(join(unitDir, "ai-learning-os-backup.timer"), "[Timer]\nOnCalendar=weekly\n");
   writeFileSync(join(unitDir, "ai-learning-os-backup-monitor.service"), "[Service]\nExecStart=/old/monitor.sh\n");
   writeFileSync(join(unitDir, "ai-learning-os-backup-monitor.timer"), "[Timer]\nOnUnitActiveSec=weekly\n");
-  writeFileSync(join(unitDir, "ai-learning-os-application-monitor.service"), "[Service]\nExecStart=/old/application-monitor.sh\n");
-  writeFileSync(join(unitDir, "ai-learning-os-application-monitor.timer"), "[Timer]\nOnUnitActiveSec=weekly\n");
 
   writeFileSync(fakeSystemctl, `#!/bin/sh\nset -eu\nprintf '%s\\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"\ncase "$*" in\n  *"reset-failed"*"application-monitor"*) exit 2 ;;\n  *" show "*) printf '%s\\n' "$FAKE_MAIN_PID" ;;\n  *" is-active "*) [ "\${FAKE_ACTIVE:-true}" = true ] ;;\n  *" is-failed "*) [ "\${FAKE_FAILED:-false}" = true ] ;;\n  *) exit 0 ;;\nesac\n`);
   chmodSync(fakeSystemctl, 0o755);
@@ -422,10 +420,14 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     expect(result.stderr).toContain("restoring");
     for (const unit of managedUnits) {
       const installed = join(fixture.unitDir, unit);
+      if (unit.startsWith("ai-learning-os-application-monitor.")) {
+        expect(existsSync(installed)).toBe(false);
+        continue;
+      }
       expect(existsSync(installed)).toBe(true);
       const expectedPriorDirective = unit === "ai-learning-os-backup.timer"
         ? "OnCalendar=weekly"
-        : unit === "ai-learning-os-backup-monitor.timer" || unit === "ai-learning-os-application-monitor.timer"
+        : unit === "ai-learning-os-backup-monitor.timer"
           ? "OnUnitActiveSec=weekly"
           : "ExecStart=/old/";
       expect(readFileSync(installed, "utf8")).toContain(expectedPriorDirective);
