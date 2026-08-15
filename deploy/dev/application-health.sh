@@ -42,6 +42,21 @@ for service in ai-learning-os-api.service ai-learning-os-web.service; do
   fi
 done
 
+for timer in \
+  ai-learning-os-backup.timer \
+  ai-learning-os-backup-monitor.timer \
+  ai-learning-os-restore-drill.timer \
+  ai-learning-os-host-capacity-monitor.timer; do
+  if ! "$systemctl_bin" --user is-enabled --quiet "$timer"; then
+    echo "$timer is not enabled" >&2
+    exit 1
+  fi
+  if ! "$systemctl_bin" --user is-active --quiet "$timer"; then
+    echo "$timer is not active" >&2
+    exit 1
+  fi
+done
+
 if ! "$curl_bin" --fail --silent --show-error --connect-timeout 2 --max-time 5 \
   --max-filesize 1048576 --output /dev/null "$web_url"; then
   echo "Web health probe failed" >&2
@@ -61,11 +76,20 @@ if ! printf '%s' "$health_body" | "$node_bin" -e '
     try {
       const health = JSON.parse(body);
       const expectedRevision = process.argv[1];
+      const pool = health.databasePool;
+      const validPool = pool !== null
+        && Number.isSafeInteger(pool.limit) && pool.limit > 0
+        && Number.isSafeInteger(pool.total) && pool.total >= 0 && pool.total <= pool.limit
+        && Number.isSafeInteger(pool.idle) && pool.idle >= 0 && pool.idle <= pool.total
+        && Number.isSafeInteger(pool.inUse) && pool.inUse === pool.total - pool.idle
+        && Number.isSafeInteger(pool.waiting) && pool.waiting === 0
+        && pool.saturated === false;
       if (health.status !== "ok"
         || health.releaseRevision !== expectedRevision
         || health.aiEnabled !== true
         || health.syncEnabled !== true
-        || health.dependencies?.database !== "ready") process.exit(1);
+        || health.dependencies?.database !== "ready"
+        || !validPool) process.exit(1);
     } catch {
       process.exit(1);
     }

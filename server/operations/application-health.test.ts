@@ -23,6 +23,7 @@ function makeFixture() {
   const systemctl = executable(join(root, "systemctl"), `#!/bin/sh
 set -eu
 case "$*" in
+  *"is-enabled"*"${"${FAKE_DISABLED_TIMER:-none}"}"*) exit 1 ;;
   *"${"${FAKE_INACTIVE_SERVICE:-none}"}"*) exit 1 ;;
   *) exit 0 ;;
 esac
@@ -55,6 +56,7 @@ function runHealth(fixture: ReturnType<typeof makeFixture>, extraEnv: NodeJS.Pro
         aiEnabled: true,
         syncEnabled: true,
         dependencies: { database: "ready" },
+        databasePool: { limit: 10, total: 3, idle: 2, inUse: 1, waiting: 0, saturated: false },
       }),
       ...extraEnv,
     },
@@ -68,13 +70,22 @@ afterEach(() => {
 });
 
 describe("dev application health monitoring", () => {
-  it("proves active services, Web reachability, database readiness, and the deployed revision", () => {
+  it("proves active services and schedules, Web reachability, database capacity, and the deployed revision", () => {
     const fixture = makeFixture();
 
     const result = runHealth(fixture);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain(`Application healthy at revision ${revision}`);
+  });
+
+  it("fails before network probes when a required operational timer is disabled", () => {
+    const fixture = makeFixture();
+
+    const result = runHealth(fixture, { FAKE_DISABLED_TIMER: "ai-learning-os-restore-drill.timer" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("ai-learning-os-restore-drill.timer is not enabled");
   });
 
   it("fails before network probes when an application service is inactive", () => {
@@ -96,6 +107,7 @@ describe("dev application health monitoring", () => {
         aiEnabled: true,
         syncEnabled: true,
         dependencies: { database: "ready" },
+        databasePool: { limit: 10, total: 3, idle: 2, inUse: 1, waiting: 0, saturated: false },
       }),
     });
 
@@ -113,6 +125,29 @@ describe("dev application health monitoring", () => {
         aiEnabled: true,
         syncEnabled: true,
         dependencies: { database: "unavailable" },
+        databasePool: { limit: 10, total: 3, idle: 2, inUse: 1, waiting: 0, saturated: false },
+        privateDetail: "must not be reflected",
+      }),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("does not prove the active release is ready");
+    expect(result.stderr).not.toContain("must not be reflected");
+  });
+
+  it("rejects database pool saturation without printing the health body", () => {
+    const fixture = makeFixture();
+
+    const result = runHealth(fixture, {
+      FAKE_HEALTH_BODY: JSON.stringify({
+        status: "ok",
+        releaseRevision: revision,
+        aiEnabled: true,
+        syncEnabled: true,
+        dependencies: { database: "ready" },
+        databasePool: {
+          limit: 10, total: 10, idle: 0, inUse: 10, waiting: 2, saturated: true,
+        },
         privateDetail: "must not be reflected",
       }),
     });
