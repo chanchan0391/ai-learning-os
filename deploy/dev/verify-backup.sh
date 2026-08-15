@@ -42,12 +42,23 @@ mode_of() {
   printf '%s\n' "$mode"
 }
 
+links_of() {
+  links=$(stat -f '%l' "$1" 2>/dev/null || true)
+  case "$links" in ''|*[!0-9]*) links=$(stat -c '%h' "$1" 2>/dev/null || true) ;; esac
+  case "$links" in ''|*[!0-9]*) echo "Could not verify backup link count" >&2; exit 2 ;; esac
+  printf '%s\n' "$links"
+}
+
 if [ "$(owner_of "$backup_dir")" != "$(id -u)" ] || [ "$(owner_of "$backup")" != "$(id -u)" ]; then
   echo "Backup directory and file must be owned by the current user" >&2
   exit 2
 fi
 if [ $((0$(mode_of "$backup_dir") & 077)) -ne 0 ] || [ $((0$(mode_of "$backup") & 077)) -ne 0 ]; then
   echo "Backup directory and file must not grant group or other access" >&2
+  exit 2
+fi
+if [ "$(links_of "$backup")" != 1 ]; then
+  echo "Backup must not be hard-linked" >&2
   exit 2
 fi
 
@@ -58,6 +69,10 @@ if [ -L "$checksum_file" ] || [ ! -f "$checksum_file" ]; then
 fi
 if [ "$(owner_of "$checksum_file")" != "$(id -u)" ] || [ $((0$(mode_of "$checksum_file") & 077)) -ne 0 ]; then
   echo "Backup checksum sidecar must be private and owned by the current user" >&2
+  exit 2
+fi
+if [ "$(links_of "$checksum_file")" != 1 ]; then
+  echo "Backup checksum sidecar must not be hard-linked" >&2
   exit 2
 fi
 

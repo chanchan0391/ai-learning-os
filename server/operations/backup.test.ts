@@ -327,6 +327,42 @@ describe("dev backup restore preflight", () => {
     expect(permissionResult.status).toBe(2);
     expect(permissionResult.stderr).toContain("must not grant group or other access");
   });
+
+  it("rejects a hard-linked backup before PostgreSQL inspection", () => {
+    const fixture = makeBackupFixture();
+    const externalLink = join(dirname(fixture.backupDir), "shared-backup.dump");
+    const dockerMarker = join(dirname(fixture.docker), "docker-called");
+    linkSync(fixture.backup, externalLink);
+    executable(fixture.docker, "#!/bin/sh\ntouch \"$FAKE_DOCKER_MARKER\"\nexit 2\n");
+
+    const result = spawnSync("sh", [verifyBackupScript, fixture.backup], {
+      encoding: "utf8",
+      env: { ...process.env, AI_LEARNING_DOCKER_BIN: fixture.docker, FAKE_DOCKER_MARKER: dockerMarker },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Backup must not be hard-linked");
+    expect(readFileSync(externalLink, "utf8")).toBe("valid custom archive");
+    expect(existsSync(dockerMarker)).toBe(false);
+  });
+
+  it("rejects a hard-linked checksum sidecar before PostgreSQL inspection", () => {
+    const fixture = makeBackupFixture();
+    const externalLink = join(dirname(fixture.backupDir), "shared-backup.sha256");
+    const dockerMarker = join(dirname(fixture.docker), "docker-called");
+    linkSync(`${fixture.backup}.sha256`, externalLink);
+    executable(fixture.docker, "#!/bin/sh\ntouch \"$FAKE_DOCKER_MARKER\"\nexit 2\n");
+
+    const result = spawnSync("sh", [verifyBackupScript, fixture.backup], {
+      encoding: "utf8",
+      env: { ...process.env, AI_LEARNING_DOCKER_BIN: fixture.docker, FAKE_DOCKER_MARKER: dockerMarker },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Backup checksum sidecar must not be hard-linked");
+    expect(readFileSync(externalLink, "utf8")).toContain(basename(fixture.backup));
+    expect(existsSync(dockerMarker)).toBe(false);
+  });
 });
 
 describe("dev isolated restore drill", () => {
