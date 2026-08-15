@@ -181,6 +181,42 @@ describe("dev database backup", () => {
     expect(existsSync(dockerMarker)).toBe(false);
   });
 
+  it("rejects a hard-linked backup lock without changing the shared inode or accessing PostgreSQL", () => {
+    const fixture = makeFixture();
+    const lockTarget = join(dirname(fixture.backupDir), "operator-lock-target");
+    const dockerMarker = join(dirname(fixture.docker), "docker-called");
+    mkdirSync(fixture.backupDir);
+    writeFileSync(lockTarget, "preserve me", { mode: 0o640 });
+    const initialMode = statSync(lockTarget).mode & 0o777;
+    linkSync(lockTarget, join(fixture.backupDir, ".backup.lock"));
+    executable(fixture.docker, "#!/bin/sh\ntouch \"$FAKE_DOCKER_MARKER\"\nexit 2\n");
+
+    const result = runBackup(fixture, { FAKE_DOCKER_MARKER: dockerMarker });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Backup lock must not be hard-linked");
+    expect(readFileSync(lockTarget, "utf8")).toBe("preserve me");
+    expect(statSync(lockTarget).mode & 0o777).toBe(initialMode);
+    expect(existsSync(dockerMarker)).toBe(false);
+  });
+
+  it("preserves hard-linked stale backup artifacts during retention cleanup", () => {
+    const fixture = makeFixture();
+    const operatorFile = join(dirname(fixture.backupDir), "operator-archive");
+    const managedLink = join(fixture.backupDir, "ai-learning-os-20260701T000000Z-linked.dump");
+    mkdirSync(fixture.backupDir);
+    writeFileSync(operatorFile, "preserve me");
+    linkSync(operatorFile, managedLink);
+    const expiredAt = new Date(Date.now() - 9 * 24 * 60 * 60 * 1_000);
+    utimesSync(managedLink, expiredAt, expiredAt);
+
+    const result = runBackup(fixture);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(operatorFile, "utf8")).toBe("preserve me");
+    expect(readFileSync(managedLink, "utf8")).toBe("preserve me");
+  });
+
   it("refuses a concurrent backup before starting PostgreSQL work", () => {
     const fixture = makeFixture();
     const dockerMarker = join(dirname(fixture.docker), "docker-called");

@@ -17,6 +17,7 @@ proc_root=${AI_LEARNING_PROC_ROOT:-/proc}
 units="ai-learning-os-api.service ai-learning-os-web.service"
 lock_file="$base_dir/control-plane.lock"
 backup_retention_count=5
+staged_unit=
 required_sandbox_directives='UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
@@ -56,6 +57,48 @@ validate_owned_directory() {
   fi
 }
 
+read_file_owner() {
+  file_owner=$($stat_bin -f '%u' "$1" 2>/dev/null || true)
+  case "$file_owner" in
+    ''|*[!0-9]*) file_owner=$($stat_bin -c '%u' "$1" 2>/dev/null || true) ;;
+  esac
+  printf '%s\n' "$file_owner"
+}
+
+read_file_links() {
+  file_links=$($stat_bin -f '%l' "$1" 2>/dev/null || true)
+  case "$file_links" in
+    ''|*[!0-9]*) file_links=$($stat_bin -c '%h' "$1" 2>/dev/null || true) ;;
+  esac
+  printf '%s\n' "$file_links"
+}
+
+validate_owned_regular_file() {
+  file_path=$1
+  file_label=$2
+  if [ -L "$file_path" ] || [ ! -f "$file_path" ]; then
+    echo "$file_label must be a regular file, not a symlink" >&2
+    return 1
+  fi
+  if [ "$(read_file_owner "$file_path")" != "$(id -u)" ]; then
+    echo "$file_label must be owned by the current user" >&2
+    return 1
+  fi
+  file_links=$(read_file_links "$file_path")
+  case "$file_links" in
+    ''|*[!0-9]*) echo "Could not verify $file_label link count" >&2; return 1 ;;
+  esac
+  if [ "$file_links" != 1 ]; then
+    echo "$file_label must not be hard-linked" >&2
+    return 1
+  fi
+}
+
+cleanup_stage() {
+  if [ -n "$staged_unit" ]; then rm -f "$staged_unit"; fi
+}
+trap cleanup_stage EXIT HUP INT TERM
+
 validate_sources() {
   if [ ! -x "$node_bin" ]; then
     echo "Selected Node binary is not executable: $node_bin" >&2
@@ -64,10 +107,7 @@ validate_sources() {
 
   for unit in $units; do
     source_unit="$source_dir/$unit"
-    if [ ! -f "$source_unit" ] || [ -L "$source_unit" ]; then
-      echo "Missing or unsafe control-plane source: $source_unit" >&2
-      return 1
-    fi
+    validate_owned_regular_file "$source_unit" "Control-plane source $unit" || return 1
     if ! grep -Fq "ExecStart=$node_bin " "$source_unit" \
       && ! grep -Fq "ExecStart=$unit_node_bin " "$source_unit"; then
       echo "$unit does not use the selected Node binary" >&2
@@ -101,6 +141,9 @@ status_control_plane() {
     if [ ! -f "$installed_unit" ]; then
       echo "$unit: missing"
       result=1
+    elif ! validate_owned_regular_file "$installed_unit" "Installed $unit"; then
+      echo "$unit: unsafe"
+      result=1
     elif ! cmp -s "$source_unit" "$installed_unit"; then
       echo "$unit: drifted"
       result=1
@@ -125,10 +168,12 @@ rollback_units() {
   echo "Control-plane verification failed; restoring $backup_dir" >&2
   for unit in $units; do
     target="$unit_dir/$unit"
-    rm -f "$unit_dir/.$unit.next.$$"
     if [ -f "$backup_dir/$unit" ]; then
-      install -m 0644 "$backup_dir/$unit" "$target"
+      install_unit_atomically "$backup_dir/$unit" "$target" 0644 || return 1
     else
+      if [ -e "$target" ] || [ -L "$target" ]; then
+        validate_owned_regular_file "$target" "Installed $unit" || return 1
+      fi
       rm -f "$target"
     fi
   done
@@ -136,11 +181,24 @@ rollback_units() {
   $systemctl_bin --user restart $units || true
 }
 
+install_unit_atomically() {
+  source_unit=$1
+  target=$2
+  mode=$3
+  validate_owned_regular_file "$source_unit" "Control-plane unit source" || return 1
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    validate_owned_regular_file "$target" "Installed $(basename "$target")" || return 1
+  fi
+  staged_unit=$(mktemp "$unit_dir/.$(basename "$target").next.XXXXXX") || return 1
+  install -m "$mode" "$source_unit" "$staged_unit" || return 1
+  validate_owned_regular_file "$staged_unit" "Staged $(basename "$target")" || return 1
+  mv -f "$staged_unit" "$target" || return 1
+  staged_unit=
+}
+
 apply_units() {
   for unit in $units; do
-    staged="$unit_dir/.$unit.next.$$"
-    install -m 0644 "$source_dir/$unit" "$staged" || return 1
-    mv -f "$staged" "$unit_dir/$unit" || return 1
+    install_unit_atomically "$source_dir/$unit" "$unit_dir/$unit" 0644 || return 1
   done
   $systemctl_bin --user daemon-reload \
     && $systemctl_bin --user restart $units
@@ -151,7 +209,10 @@ cleanup_control_plane_artifacts() {
     find "$unit_dir" -mindepth 1 -maxdepth 1 -type f -name ".$unit.next.*" -print \
       | while IFS= read -r abandoned_stage; do
           case "$abandoned_stage" in
-            "$unit_dir"/.$unit.next.*) rm -f "$abandoned_stage" ;;
+            "$unit_dir"/.$unit.next.*)
+              validate_owned_regular_file "$abandoned_stage" "Abandoned staged $unit" || continue
+              rm -f "$abandoned_stage"
+              ;;
             *) echo "Refusing to remove unexpected staged unit: $abandoned_stage" >&2; return 1 ;;
           esac
         done || return 1
@@ -163,7 +224,10 @@ cleanup_control_plane_artifacts() {
     | awk -v keep="$backup_retention_count" 'NR > keep { print }' \
     | while IFS= read -r stale_backup; do
         case "$stale_backup" in
-          "$base_dir"/control-plane-backups/????????T??????Z.*) rm -rf "$stale_backup" ;;
+          "$base_dir"/control-plane-backups/????????T??????Z.*)
+            validate_owned_directory "$stale_backup" "Stale control-plane backup" || continue
+            rm -rf "$stale_backup"
+            ;;
           *) echo "Refusing to remove unexpected control-plane backup: $stale_backup" >&2; return 1 ;;
         esac
       done
@@ -195,11 +259,11 @@ install_control_plane() {
     echo "flock is required for crash-safe control-plane locking" >&2
     exit 1
   fi
-  if [ -L "$lock_file" ]; then
-    echo "Control-plane lock must be a regular file, not a symlink" >&2
-    exit 1
+  if [ -e "$lock_file" ] || [ -L "$lock_file" ]; then
+    validate_owned_regular_file "$lock_file" "Control-plane lock" || exit 1
   fi
-  exec 9>"$lock_file"
+  exec 9>>"$lock_file"
+  validate_owned_regular_file "$lock_file" "Control-plane lock" || exit 1
   chmod 600 "$lock_file"
   if ! "$flock_bin" -n 9; then
     echo "Another control-plane operation is already running" >&2
@@ -219,6 +283,7 @@ install_control_plane() {
   for unit in $units; do
     target="$unit_dir/$unit"
     if [ -f "$target" ]; then
+      validate_owned_regular_file "$target" "Installed $unit" || exit 1
       install -m 0600 "$target" "$backup_dir/$unit"
     fi
   done

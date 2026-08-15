@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -153,13 +153,64 @@ describe("dev control-plane management", () => {
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
   });
 
+  it("rejects a hard-linked control-plane lock without changing the shared inode", () => {
+    const fixture = makeFixture();
+    mkdirSync(fixture.baseDir, { recursive: true });
+    const target = join(dirname(fixture.baseDir), "operator-lock-target");
+    writeFileSync(target, "preserve me", { mode: 0o640 });
+    const initialMode = statSync(target).mode & 0o777;
+    linkSync(target, join(fixture.baseDir, "control-plane.lock"));
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Control-plane lock must not be hard-linked");
+    expect(readFileSync(target, "utf8")).toBe("preserve me");
+    expect(statSync(target).mode & 0o777).toBe(initialMode);
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
+  });
+
+  it("rejects hard-linked installed units without modifying their shared inode", () => {
+    const fixture = makeFixture();
+    const installed = join(fixture.unitDir, "ai-learning-os-api.service");
+    const shared = join(dirname(fixture.baseDir), "operator-unit");
+    rmSync(installed);
+    writeFileSync(shared, "preserve me", { mode: 0o640 });
+    const initialMode = statSync(shared).mode & 0o777;
+    linkSync(shared, installed);
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Installed ai-learning-os-api.service must not be hard-linked");
+    expect(readFileSync(shared, "utf8")).toBe("preserve me");
+    expect(statSync(shared).mode & 0o777).toBe(initialMode);
+  });
+
+  it("rejects hard-linked control-plane source units", () => {
+    const fixture = makeFixture();
+    const source = join(fixture.sourceDir, "ai-learning-os-api.service");
+    const shared = join(dirname(fixture.baseDir), "shared-source-unit");
+    linkSync(source, shared);
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Control-plane source ai-learning-os-api.service must not be hard-linked");
+    expect(readFileSync(shared, "utf8")).toBe(unitContents(process.execPath));
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
+  });
+
   it("rejects control-plane directories not owned by the current user", () => {
     const fixture = makeFixture();
     const fakeStat = join(dirname(fixture.baseDir), "stat");
-    writeFileSync(fakeStat, "#!/bin/sh\nprintf '%s\\n' 999999\n");
+    writeFileSync(fakeStat, "#!/bin/sh\ncase \"$2:$3\" in\n  %u:*/source/*) printf '%s\\n' \"$FAKE_CURRENT_UID\" ;;\n  %l:*/source/*) printf '%s\\n' 1 ;;\n  *) printf '%s\\n' 999999 ;;\nesac\n");
     chmodSync(fakeStat, 0o755);
 
-    const result = runControlPlane(fixture, "install", { AI_LEARNING_STAT_BIN: fakeStat });
+    const result = runControlPlane(fixture, "install", {
+      AI_LEARNING_STAT_BIN: fakeStat,
+      FAKE_CURRENT_UID: String(process.getuid!()),
+    });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Deployment directory must be owned by the current user");
@@ -206,6 +257,20 @@ describe("dev control-plane management", () => {
     expect(existsSync(abandoned)).toBe(false);
     expect(readFileSync(unrelated, "utf8")).toBe("operator file");
     expect(existsSync(linked)).toBe(true);
+  });
+
+  it("preserves hard-linked abandoned unit stages", () => {
+    const fixture = makeFixture();
+    const shared = join(dirname(fixture.baseDir), "operator-stage");
+    const linked = join(fixture.unitDir, ".ai-learning-os-api.service.next.1234");
+    writeFileSync(shared, "preserve me");
+    linkSync(shared, linked);
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(shared, "utf8")).toBe("preserve me");
+    expect(readFileSync(linked, "utf8")).toBe("preserve me");
   });
 
   it("refuses a concurrent control-plane install", () => {

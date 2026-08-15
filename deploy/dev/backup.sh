@@ -4,6 +4,7 @@ set -eu
 backup_dir=${AI_LEARNING_BACKUP_DIR:-"$HOME/backups/ai-learning-os"}
 docker_bin=${AI_LEARNING_DOCKER_BIN:-docker}
 flock_bin=${AI_LEARNING_FLOCK_BIN:-flock}
+stat_bin=${AI_LEARNING_STAT_BIN:-stat}
 if command -v sha256sum >/dev/null 2>&1; then
   sha256_command=sha256sum
 else
@@ -40,11 +41,48 @@ if ! command -v "$flock_bin" >/dev/null 2>&1; then
   exit 1
 fi
 lock_file="$backup_dir/.backup.lock"
-if [ -L "$lock_file" ]; then
-  echo "Backup lock must be a regular file, not a symlink" >&2
-  exit 1
+read_file_owner() {
+  file_owner=$($stat_bin -f '%u' "$1" 2>/dev/null || true)
+  case "$file_owner" in
+    ''|*[!0-9]*) file_owner=$($stat_bin -c '%u' "$1" 2>/dev/null || true) ;;
+  esac
+  printf '%s\n' "$file_owner"
+}
+
+read_file_links() {
+  file_links=$($stat_bin -f '%l' "$1" 2>/dev/null || true)
+  case "$file_links" in
+    ''|*[!0-9]*) file_links=$($stat_bin -c '%h' "$1" 2>/dev/null || true) ;;
+  esac
+  printf '%s\n' "$file_links"
+}
+
+validate_owned_regular_file() {
+  file_path=$1
+  file_label=$2
+  if [ -L "$file_path" ] || [ ! -f "$file_path" ]; then
+    echo "$file_label must be a regular file, not a symlink" >&2
+    return 1
+  fi
+  if [ "$(read_file_owner "$file_path")" != "$(id -u)" ]; then
+    echo "$file_label must be owned by the current user" >&2
+    return 1
+  fi
+  file_links=$(read_file_links "$file_path")
+  case "$file_links" in
+    ''|*[!0-9]*) echo "Could not verify $file_label link count" >&2; return 1 ;;
+  esac
+  if [ "$file_links" != 1 ]; then
+    echo "$file_label must not be hard-linked" >&2
+    return 1
+  fi
+}
+
+if [ -e "$lock_file" ] || [ -L "$lock_file" ]; then
+  validate_owned_regular_file "$lock_file" "Backup lock" || exit 1
 fi
-exec 9>"$lock_file"
+exec 9>>"$lock_file"
+validate_owned_regular_file "$lock_file" "Backup lock" || exit 1
 chmod 600 "$lock_file"
 if ! "$flock_bin" -n 9; then
   echo "Another database backup is already running" >&2
@@ -56,6 +94,8 @@ is_stale_regular_file() {
   age_days=$2
   [ ! -L "$candidate" ] || return 1
   [ -f "$candidate" ] || return 1
+  [ "$(read_file_owner "$candidate")" = "$(id -u)" ] || return 1
+  [ "$(read_file_links "$candidate")" = 1 ] || return 1
   [ "$(find "$candidate" -prune -mtime "+$age_days" -print)" = "$candidate" ]
 }
 
