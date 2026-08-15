@@ -179,6 +179,9 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     expect(readFileSync(fixture.env.FAKE_SYSTEMCTL_LOG!, "utf8")).toContain(
       "enable --now ai-learning-os-backup.timer ai-learning-os-backup-monitor.timer ai-learning-os-application-monitor.timer ai-learning-os-restore-drill.timer",
     );
+    expect(readFileSync(fixture.env.FAKE_SYSTEMCTL_LOG!, "utf8")).toContain(
+      "reset-failed ai-learning-os-backup.service ai-learning-os-backup-monitor.service ai-learning-os-restore-drill.service",
+    );
   });
 
   it("does not let a stale lock artifact block a later install", () => {
