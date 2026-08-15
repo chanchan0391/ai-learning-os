@@ -17,14 +17,14 @@ cleanup() {
 }
 
 update_operational_runners() {
-  for runner in deploy-main.sh backup.sh verify-backup.sh; do
+  for runner in deploy-main.sh backup.sh verify-backup.sh restore-drill.sh; do
     candidate=$current_link/deploy/dev/$runner
     if [ ! -f "$candidate" ] || [ -L "$candidate" ]; then
       echo "Active release does not contain a safe $runner" >&2
       return 1
     fi
   done
-  for runner in deploy-main.sh backup.sh verify-backup.sh; do
+  for runner in deploy-main.sh backup.sh verify-backup.sh restore-drill.sh; do
     candidate=$current_link/deploy/dev/$runner
     installed_runner=$base_dir/$runner
     if [ -f "$installed_runner" ] && [ ! -L "$installed_runner" ] \

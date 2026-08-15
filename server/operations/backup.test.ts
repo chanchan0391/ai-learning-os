@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const backupScript = join(repositoryRoot, "deploy/dev/backup.sh");
 const verifyBackupScript = join(repositoryRoot, "deploy/dev/verify-backup.sh");
+const restoreDrillScript = join(repositoryRoot, "deploy/dev/restore-drill.sh");
 const deployScript = join(repositoryRoot, "deploy/dev/deploy-main.sh");
 const publishScript = join(repositoryRoot, "deploy/dev/publish-main.sh");
 const temporaryDirectories: string[] = [];
@@ -215,6 +216,89 @@ describe("dev backup restore preflight", () => {
   });
 });
 
+describe("dev isolated restore drill", () => {
+  function makeRestoreFixture() {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-restore-drill-"));
+    temporaryDirectories.push(root);
+    const backup = join(root, "ai-learning-os-20260814T120000Z-test.dump");
+    const dockerLog = join(root, "docker.log");
+    const verify = executable(join(root, "verify-backup.sh"), "#!/bin/sh\nset -eu\n[ \"$1\" = \"$FAKE_BACKUP\" ]\nprintf 'Verified backup\\n'\n");
+    const docker = executable(join(root, "docker"), `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "$FAKE_DOCKER_LOG"
+case "$*" in
+  *"psql -U postgres -d postgres -Atqc"*) exit 0 ;;
+  *"createdb -U postgres ai_learning_os_restore_"*) exit 0 ;;
+  *"pg_restore --exit-on-error"*) [ "$(cat)" = 'valid custom archive' ] ;;
+  *"psql -U postgres -d ai_learning_os_restore_"*) printf '%s\\n' '11|4|1|2|3' ;;
+  *"dropdb --if-exists --force -U postgres ai_learning_os_restore_"*) exit 0 ;;
+  *) exit 2 ;;
+esac
+`);
+    writeFileSync(backup, "valid custom archive");
+    return { backup, docker, dockerLog, verify };
+  }
+
+  function runRestoreDrill(fixture: ReturnType<typeof makeRestoreFixture>) {
+    return spawnSync("sh", [restoreDrillScript, fixture.backup], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AI_LEARNING_DOCKER_BIN: fixture.docker,
+        AI_LEARNING_VERIFY_BACKUP_BIN: fixture.verify,
+        FAKE_BACKUP: fixture.backup,
+        FAKE_DOCKER_LOG: fixture.dockerLog,
+      },
+    });
+  }
+
+  it("restores into a new database, verifies non-sensitive metrics, and removes it", () => {
+    const fixture = makeRestoreFixture();
+    const result = runRestoreDrill(fixture);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Restore drill passed: 11 public tables, 4 migrations, 1 users, 2 plans, 3 daily records");
+    const log = readFileSync(fixture.dockerLog, "utf8");
+    expect(log).toContain("createdb -U postgres ai_learning_os_restore_");
+    expect(log).toContain("dropdb --if-exists --force -U postgres ai_learning_os_restore_");
+    expect(log).not.toContain("ai_learning_os -");
+  });
+
+  it("removes the isolated database when restore fails", () => {
+    const fixture = makeRestoreFixture();
+    executable(fixture.docker, `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "$FAKE_DOCKER_LOG"
+case "$*" in
+  *"psql -U postgres -d postgres -Atqc"*) exit 0 ;;
+  *"createdb -U postgres ai_learning_os_restore_"*) exit 0 ;;
+  *"pg_restore --exit-on-error"*) cat >/dev/null; exit 1 ;;
+  *"dropdb --if-exists --force -U postgres ai_learning_os_restore_"*) exit 0 ;;
+  *) exit 2 ;;
+esac
+`);
+
+    const result = runRestoreDrill(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("failed isolated PostgreSQL restore");
+    expect(readFileSync(fixture.dockerLog, "utf8")).toContain("dropdb --if-exists --force");
+  });
+
+  it("stops before database creation when the existence probe fails", () => {
+    const fixture = makeRestoreFixture();
+    executable(fixture.docker, "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> \"$FAKE_DOCKER_LOG\"\nexit 1\n");
+
+    const result = runRestoreDrill(fixture);
+
+    expect(result.status).toBe(1);
+    const log = readFileSync(fixture.dockerLog, "utf8");
+    expect(log).toContain("psql -U postgres -d postgres -Atqc");
+    expect(log).not.toContain("createdb");
+    expect(log).not.toContain("dropdb");
+  });
+});
+
 describe("dev operational runner updates", () => {
   it("refreshes deployment, backup, and verification runners for an already deployed revision", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-runners-"));
@@ -230,9 +314,11 @@ describe("dev operational runner updates", () => {
     writeFileSync(join(releaseOperations, "deploy-main.sh"), "new deploy runner\n");
     writeFileSync(join(releaseOperations, "backup.sh"), "new backup runner\n");
     writeFileSync(join(releaseOperations, "verify-backup.sh"), "new verify runner\n");
+    writeFileSync(join(releaseOperations, "restore-drill.sh"), "new restore runner\n");
     writeFileSync(join(baseDir, "deploy-main.sh"), "old deploy runner\n");
     writeFileSync(join(baseDir, "backup.sh"), "old backup runner\n");
     writeFileSync(join(baseDir, "verify-backup.sh"), "old verify runner\n");
+    writeFileSync(join(baseDir, "restore-drill.sh"), "old restore runner\n");
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
     addHealthyDeploymentCommands(fakeBin, revision);
 
@@ -253,9 +339,11 @@ describe("dev operational runner updates", () => {
     expect(readFileSync(join(baseDir, "deploy-main.sh"), "utf8")).toBe("new deploy runner\n");
     expect(readFileSync(join(baseDir, "backup.sh"), "utf8")).toBe("new backup runner\n");
     expect(readFileSync(join(baseDir, "verify-backup.sh"), "utf8")).toBe("new verify runner\n");
+    expect(readFileSync(join(baseDir, "restore-drill.sh"), "utf8")).toBe("new restore runner\n");
     expect(statSync(join(baseDir, "deploy-main.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "backup.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "verify-backup.sh")).mode & 0o777).toBe(0o755);
+    expect(statSync(join(baseDir, "restore-drill.sh")).mode & 0o777).toBe(0o755);
   }, 15_000);
 
   it("does not rewrite operational runners that already match the active release", () => {
@@ -270,7 +358,7 @@ describe("dev operational runner updates", () => {
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
       utimesSync(join(baseDir, runner), fixedTime, fixedTime);
@@ -291,7 +379,7 @@ describe("dev operational runner updates", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh"]) {
       expect(statSync(join(baseDir, runner)).mtimeMs).toBe(fixedTime.getTime());
     }
   }, 15_000);
@@ -309,7 +397,7 @@ describe("dev operational runner updates", () => {
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
     }
@@ -363,6 +451,7 @@ describe("dev operational runner updates", () => {
     writeFileSync(join(archiveRoot, "deploy/dev/deploy-main.sh"), "new deploy runner\n");
     writeFileSync(join(archiveRoot, "deploy/dev/backup.sh"), "new backup runner\n");
     writeFileSync(join(archiveRoot, "deploy/dev/verify-backup.sh"), "new verify runner\n");
+    writeFileSync(join(archiveRoot, "deploy/dev/restore-drill.sh"), "new restore runner\n");
     const tarResult = spawnSync("tar", ["-czf", archive, "-C", archiveRoot, "."], { encoding: "utf8" });
     expect(tarResult.status, tarResult.stderr).toBe(0);
     const checksum = createHash("sha256").update(readFileSync(archive)).digest("hex");

@@ -38,8 +38,8 @@
 
 ## 下次演练
 
-1. 选择最新备份，先执行 `~/services/ai-learning-os/verify-backup.sh /home/chanchan/backups/ai-learning-os/<backup>.dump`；命令会只读验证绝对路径、文件归属、私有权限、sidecar 文件名、SHA-256 和 PostgreSQL custom archive 可读性。记录生成时间、文件大小与校验结果，不记录文件内容。
-2. 使用全新的隔离数据库恢复，禁止覆盖运行中的应用数据库。
-3. 验证迁移数量、核心表存在性和非敏感行数，再运行只读同步仓库检查。
+1. 选择最新备份，执行 `~/services/ai-learning-os/restore-drill.sh /home/chanchan/backups/ai-learning-os/<backup>.dump`；命令会先只读验证绝对路径、文件归属、私有权限、sidecar 文件名、SHA-256 和 PostgreSQL custom archive 可读性。
+2. 命令只会使用唯一命名的隔离数据库，完整恢复后验证核心表、迁移数量和非敏感行数，并在成功、失败或中断后删除临时库；禁止手工改为运行中的应用数据库。
+3. 记录备份生成时间、文件大小、预检结果和演练输出的数量，不记录标识符、文件内容或学习正文；再运行只读同步仓库检查。
 4. 通过真实浏览器完成 OIDC 回调，验证会话轮换、一次上传和一次云端恢复。
 5. 删除临时恢复库并确认运行中服务的健康状态未受影响。
