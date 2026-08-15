@@ -54,7 +54,7 @@ function runHealth(fixture: ReturnType<typeof makeFixture>, extraEnv: NodeJS.Pro
         releaseRevision: revision,
         aiEnabled: true,
         syncEnabled: true,
-        database: "ready",
+        dependencies: { database: "ready" },
       }),
       ...extraEnv,
     },
@@ -95,7 +95,7 @@ describe("dev application health monitoring", () => {
         releaseRevision: "b".repeat(40),
         aiEnabled: true,
         syncEnabled: true,
-        database: "ready",
+        dependencies: { database: "ready" },
       }),
     });
 
@@ -112,7 +112,7 @@ describe("dev application health monitoring", () => {
         releaseRevision: revision,
         aiEnabled: true,
         syncEnabled: true,
-        database: "unavailable",
+        dependencies: { database: "unavailable" },
         privateDetail: "must not be reflected",
       }),
     });

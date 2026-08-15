@@ -65,7 +65,7 @@ if ! printf '%s' "$health_body" | "$node_bin" -e '
         || health.releaseRevision !== expectedRevision
         || health.aiEnabled !== true
         || health.syncEnabled !== true
-        || health.database !== "ready") process.exit(1);
+        || health.dependencies?.database !== "ready") process.exit(1);
     } catch {
       process.exit(1);
     }
