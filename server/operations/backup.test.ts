@@ -200,6 +200,24 @@ describe("dev database backup", () => {
     expect(existsSync(dockerMarker)).toBe(false);
   });
 
+  it("rejects a symlinked Docker executable before accessing PostgreSQL", () => {
+    const fixture = makeFixture();
+    const dockerTarget = join(dirname(fixture.docker), "real-docker");
+    const dockerLink = join(dirname(fixture.docker), "linked-docker");
+    const dockerMarker = join(dirname(fixture.docker), "docker-called");
+    executable(dockerTarget, "#!/bin/sh\ntouch \"$FAKE_DOCKER_MARKER\"\nexit 2\n");
+    symlinkSync(dockerTarget, dockerLink);
+
+    const result = runBackup(fixture, {
+      AI_LEARNING_DOCKER_BIN: dockerLink,
+      FAKE_DOCKER_MARKER: dockerMarker,
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Docker executable is missing or unsafe");
+    expect(existsSync(dockerMarker)).toBe(false);
+  });
+
   it("preserves hard-linked stale backup artifacts during retention cleanup", () => {
     const fixture = makeFixture();
     const operatorFile = join(dirname(fixture.backupDir), "operator-archive");
@@ -545,6 +563,31 @@ esac
     expect(existsSync(verifyMarker)).toBe(false);
     expect(existsSync(fixture.dockerLog)).toBe(false);
   });
+
+  it("rejects a hard-linked Docker executable before verification or PostgreSQL access", () => {
+    const fixture = makeRestoreFixture();
+    const sharedDocker = join(dirname(fixture.docker), "shared-docker");
+    const verifyMarker = join(dirname(fixture.verify), "verify-called");
+    linkSync(fixture.docker, sharedDocker);
+    executable(fixture.verify, "#!/bin/sh\ntouch \"$FAKE_VERIFY_MARKER\"\nexit 2\n");
+
+    const result = spawnSync("sh", [restoreDrillScript, fixture.backup], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AI_LEARNING_DOCKER_BIN: fixture.docker,
+        AI_LEARNING_VERIFY_BACKUP_BIN: fixture.verify,
+        FAKE_BACKUP: fixture.backup,
+        FAKE_DOCKER_LOG: fixture.dockerLog,
+        FAKE_VERIFY_MARKER: verifyMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Docker executable must not be hard-linked");
+    expect(existsSync(verifyMarker)).toBe(false);
+    expect(existsSync(fixture.dockerLog)).toBe(false);
+  });
 });
 
 describe("dev operational runner updates", () => {
@@ -680,7 +723,7 @@ esac
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
     }
     writeFileSync(runnerTarget, "preserve me", { mode: 0o755 });
@@ -717,7 +760,7 @@ esac
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
     writeFileSync(runnerTarget, "preserve me", { mode: 0o755 });
     linkSync(runnerTarget, join(releaseOperations, "deploy-main.sh"));
-    for (const runner of ["backup.sh", "verify-backup.sh", "restore-drill.sh"]) {
+    for (const runner of ["backup.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
     }
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
@@ -787,10 +830,12 @@ esac
     writeFileSync(join(releaseOperations, "backup.sh"), "new backup runner\n");
     writeFileSync(join(releaseOperations, "verify-backup.sh"), "new verify runner\n");
     writeFileSync(join(releaseOperations, "restore-drill.sh"), "new restore runner\n");
+    writeFileSync(join(releaseOperations, "resolve-docker-bin.sh"), "new Docker resolver\n");
     writeFileSync(join(baseDir, "deploy-main.sh"), "old deploy runner\n");
     writeFileSync(join(baseDir, "backup.sh"), "old backup runner\n");
     writeFileSync(join(baseDir, "verify-backup.sh"), "old verify runner\n");
     writeFileSync(join(baseDir, "restore-drill.sh"), "old restore runner\n");
+    writeFileSync(join(baseDir, "resolve-docker-bin.sh"), "old Docker resolver\n");
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
     addHealthyDeploymentCommands(fakeBin, revision);
 
@@ -812,10 +857,12 @@ esac
     expect(readFileSync(join(baseDir, "backup.sh"), "utf8")).toBe("new backup runner\n");
     expect(readFileSync(join(baseDir, "verify-backup.sh"), "utf8")).toBe("new verify runner\n");
     expect(readFileSync(join(baseDir, "restore-drill.sh"), "utf8")).toBe("new restore runner\n");
+    expect(readFileSync(join(baseDir, "resolve-docker-bin.sh"), "utf8")).toBe("new Docker resolver\n");
     expect(statSync(join(baseDir, "deploy-main.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "backup.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "verify-backup.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "restore-drill.sh")).mode & 0o777).toBe(0o755);
+    expect(statSync(join(baseDir, "resolve-docker-bin.sh")).mode & 0o777).toBe(0o755);
   }, 15_000);
 
   it("does not rewrite operational runners that already match the active release", () => {
@@ -830,7 +877,7 @@ esac
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
       utimesSync(join(baseDir, runner), fixedTime, fixedTime);
@@ -851,7 +898,7 @@ esac
     });
 
     expect(result.status, result.stderr).toBe(0);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       expect(statSync(join(baseDir, runner)).mtimeMs).toBe(fixedTime.getTime());
     }
   }, 15_000);
@@ -869,7 +916,7 @@ esac
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
     }
@@ -924,6 +971,7 @@ esac
     writeFileSync(join(archiveRoot, "deploy/dev/backup.sh"), "new backup runner\n");
     writeFileSync(join(archiveRoot, "deploy/dev/verify-backup.sh"), "new verify runner\n");
     writeFileSync(join(archiveRoot, "deploy/dev/restore-drill.sh"), "new restore runner\n");
+    writeFileSync(join(archiveRoot, "deploy/dev/resolve-docker-bin.sh"), "new Docker resolver\n");
     const tarResult = spawnSync("tar", ["-czf", archive, "-C", archiveRoot, "."], { encoding: "utf8" });
     expect(tarResult.status, tarResult.stderr).toBe(0);
     const checksum = createHash("sha256").update(readFileSync(archive)).digest("hex");

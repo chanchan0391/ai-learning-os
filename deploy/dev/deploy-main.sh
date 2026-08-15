@@ -80,11 +80,11 @@ cleanup() {
 }
 
 update_operational_runners() {
-  for runner in deploy-main.sh backup.sh verify-backup.sh restore-drill.sh; do
+  for runner in deploy-main.sh backup.sh verify-backup.sh restore-drill.sh resolve-docker-bin.sh; do
     candidate=$current_link/deploy/dev/$runner
     validate_owned_regular_file "$candidate" "Active release $runner" || return 1
   done
-  for runner in deploy-main.sh backup.sh verify-backup.sh restore-drill.sh; do
+  for runner in deploy-main.sh backup.sh verify-backup.sh restore-drill.sh resolve-docker-bin.sh; do
     candidate=$current_link/deploy/dev/$runner
     installed_runner=$base_dir/$runner
     if [ -e "$installed_runner" ] || [ -L "$installed_runner" ]; then

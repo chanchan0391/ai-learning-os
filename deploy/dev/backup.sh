@@ -2,7 +2,9 @@
 set -eu
 
 backup_dir=${AI_LEARNING_BACKUP_DIR:-"$HOME/backups/ai-learning-os"}
-docker_bin=${AI_LEARNING_DOCKER_BIN:-docker}
+script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+. "$script_dir/resolve-docker-bin.sh"
+resolve_trusted_docker_bin
 flock_bin=${AI_LEARNING_FLOCK_BIN:-flock}
 stat_bin=${AI_LEARNING_STAT_BIN:-stat}
 if command -v sha256sum >/dev/null 2>&1; then

@@ -2,7 +2,6 @@
 set -eu
 
 backup=${1:-}
-docker_bin=${AI_LEARNING_DOCKER_BIN:-docker}
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 verify_runner=${AI_LEARNING_VERIFY_BACKUP_BIN:-"$script_dir/verify-backup.sh"}
 verify_runner_dir=$(dirname "$verify_runner")
@@ -67,6 +66,8 @@ if [ "$(links_of "$verify_runner")" != 1 ]; then
   echo "Backup verification runner must not be hard-linked" >&2
   exit 2
 fi
+. "$script_dir/resolve-docker-bin.sh"
+resolve_trusted_docker_bin
 
 cleanup() {
   status=$?

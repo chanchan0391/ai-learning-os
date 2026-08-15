@@ -2,12 +2,14 @@
 set -eu
 
 backup=${1:-}
-docker_bin=${AI_LEARNING_DOCKER_BIN:-docker}
+script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 
 if [ "$#" -ne 1 ]; then
   echo "Usage: verify-backup.sh /absolute/path/to/ai-learning-os-<timestamp>-<suffix>.dump" >&2
   exit 2
 fi
+. "$script_dir/resolve-docker-bin.sh"
+resolve_trusted_docker_bin
 case "$backup" in
   /*) ;;
   *) echo "Backup path must be absolute" >&2; exit 2 ;;
