@@ -446,6 +446,56 @@ esac
     expect(log).not.toContain("createdb");
     expect(log).not.toContain("dropdb");
   });
+
+  it("rejects a hard-linked verification runner before executing it or accessing PostgreSQL", () => {
+    const fixture = makeRestoreFixture();
+    const sharedRunner = join(dirname(fixture.verify), "shared-verify-runner.sh");
+    const verifyMarker = join(dirname(fixture.verify), "verify-called");
+    linkSync(fixture.verify, sharedRunner);
+    executable(fixture.verify, "#!/bin/sh\ntouch \"$FAKE_VERIFY_MARKER\"\nexit 2\n");
+
+    const result = spawnSync("sh", [restoreDrillScript, fixture.backup], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AI_LEARNING_DOCKER_BIN: fixture.docker,
+        AI_LEARNING_VERIFY_BACKUP_BIN: fixture.verify,
+        FAKE_BACKUP: fixture.backup,
+        FAKE_DOCKER_LOG: fixture.dockerLog,
+        FAKE_VERIFY_MARKER: verifyMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Backup verification runner must not be hard-linked");
+    expect(readFileSync(sharedRunner, "utf8")).toContain("FAKE_VERIFY_MARKER");
+    expect(existsSync(verifyMarker)).toBe(false);
+    expect(existsSync(fixture.dockerLog)).toBe(false);
+  });
+
+  it("rejects a group-writable verification runner before executing it or accessing PostgreSQL", () => {
+    const fixture = makeRestoreFixture();
+    const verifyMarker = join(dirname(fixture.verify), "verify-called");
+    executable(fixture.verify, "#!/bin/sh\ntouch \"$FAKE_VERIFY_MARKER\"\nexit 2\n");
+    chmodSync(fixture.verify, 0o775);
+
+    const result = spawnSync("sh", [restoreDrillScript, fixture.backup], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AI_LEARNING_DOCKER_BIN: fixture.docker,
+        AI_LEARNING_VERIFY_BACKUP_BIN: fixture.verify,
+        FAKE_BACKUP: fixture.backup,
+        FAKE_DOCKER_LOG: fixture.dockerLog,
+        FAKE_VERIFY_MARKER: verifyMarker,
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Backup verification runner must not be group or other writable");
+    expect(existsSync(verifyMarker)).toBe(false);
+    expect(existsSync(fixture.dockerLog)).toBe(false);
+  });
 });
 
 describe("dev operational runner updates", () => {

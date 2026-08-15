@@ -17,6 +17,40 @@ if [ ! -f "$verify_runner" ] || [ -L "$verify_runner" ] || [ ! -x "$verify_runne
   exit 2
 fi
 
+owner_of() {
+  owner=$(stat -f '%u' "$1" 2>/dev/null || true)
+  case "$owner" in ''|*[!0-9]*) owner=$(stat -c '%u' "$1" 2>/dev/null || true) ;; esac
+  case "$owner" in ''|*[!0-9]*) echo "Could not verify backup verification runner ownership" >&2; exit 2 ;; esac
+  printf '%s\n' "$owner"
+}
+
+mode_of() {
+  mode=$(stat -f '%Lp' "$1" 2>/dev/null || true)
+  case "$mode" in ''|*[!0-7]*) mode=$(stat -c '%a' "$1" 2>/dev/null || true) ;; esac
+  case "$mode" in ''|*[!0-7]*) echo "Could not verify backup verification runner permissions" >&2; exit 2 ;; esac
+  printf '%s\n' "$mode"
+}
+
+links_of() {
+  links=$(stat -f '%l' "$1" 2>/dev/null || true)
+  case "$links" in ''|*[!0-9]*) links=$(stat -c '%h' "$1" 2>/dev/null || true) ;; esac
+  case "$links" in ''|*[!0-9]*) echo "Could not verify backup verification runner link count" >&2; exit 2 ;; esac
+  printf '%s\n' "$links"
+}
+
+if [ "$(owner_of "$verify_runner")" != "$(id -u)" ]; then
+  echo "Backup verification runner must be owned by the current user" >&2
+  exit 2
+fi
+if [ $((0$(mode_of "$verify_runner") & 022)) -ne 0 ]; then
+  echo "Backup verification runner must not be group or other writable" >&2
+  exit 2
+fi
+if [ "$(links_of "$verify_runner")" != 1 ]; then
+  echo "Backup verification runner must not be hard-linked" >&2
+  exit 2
+fi
+
 cleanup() {
   status=$?
   trap - EXIT HUP INT TERM
