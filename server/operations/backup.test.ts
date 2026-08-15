@@ -151,6 +151,38 @@ describe("dev database backup", () => {
     expect(result.stderr).toContain("Another database backup is already running");
     expect(existsSync(dockerMarker)).toBe(false);
   });
+
+  it("rejects a symlinked backup directory before changing it or accessing PostgreSQL", () => {
+    const fixture = makeFixture();
+    const realBackupDir = join(dirname(fixture.backupDir), "redirected-backups");
+    const dockerMarker = join(dirname(fixture.docker), "docker-called");
+    mkdirSync(realBackupDir, { mode: 0o755 });
+    symlinkSync(realBackupDir, fixture.backupDir);
+    executable(fixture.docker, "#!/bin/sh\ntouch \"$FAKE_DOCKER_MARKER\"\nexit 2\n");
+
+    const result = runBackup(fixture, { FAKE_DOCKER_MARKER: dockerMarker });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must be a real directory, not a symlink");
+    expect(statSync(realBackupDir).mode & 0o777).toBe(0o755);
+    expect(readdirSync(realBackupDir)).toEqual([]);
+    expect(existsSync(dockerMarker)).toBe(false);
+  });
+
+  it("rejects a relative backup directory before creating files or accessing PostgreSQL", () => {
+    const fixture = makeFixture();
+    const dockerMarker = join(dirname(fixture.docker), "docker-called");
+    executable(fixture.docker, "#!/bin/sh\ntouch \"$FAKE_DOCKER_MARKER\"\nexit 2\n");
+
+    const result = runBackup(fixture, {
+      AI_LEARNING_BACKUP_DIR: "relative-backups",
+      FAKE_DOCKER_MARKER: dockerMarker,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("path must be absolute");
+    expect(existsSync(dockerMarker)).toBe(false);
+  });
 });
 
 describe("dev backup restore preflight", () => {

@@ -9,7 +9,31 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
   sha256_command="shasum -a 256"
 fi
+
+case "$backup_dir" in
+  /*) ;;
+  *) echo "Backup directory path must be absolute" >&2; exit 1 ;;
+esac
+if [ -L "$backup_dir" ]; then
+  echo "Backup directory must be a real directory, not a symlink" >&2
+  exit 1
+fi
 mkdir -p "$backup_dir"
+if [ -L "$backup_dir" ] || [ ! -d "$backup_dir" ]; then
+  echo "Backup directory must be a real directory, not a symlink" >&2
+  exit 1
+fi
+backup_dir_owner=$(stat -f '%u' "$backup_dir" 2>/dev/null || true)
+case "$backup_dir_owner" in
+  ''|*[!0-9]*) backup_dir_owner=$(stat -c '%u' "$backup_dir" 2>/dev/null || true) ;;
+esac
+case "$backup_dir_owner" in
+  ''|*[!0-9]*) echo "Could not verify backup directory ownership" >&2; exit 1 ;;
+esac
+if [ "$backup_dir_owner" != "$(id -u)" ]; then
+  echo "Backup directory must be owned by the current user" >&2
+  exit 1
+fi
 chmod 700 "$backup_dir"
 if ! command -v "$flock_bin" >/dev/null 2>&1; then
   echo "flock is required for crash-safe backup locking" >&2
