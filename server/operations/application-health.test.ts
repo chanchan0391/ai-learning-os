@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -84,6 +84,13 @@ afterEach(() => {
 });
 
 describe("dev application health monitoring", () => {
+  it("limits systemd-mapped root deployment ancestors to the root and home paths", () => {
+    const script = readFileSync(applicationHealthScript, "utf8");
+
+    expect(script).toContain('[ "$mapped_ancestor_path" = / ] || [ "$mapped_ancestor_path" = /home ]');
+    expect(script).toContain('[ -n "${INVOCATION_ID:-}" ]');
+  });
+
   it("proves active services and schedules, Web reachability, database capacity, and the deployed revision", () => {
     const fixture = makeFixture();
 

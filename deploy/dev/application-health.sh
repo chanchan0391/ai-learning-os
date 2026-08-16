@@ -120,13 +120,26 @@ validate_private_managed_directory() {
   fi
 }
 
+is_systemd_mapped_root_deployment_ancestor() {
+  mapped_ancestor_owner=$1
+  mapped_ancestor_path=$2
+  [ "$mapped_ancestor_owner" = 65534 ] \
+    && [ -n "${INVOCATION_ID:-}" ] \
+    && { [ "$mapped_ancestor_path" = / ] || [ "$mapped_ancestor_path" = /home ]; }
+}
+
 validate_trusted_ancestor_directory() {
   ancestor_directory=$1
   ancestor_owner=$(read_stat_value '%u' '%u' "$ancestor_directory")
   ancestor_mode=$(read_stat_value '%Lp' '%a' "$ancestor_directory")
   case "$ancestor_owner" in
     0|"$current_uid") ;;
-    *) echo "Deployment path ancestor must be owned by root or the current user" >&2; exit 1 ;;
+    *)
+      if ! is_systemd_mapped_root_deployment_ancestor "$ancestor_owner" "$ancestor_directory"; then
+        echo "Deployment path ancestor must be owned by root or the current user" >&2
+        exit 1
+      fi
+      ;;
   esac
   if [ $((0$ancestor_mode & 022)) -ne 0 ] && [ $((0$ancestor_mode & 01000)) -eq 0 ]; then
     echo "Deployment path ancestor must not be shared writable without the sticky bit" >&2
