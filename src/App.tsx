@@ -56,7 +56,15 @@ import {
   weeklyLearningReview,
   weeklyLearningTrend,
 } from "./learning-state";
-import { BrowserLearningStateRepository, LearningStorageError, previewPortfolioMerge, type ArchivedLearningState } from "./learning-storage";
+import {
+  ACTIVE_LEARNING_STATES_KEY,
+  ARCHIVED_LEARNING_STATES_KEY,
+  BrowserLearningStateRepository,
+  LearningStorageError,
+  PORTFOLIO_DAILY_BUDGET_KEY,
+  previewPortfolioMerge,
+  type ArchivedLearningState,
+} from "./learning-storage";
 import { completionRate, LEARNING_GOAL_LIMITS, validateGoal } from "./planner";
 import { AuthSessionExpiredError, BrowserSyncClient, PermanentSyncError, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
@@ -311,6 +319,37 @@ export function App() {
   useEffect(() => () => {
     agentRequestRef.current?.abort();
     agentRequestRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    let refreshTimer: number | undefined;
+    const handleExternalStorageChange = (event: StorageEvent) => {
+      if (event.storageArea !== localStorage || ![
+        ACTIVE_LEARNING_STATES_KEY,
+        ARCHIVED_LEARNING_STATES_KEY,
+        PORTFOLIO_DAILY_BUDGET_KEY,
+      ].includes(event.key ?? "")) return;
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined;
+        const refreshed = learningStateRepository.load();
+        const nextBudget = learningStateRepository.loadDailyBudget();
+        resetGoalWorkspace(refreshed.state);
+        setActiveGoals(learningStateRepository.loadActive());
+        const nextArchived = learningStateRepository.loadArchived();
+        archivedGoalsRef.current = nextArchived;
+        setArchivedGoals(nextArchived);
+        setDailyBudgetMinutes(nextBudget);
+        setDailyBudgetDraft(String(nextBudget ?? ""));
+        setStorageNotice("已载入另一个标签页保存的最新学习进度。");
+        setStorageNoticeIsError(false);
+      }, 0);
+    };
+    window.addEventListener("storage", handleExternalStorageChange);
+    return () => {
+      window.removeEventListener("storage", handleExternalStorageChange);
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+    };
   }, []);
 
   useEffect(() => {

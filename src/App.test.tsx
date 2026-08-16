@@ -76,6 +76,32 @@ describe("learning data controls", () => {
     expect(screen.queryByText("private quota detail")).toBeNull();
   });
 
+  it("reloads another tab's canonical progress before allowing a later local edit", async () => {
+    const user = userEvent.setup();
+    const state = initializeLearningState(generateLearningPlan(goal, new Date("2026-07-31T10:00:00.000Z")));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    render(<App />);
+    const [firstTask] = getCurrentRecord(state).tasks;
+    const localTask = getCurrentRecord(state).tasks.find((task) => task.type === "reflect")!;
+    const externalState = toggleCurrentTask(state, firstTask.id);
+    const externalCollection = JSON.stringify({ selectedPlanId: state.plan.id, states: [externalState] });
+
+    localStorage.setItem(ACTIVE_STATES_KEY, externalCollection);
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: ACTIVE_STATES_KEY,
+      newValue: externalCollection,
+      storageArea: localStorage,
+    }));
+
+    expect(await screen.findByText("已载入另一个标签页保存的最新学习进度。")).toBeTruthy();
+    expect(screen.getByText("1/4 完成")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: new RegExp(localTask.title) }));
+
+    const saved = JSON.parse(localStorage.getItem(ACTIVE_STATES_KEY)!).states[0];
+    expect(saved.days[0].tasks.find((task: { id: string }) => task.id === firstTask.id).completed).toBe(true);
+    expect(saved.days[0].tasks.find((task: { id: string }) => task.id === localTask.id).completed).toBe(true);
+  });
+
   it("switches between parallel active goals without losing either plan", async () => {
     const user = userEvent.setup();
     const first = initializeLearningState(generateLearningPlan(goal, new Date("2026-07-31T10:00:00.000Z")));
