@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import axe from "axe-core";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -933,13 +933,53 @@ describe("learning data controls", () => {
     }));
     render(<App />);
 
-    expect((await screen.findByText("仅本地 · 恢复联网后自动重试")).getAttribute("aria-live")).toBe("polite");
+    expect((await screen.findByText("仅本地 · 连接恢复后自动重试")).getAttribute("aria-live")).toBe("polite");
     window.dispatchEvent(new Event("online"));
 
     expect(await screen.findByText("已登录")).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("上传 2 项"), { timeout: 2_500 });
     expect(sessionAttempts).toBe(2);
     expect(screen.getByText(/上次同步/).getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("retries account discovery when the service recovers without a browser online event", async () => {
+    vi.useFakeTimers();
+    let sessionAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") {
+        sessionAttempts += 1;
+        if (sessionAttempts === 1) return Response.json({ error: "unavailable" }, { status: 503 });
+        return Response.json({ authenticated: true, principal: { userId: "user-1", deviceId: "device-1" } });
+      }
+      if (url.pathname === "/api/sync/changes") return Response.json({ changes: [], cursor: "cursor-1" });
+      if (init?.method === "PUT") {
+        const value = JSON.parse(String(init.body));
+        const daily = url.pathname.includes("/daily-records/");
+        return Response.json({
+          entityType: daily ? "daily-record" : "learning-plan",
+          entityId: decodeURIComponent(url.pathname.split("/").at(-1)!),
+          revision: 1,
+          updatedAt: "2026-08-01T10:00:00.000Z",
+          value,
+        });
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+    await act(async () => undefined);
+
+    expect(screen.getByText("仅本地 · 连接恢复后自动重试")).toBeTruthy();
+    expect(sessionAttempts).toBe(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(screen.getByText("已登录")).toBeTruthy();
+    expect(sessionAttempts).toBe(2);
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(screen.getByRole("status").textContent).toContain("上传 2 项");
+    vi.useRealTimers();
   });
 
   it("confirms account deletion before clearing cloud and local learning data", async () => {

@@ -69,6 +69,7 @@ import type { DailyTask, LearningGoal, LearningState, RecoveryPlan, StageLearnin
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const MAX_AGENT_RESPONSE_BYTES = 1024 * 1024;
 const AGENT_RESPONSE_TOO_LARGE = "Agent 响应超过安全上限，请稍后重试";
+const AUTH_RECOVERY_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
 const syncClient = new BrowserSyncClient(localStorage);
 
@@ -238,6 +239,21 @@ export function App() {
   useEffect(() => {
     let active = true;
     let refreshInFlight: Promise<void> | null = null;
+    let retryTimer: number | undefined;
+    let retryIndex = 0;
+    const clearRetry = () => {
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      retryTimer = undefined;
+    };
+    const scheduleRetry = () => {
+      if (!active || retryTimer !== undefined || !navigator.onLine) return;
+      const delay = AUTH_RECOVERY_RETRY_DELAYS_MS[Math.min(retryIndex, AUTH_RECOVERY_RETRY_DELAYS_MS.length - 1)];
+      retryIndex += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        void refreshAuthState();
+      }, delay);
+    };
     const refreshAuthState = () => {
       if (refreshInFlight) return refreshInFlight;
       refreshInFlight = syncClient.getAuthState().then((state) => {
@@ -245,9 +261,16 @@ export function App() {
         authStateRef.current = state;
         setAuthState(state);
         if (state.status === "signed-in") {
+          retryIndex = 0;
+          clearRetry();
           autoSyncQueue.start();
           autoSyncQueue.enqueue();
+        } else if (state.status === "local-only") {
+          autoSyncQueue.stop();
+          scheduleRetry();
         } else {
+          retryIndex = 0;
+          clearRetry();
           autoSyncQueue.stop();
         }
       }).finally(() => {
@@ -256,13 +279,18 @@ export function App() {
       return refreshInFlight;
     };
     const handleOnline = () => {
-      if (authStateRef.current.status === "local-only") void refreshAuthState();
+      if (authStateRef.current.status === "local-only") {
+        retryIndex = 0;
+        clearRetry();
+        void refreshAuthState();
+      }
     };
     void refreshAuthState();
     window.addEventListener("online", handleOnline);
     return () => {
       active = false;
       window.removeEventListener("online", handleOnline);
+      clearRetry();
       autoSyncQueue.stop();
     };
   }, [autoSyncQueue]);
@@ -1167,7 +1195,7 @@ export function App() {
   ) : authState.status === "signed-out" ? (
     <a className="text-button account-link" href={`/api/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`}>登录并同步</a>
   ) : authState.status === "local-only" ? (
-    <span className="sync-status" aria-live="polite">仅本地 · 恢复联网后自动重试</span>
+    <span className="sync-status" aria-live="polite">仅本地 · 连接恢复后自动重试</span>
   ) : null;
 
   const importDialog = pendingImport && (
