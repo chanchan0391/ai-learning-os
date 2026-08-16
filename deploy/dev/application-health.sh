@@ -21,6 +21,18 @@ read_stat_value() {
   printf '%s\n' "$value"
 }
 
+is_systemd_mapped_root_executable() {
+  mapped_file_owner=$1
+  mapped_dir_owner=$2
+  mapped_path=$3
+  mapped_dir=$4
+  [ "$mapped_file_owner" = 65534 ] \
+    && [ "$mapped_dir_owner" = 65534 ] \
+    && [ -n "${INVOCATION_ID:-}" ] \
+    && [ "$mapped_dir" = /usr/bin ] \
+    && { [ "$mapped_path" = /usr/bin/systemctl ] || [ "$mapped_path" = /usr/bin/curl ]; }
+}
+
 resolve_trusted_executable() {
   candidate=$1
   label=$2
@@ -49,8 +61,10 @@ resolve_trusted_executable() {
   current_uid=$(id -u)
   executable_owner=$(read_stat_value '%u' '%u' "$resolved")
   directory_owner=$(read_stat_value '%u' '%u' "$executable_dir")
-  case "$executable_owner" in 0|"$current_uid") ;; *) echo "$label executable must be owned by root or the current user" >&2; return 2 ;; esac
-  case "$directory_owner" in 0|"$current_uid") ;; *) echo "$label executable directory must be owned by root or the current user" >&2; return 2 ;; esac
+  if ! is_systemd_mapped_root_executable "$executable_owner" "$directory_owner" "$resolved" "$executable_dir"; then
+    case "$executable_owner" in 0|"$current_uid") ;; *) echo "$label executable must be owned by root or the current user" >&2; return 2 ;; esac
+    case "$directory_owner" in 0|"$current_uid") ;; *) echo "$label executable directory must be owned by root or the current user" >&2; return 2 ;; esac
+  fi
 
   executable_mode=$(read_stat_value '%Lp' '%a' "$resolved")
   directory_mode=$(read_stat_value '%Lp' '%a' "$executable_dir")
