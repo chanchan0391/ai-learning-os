@@ -1085,6 +1085,44 @@ describe("learning data controls", () => {
     expect(teachingAttempts).toBe(1);
   });
 
+  it("allows only one Agent request and cancels it when the page unmounts", async () => {
+    const user = userEvent.setup();
+    let agentSignal: AbortSignal | undefined;
+    let teachingAttempts = 0;
+    let evaluationAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") return Response.json({ error: "Authentication is not configured" }, { status: 503 });
+      if (url.pathname === "/api/teaching-sessions") {
+        teachingAttempts += 1;
+        agentSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          agentSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      }
+      if (url.pathname === "/api/evaluations") {
+        evaluationAttempts += 1;
+        return Response.json({ error: "unexpected concurrent request" }, { status: 500 });
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    const { unmount } = render(<App />);
+
+    await user.type(screen.getByLabelText("描述成果、关键步骤、验证证据和复盘"), "包含验证证据的练习成果");
+    await user.click(screen.getByRole("button", { name: "开始短教学会话" }));
+
+    expect(teachingAttempts).toBe(1);
+    expect((screen.getByRole("button", { name: /提交成果并获取反馈/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(evaluationAttempts).toBe(0);
+    expect(agentSignal?.aborted).toBe(false);
+
+    unmount();
+
+    expect(agentSignal?.aborted).toBe(true);
+    expect(evaluationAttempts).toBe(0);
+  });
+
   it("pauses automatic retries after a permanent sync request failure", async () => {
     vi.useFakeTimers();
     let syncAttempts = 0;

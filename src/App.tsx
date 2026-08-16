@@ -161,6 +161,7 @@ export function App() {
   const [reflection, setReflection] = useState("");
   const [agentError, setAgentError] = useState("");
   const [busyTaskId, setBusyTaskId] = useState("");
+  const [agentRequestActive, setAgentRequestActive] = useState(false);
   const [recoveryPlan, setRecoveryPlan] = useState<RecoveryPlan | null>(null);
   const [isGeneratingRecovery, setIsGeneratingRecovery] = useState(false);
   const [coachDismissed, setCoachDismissed] = useState(false);
@@ -201,6 +202,7 @@ export function App() {
   const authStateRef = useRef<AuthState>({ status: "checking" });
   const retryAuthRef = useRef<() => void>(() => undefined);
   const performSyncRef = useRef<() => Promise<void>>(async () => undefined);
+  const agentRequestRef = useRef<AbortController | null>(null);
   const [autoSyncQueue] = useState(() => new AutoSyncQueue(
     localStorage,
     () => performSyncRef.current(),
@@ -306,6 +308,11 @@ export function App() {
     };
   }, [autoSyncQueue]);
 
+  useEffect(() => () => {
+    agentRequestRef.current?.abort();
+    agentRequestRef.current = null;
+  }, []);
+
   useEffect(() => {
     const latestDate = learningState?.days.at(-1)?.date;
     if (!latestDate) return;
@@ -339,6 +346,11 @@ export function App() {
   }
 
   function resetGoalWorkspace(next: LearningState | null) {
+    agentRequestRef.current?.abort();
+    agentRequestRef.current = null;
+    setAgentRequestActive(false);
+    setBusyTaskId("");
+    setIsGeneratingRecovery(false);
     learningStateRef.current = next;
     setLearningState(next);
     setGoal(next?.plan.goal ?? INITIAL_GOAL);
@@ -348,6 +360,20 @@ export function App() {
     setReflection("");
     setAgentError("");
     setErrors([]);
+  }
+
+  function beginAgentRequest(): AbortController | null {
+    if (agentRequestRef.current) return null;
+    const controller = new AbortController();
+    agentRequestRef.current = controller;
+    setAgentRequestActive(true);
+    return controller;
+  }
+
+  function finishAgentRequest(controller: AbortController) {
+    if (agentRequestRef.current !== controller) return;
+    agentRequestRef.current = null;
+    setAgentRequestActive(false);
   }
 
   function switchActiveGoal(planId: string) {
@@ -398,21 +424,26 @@ export function App() {
     const nextErrors = validateGoal(goal);
     setErrors(nextErrors);
     if (nextErrors.length > 0) return;
+    const controller = beginAgentRequest();
+    if (!controller) return;
     setIsGenerating(true);
     try {
       const response = await fetch("/api/plans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(goal),
+        signal: controller.signal,
       });
       await requireAgentSuccess(response, "学习计划生成失败");
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
       saveState(initializeLearningState(validateLearningPlanResponse(body)));
       setStorageNotice("");
     } catch (error) {
+      if (controller.signal.aborted) return;
       settleExpiredSession(error);
       setErrors([error instanceof Error ? error.message : "学习计划生成失败"]);
     } finally {
+      finishAgentRequest(controller);
       setIsGenerating(false);
     }
   }
@@ -424,6 +455,8 @@ export function App() {
 
   async function startTeaching(task: DailyTask) {
     if (!learningState) return;
+    const controller = beginAgentRequest();
+    if (!controller) return;
     setBusyTaskId(task.id);
     setAgentError("");
     try {
@@ -433,14 +466,17 @@ export function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: plan?.goal, task, learnerContext: { knownConcepts: [plan?.goal.currentLevel ?? ""], recentErrors } }),
+        signal: controller.signal,
       });
       await requireAgentSuccess(response, "教学会话生成失败");
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
       updateState((current) => saveTeachingSession(current, task.id, validateTeachingSessionResponse(body)));
     } catch (error) {
+      if (controller.signal.aborted) return;
       settleExpiredSession(error);
       setAgentError(error instanceof Error ? error.message : "教学会话生成失败");
     } finally {
+      finishAgentRequest(controller);
       setBusyTaskId("");
     }
   }
@@ -465,6 +501,8 @@ export function App() {
     if (!answer.trim()) return setAgentError("请先写下闭卷主动回忆答案");
     const linkedInsight = repeatedMisconceptions.find((item) => crossStageReviewTaskId(learningState.currentDay, item.misconception) === task.id);
     const items = linkedInsight ? crossStageReviewItems(linkedInsight) : dueReviewItems(learningState, learningState.currentDay);
+    const controller = beginAgentRequest();
+    if (!controller) return;
     setBusyTaskId(task.id);
     setAgentError("");
     try {
@@ -472,6 +510,7 @@ export function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: plan.goal, items, answer }),
+        signal: controller.signal,
       });
       await requireAgentSuccess(response, "主动回忆判分失败");
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
@@ -480,9 +519,11 @@ export function App() {
         ? saveCrossStageReviewAssessment(learningState, task.id, linkedInsight.misconception, assessment)
         : saveReviewAssessment(learningState, task.id, assessment));
     } catch (error) {
+      if (controller.signal.aborted) return;
       settleExpiredSession(error);
       setAgentError(error instanceof Error ? error.message : "主动回忆判分失败");
     } finally {
+      finishAgentRequest(controller);
       setBusyTaskId("");
     }
   }
@@ -491,6 +532,8 @@ export function App() {
     if (!learningState || !plan) return;
     const submission = submissionDrafts[task.id] ?? currentRecord?.artifacts[task.id]?.submission ?? "";
     if (!submission.trim()) return setAgentError("请先提交可评估的学习成果");
+    const controller = beginAgentRequest();
+    if (!controller) return;
     setBusyTaskId(task.id);
     setAgentError("");
     try {
@@ -498,20 +541,25 @@ export function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: plan.goal, task, submission }),
+        signal: controller.signal,
       });
       await requireAgentSuccess(response, "学习成果评估失败");
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
       updateState((current) => saveEvaluation(current, task.id, submission, validateEvaluationResponse(body)));
     } catch (error) {
+      if (controller.signal.aborted) return;
       settleExpiredSession(error);
       setAgentError(error instanceof Error ? error.message : "学习成果评估失败");
     } finally {
+      finishAgentRequest(controller);
       setBusyTaskId("");
     }
   }
 
   async function createRecoveryPlan() {
     if (!learningState || !currentRecord || !interruption) return;
+    const controller = beginAgentRequest();
+    if (!controller) return;
     const currentTask = currentRecord.tasks.find((task) => !task.completed) ?? currentRecord.tasks[0];
     setIsGeneratingRecovery(true);
     setAgentError("");
@@ -520,14 +568,17 @@ export function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: learningState.plan.goal, currentTask, interruption }),
+        signal: controller.signal,
       });
       await requireAgentSuccess(response, "恢复计划生成失败");
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
       setRecoveryPlan(validateRecoveryPlanResponse(body, learningState.plan.goal.dailyMinutes));
     } catch (error) {
+      if (controller.signal.aborted) return;
       settleExpiredSession(error);
       setAgentError(error instanceof Error ? error.message : "恢复计划生成失败");
     } finally {
+      finishAgentRequest(controller);
       setIsGeneratingRecovery(false);
     }
   }
@@ -1434,7 +1485,7 @@ export function App() {
               <label>学习周期<div className="input-unit"><input type="number" min="1" max="52" value={goal.durationWeeks} onChange={(event) => setGoal({ ...goal, durationWeeks: Number(event.target.value) })} /><span>周</span></div></label>
             </div>
             {errors.length > 0 && <div className="errors">{errors.join(" · ")}</div>}
-            <button type="submit" disabled={isGenerating}>{isGenerating ? "Planner Agent 正在规划…" : "生成我的学习路线"} <span>→</span></button>
+            <button type="submit" disabled={agentRequestActive}>{isGenerating ? "Planner Agent 正在规划…" : "生成我的学习路线"} <span>→</span></button>
             <p className="privacy">进度保存在当前浏览器；启用实时模型后，学习内容会发送给所选模型服务</p>
           </form>
         </section>
@@ -1820,7 +1871,7 @@ export function App() {
               </div>
               {!recoveryPlan ? (
                 <div className="coach-actions">
-                  <button className="secondary-action" disabled={isGeneratingRecovery} onClick={createRecoveryPlan}>
+                  <button className="secondary-action" disabled={agentRequestActive} onClick={createRecoveryPlan}>
                     {isGeneratingRecovery ? "Coach Agent 正在准备…" : "生成 10–20 分钟恢复计划"}
                   </button>
                   <button className="text-button" onClick={() => setCoachDismissed(true)}>按原计划继续</button>
@@ -1865,7 +1916,7 @@ export function App() {
                       <label>闭卷主动回忆答案
                         <textarea maxLength={AGENT_INPUT_LIMITS.reviewAnswerCharacters} rows={4} value={reviewDrafts[task.id] ?? ""} onChange={(event) => setReviewDrafts((drafts) => ({ ...drafts, [task.id]: event.target.value }))} />
                       </label>
-                      <button className="primary-action" disabled={busyTaskId === task.id} onClick={() => assessReview(task)}>
+                      <button className="primary-action" disabled={agentRequestActive} onClick={() => assessReview(task)}>
                         {busyTaskId === task.id ? "Review Agent 正在判分…" : "提交答案并自动安排复习"} <span>→</span>
                       </button>
                     </div>
@@ -1882,7 +1933,7 @@ export function App() {
                   {task.type === "learn" && !task.completed && (
                     <div className="agent-workspace">
                       {!artifact?.teachingSession ? (
-                        <button className="secondary-action" disabled={busyTaskId === task.id} onClick={() => startTeaching(task)}>
+                        <button className="secondary-action" disabled={agentRequestActive} onClick={() => startTeaching(task)}>
                           {busyTaskId === task.id ? "Teacher Agent 正在准备…" : "开始短教学会话"}
                         </button>
                       ) : (
@@ -1907,7 +1958,7 @@ export function App() {
                       <label>描述成果、关键步骤、验证证据和复盘
                         <textarea maxLength={AGENT_INPUT_LIMITS.submissionCharacters} rows={5} value={submission} onChange={(event) => setSubmissionDrafts({ ...submissionDrafts, [task.id]: event.target.value })} placeholder="例如：我实现了……；运行结果是……；失败案例是……；下一次我会……" />
                       </label>
-                      <button className="primary-action" disabled={!submission.trim() || busyTaskId === task.id} onClick={() => evaluatePractice(task)}>{busyTaskId === task.id ? "Evaluator Agent 正在评估…" : "提交成果并获取反馈"} <span>→</span></button>
+                      <button className="primary-action" disabled={!submission.trim() || agentRequestActive} onClick={() => evaluatePractice(task)}>{busyTaskId === task.id ? "Evaluator Agent 正在评估…" : "提交成果并获取反馈"} <span>→</span></button>
                     </div>
                   )}
 
