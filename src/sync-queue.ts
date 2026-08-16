@@ -172,6 +172,11 @@ export class AutoSyncQueue {
     if (this.started) return;
     this.started = true;
     this.eventTarget?.addEventListener("online", this.handleOnline);
+    this.eventTarget?.addEventListener("storage", this.handleStorage);
+    // Keep an already-observed pending generation so external conflict
+    // resolution can still prove it is not clearing a newer tab's edit.
+    // An idle queue can safely adopt anything persisted while it was stopped.
+    if (!this.volatileMetadata && !this.persisted.pending) this.persisted = this.load();
     this.emit(this.getStatus().phase);
     if (this.persisted.pending) this.schedule(0);
   }
@@ -181,6 +186,7 @@ export class AutoSyncQueue {
     this.lifecycleGeneration += 1;
     this.activeSyncController?.abort();
     this.eventTarget?.removeEventListener("online", this.handleOnline);
+    this.eventTarget?.removeEventListener("storage", this.handleStorage);
     if (this.timer !== undefined) this.clearTimer(this.timer);
     this.timer = undefined;
     this.emit(this.getStatus().phase);
@@ -233,6 +239,24 @@ export class AutoSyncQueue {
 
   private readonly handleOnline = () => {
     if (this.persisted.pending) this.schedule(0);
+  };
+
+  private readonly handleStorage = (event: Event) => {
+    const storageEvent = event as StorageEvent;
+    if (storageEvent.key !== AUTO_SYNC_STATUS_KEY
+      || (storageEvent.storageArea !== null && storageEvent.storageArea !== this.storage)) return;
+    const latest = this.load();
+    this.persisted = latest;
+    if (!latest.pending) {
+      if (!this.running) this.emit("idle");
+      return;
+    }
+    if (!this.isOnline()) {
+      this.emit("offline");
+      return;
+    }
+    this.emit("pending");
+    this.schedule(0);
   };
 
   private schedule(delay: number): void {

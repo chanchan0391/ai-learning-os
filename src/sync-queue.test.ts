@@ -149,6 +149,72 @@ describe("automatic sync queue", () => {
     queue.stop();
   });
 
+  it("takes over pending work persisted by another tab", async () => {
+    const synchronize = vi.fn(async () => undefined);
+    const statuses: AutoSyncStatus[] = [];
+    const queue = new AutoSyncQueue(localStorage, synchronize, (status) => statuses.push(status), {
+      debounceMs: 100,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({
+      version: 2,
+      pending: true,
+      changeId: "other-tab-change",
+    }));
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: AUTO_SYNC_STATUS_KEY,
+      storageArea: localStorage,
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    expect(statuses.at(-1)?.phase).toBe("idle");
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!)).toMatchObject({ pending: false });
+    queue.stop();
+  });
+
+  it("does not take over cross-tab queue work after stopping", async () => {
+    const synchronize = vi.fn(async () => undefined);
+    const queue = new AutoSyncQueue(localStorage, synchronize, () => undefined, { debounceMs: 100 });
+    queue.start();
+    queue.stop();
+
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({
+      version: 2,
+      pending: true,
+      changeId: "other-tab-change",
+    }));
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: AUTO_SYNC_STATUS_KEY,
+      storageArea: localStorage,
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(synchronize).not.toHaveBeenCalled();
+  });
+
+  it("reloads pending metadata written while the queue was stopped", async () => {
+    const synchronize = vi.fn(async () => undefined);
+    const queue = new AutoSyncQueue(localStorage, synchronize, () => undefined, {
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+    queue.stop();
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({
+      version: 2,
+      pending: true,
+      changeId: "stopped-change",
+    }));
+
+    queue.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    queue.stop();
+  });
+
   it("migrates version one queue metadata without losing pending work", () => {
     localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({ version: 1, pending: true, lastSyncedAt: "2026-08-01T10:00:00.000Z" }));
     const queue = new AutoSyncQueue(localStorage, async () => undefined, () => undefined);
