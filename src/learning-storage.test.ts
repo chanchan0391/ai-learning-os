@@ -11,6 +11,7 @@ import {
   LEGACY_LEARNING_PLAN_KEY,
   PREVIOUS_LEARNING_STATE_KEY,
   PORTFOLIO_DAILY_BUDGET_KEY,
+  PORTFOLIO_STORAGE_TRANSACTION_KEY,
   previewPortfolioMerge,
 } from "./learning-storage";
 import { generateLearningPlan } from "./planner";
@@ -22,6 +23,30 @@ const goal = {
   dailyMinutes: 45,
   durationWeeks: 8,
 };
+
+function failStorageOnce(method: "setItem" | "removeItem", key: string): Storage {
+  let failed = false;
+  return {
+    get length() { return localStorage.length; },
+    clear: () => localStorage.clear(),
+    getItem: (storageKey) => localStorage.getItem(storageKey),
+    key: (index) => localStorage.key(index),
+    removeItem: (storageKey) => {
+      if (!failed && method === "removeItem" && storageKey === key) {
+        failed = true;
+        throw new DOMException("private detail", "QuotaExceededError");
+      }
+      localStorage.removeItem(storageKey);
+    },
+    setItem: (storageKey, value) => {
+      if (!failed && method === "setItem" && storageKey === key) {
+        failed = true;
+        throw new DOMException("private detail", "QuotaExceededError");
+      }
+      localStorage.setItem(storageKey, value);
+    },
+  };
+}
 
 describe("browser learning-state repository", () => {
   beforeEach(() => localStorage.clear());
@@ -268,6 +293,70 @@ describe("browser learning-state repository", () => {
     expect(repository.loadActive()).toEqual([active]);
     expect(repository.loadArchived()).toEqual(archived);
     expect(repository.loadDailyBudget()).toBe(75);
+  });
+
+  it("rolls back every portfolio key when a replacement fails partway through", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const original = initializeLearningState(generateLearningPlan(goal));
+    const originalArchive = {
+      archivedAt: "2026-08-03T12:00:00.000Z",
+      state: initializeLearningState(generateLearningPlan({ ...goal, subject: "数据库内核" })),
+    };
+    repository.save(original);
+    repository.mergeArchived([originalArchive]);
+    repository.saveDailyBudget(60);
+    const replacement = initializeLearningState(generateLearningPlan({ ...goal, subject: "事件驱动架构" }));
+    const failingRepository = new BrowserLearningStateRepository(failStorageOnce("removeItem", ARCHIVED_LEARNING_STATES_KEY));
+
+    expect(() => failingRepository.replacePortfolio([replacement], [], replacement.plan.id, 90))
+      .toThrow(LearningStorageError);
+
+    expect(repository.loadActive()).toEqual([original]);
+    expect(repository.loadArchived()).toEqual([originalArchive]);
+    expect(repository.loadDailyBudget()).toBe(60);
+    expect(localStorage.getItem(PORTFOLIO_STORAGE_TRANSACTION_KEY)).toBeNull();
+  });
+
+  it("rolls back an archive when removing the active goal fails", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    let completed = initializeLearningState(generateLearningPlan({ ...goal, durationWeeks: 1 }));
+    for (let day = 0; day < 7; day += 1) {
+      for (const task of getCurrentRecord(completed).tasks) completed = toggleCurrentTask(completed, task.id);
+      completed = completeCurrentDay(completed, { difficulty: "just-right", reflection: "完成" });
+    }
+    repository.save(completed);
+    const failingRepository = new BrowserLearningStateRepository(failStorageOnce("setItem", ACTIVE_LEARNING_STATES_KEY));
+
+    expect(() => failingRepository.archiveCompleted(completed)).toThrow(LearningStorageError);
+
+    expect(repository.loadActive()).toEqual([completed]);
+    expect(repository.loadArchived()).toEqual([]);
+  });
+
+  it("recovers a pending portfolio transaction left by an interrupted page", () => {
+    const repository = new BrowserLearningStateRepository(localStorage);
+    const original = initializeLearningState(generateLearningPlan(goal));
+    repository.save(original);
+    repository.saveDailyBudget(60);
+    const activeBefore = localStorage.getItem(ACTIVE_LEARNING_STATES_KEY);
+    const budgetBefore = localStorage.getItem(PORTFOLIO_DAILY_BUDGET_KEY);
+    localStorage.setItem(PORTFOLIO_STORAGE_TRANSACTION_KEY, JSON.stringify({
+      version: 1,
+      phase: "pending",
+      snapshots: {
+        [ACTIVE_LEARNING_STATES_KEY]: activeBefore,
+        [ARCHIVED_LEARNING_STATES_KEY]: null,
+        [PORTFOLIO_DAILY_BUDGET_KEY]: budgetBefore,
+      },
+    }));
+    localStorage.setItem(ACTIVE_LEARNING_STATES_KEY, JSON.stringify({ selectedPlanId: null, states: [] }));
+    localStorage.setItem(ARCHIVED_LEARNING_STATES_KEY, "[]");
+    localStorage.setItem(PORTFOLIO_DAILY_BUDGET_KEY, "90");
+
+    expect(repository.loadActive()).toEqual([original]);
+    expect(repository.loadArchived()).toEqual([]);
+    expect(repository.loadDailyBudget()).toBe(60);
+    expect(localStorage.getItem(PORTFOLIO_STORAGE_TRANSACTION_KEY)).toBeNull();
   });
 
   it("merges only missing portfolio goals while preserving local versions, selection, and budget", () => {

@@ -7,6 +7,7 @@ export const LEGACY_LEARNING_PLAN_KEY = "ai-learning-os-plan-v1";
 export const ARCHIVED_LEARNING_STATES_KEY = "ai-learning-os-archived-states-v1";
 export const ACTIVE_LEARNING_STATES_KEY = "ai-learning-os-active-states-v1";
 export const PORTFOLIO_DAILY_BUDGET_KEY = "ai-learning-os-portfolio-daily-budget-v1";
+export const PORTFOLIO_STORAGE_TRANSACTION_KEY = "ai-learning-os-portfolio-transaction-v1";
 
 const ALL_LEARNING_STORAGE_KEYS = [
   CURRENT_LEARNING_STATE_KEY,
@@ -15,6 +16,7 @@ const ALL_LEARNING_STORAGE_KEYS = [
   ARCHIVED_LEARNING_STATES_KEY,
   ACTIVE_LEARNING_STATES_KEY,
   PORTFOLIO_DAILY_BUDGET_KEY,
+  PORTFOLIO_STORAGE_TRANSACTION_KEY,
 ] as const;
 
 const CURRENT_AND_LEGACY_KEYS = [
@@ -22,6 +24,20 @@ const CURRENT_AND_LEGACY_KEYS = [
   PREVIOUS_LEARNING_STATE_KEY,
   LEGACY_LEARNING_PLAN_KEY,
 ] as const;
+
+const PORTFOLIO_TRANSACTION_KEYS = [
+  ACTIVE_LEARNING_STATES_KEY,
+  ARCHIVED_LEARNING_STATES_KEY,
+  PORTFOLIO_DAILY_BUDGET_KEY,
+] as const;
+
+type PortfolioTransactionKey = typeof PORTFOLIO_TRANSACTION_KEYS[number];
+
+interface PortfolioStorageTransaction {
+  version: 1;
+  phase: "pending" | "done";
+  snapshots: Partial<Record<PortfolioTransactionKey, string | null>>;
+}
 
 export class LearningStorageError extends Error {
   constructor(options?: ErrorOptions) {
@@ -246,6 +262,7 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
 
   loadArchived(): ArchivedLearningState[] {
     try {
+      this.recoverPortfolioTransaction();
       const raw = this.storage.getItem(ARCHIVED_LEARNING_STATES_KEY);
       if (raw === null) return [];
       const candidates = JSON.parse(raw) as unknown;
@@ -266,6 +283,7 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
 
   loadDailyBudget(): number | null {
     try {
+      this.recoverPortfolioTransaction();
       const raw = this.storage.getItem(PORTFOLIO_DAILY_BUDGET_KEY);
       if (raw === null) return null;
       const minutes = Number(raw);
@@ -322,8 +340,19 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
       return true;
     });
 
-    if (activeAdditions.length > 0) this.replaceActive([...localActive, ...activeAdditions]);
-    if (archivedAdditions.length > 0) this.mergeArchived(archivedAdditions);
+    if (activeAdditions.length > 0 || archivedAdditions.length > 0) {
+      this.runPortfolioTransaction([ACTIVE_LEARNING_STATES_KEY, ARCHIVED_LEARNING_STATES_KEY], () => {
+        if (activeAdditions.length > 0) {
+          const selectedPlanId = this.readSelectedPlanIdWithoutRecovery();
+          this.writeActiveCollection({ selectedPlanId, states: [...localActive, ...activeAdditions] });
+        }
+        if (archivedAdditions.length > 0) {
+          const nextArchived = [...localArchived, ...archivedAdditions]
+            .sort((left, right) => right.archivedAt.localeCompare(left.archivedAt));
+          this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(nextArchived));
+        }
+      });
+    }
     return {
       activeAdded: activeAdditions.length,
       archivedAdded: archivedAdditions.length,
@@ -354,12 +383,14 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
       ...importedArchived,
     ].sort((left, right) => right.archivedAt.localeCompare(left.archivedAt));
     const selectedPlanId = this.readActiveCollection()?.selectedPlanId ?? null;
-    this.writeActiveCollection({
-      selectedPlanId: selectedPlanId && nextActive.some((state) => state.plan.id === selectedPlanId) ? selectedPlanId : null,
-      states: structuredClone(nextActive),
+    this.runPortfolioTransaction([ACTIVE_LEARNING_STATES_KEY, ARCHIVED_LEARNING_STATES_KEY], () => {
+      this.writeActiveCollection({
+        selectedPlanId: selectedPlanId && nextActive.some((state) => state.plan.id === selectedPlanId) ? selectedPlanId : null,
+        states: structuredClone(nextActive),
+      });
+      if (nextArchived.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(nextArchived));
+      else this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
     });
-    if (nextArchived.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(nextArchived));
-    else this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
     const selected = nextActive.find((state) => state.plan.id === selectedPlanId);
     if (selected) this.writeCurrentMirror(selected);
     else this.removeCurrentKeys();
@@ -379,11 +410,13 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
     selectedPlanId: string | null,
     dailyBudgetMinutes: number | null,
   ): void {
-    this.writeActiveCollection({ selectedPlanId, states: structuredClone(states) });
-    if (archived.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(archived));
-    else this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
-    if (dailyBudgetMinutes === null) this.storage.removeItem(PORTFOLIO_DAILY_BUDGET_KEY);
-    else this.storage.setItem(PORTFOLIO_DAILY_BUDGET_KEY, String(dailyBudgetMinutes));
+    this.runPortfolioTransaction(PORTFOLIO_TRANSACTION_KEYS, () => {
+      this.writeActiveCollection({ selectedPlanId, states: structuredClone(states) });
+      if (archived.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(archived));
+      else this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
+      if (dailyBudgetMinutes === null) this.storage.removeItem(PORTFOLIO_DAILY_BUDGET_KEY);
+      else this.storage.setItem(PORTFOLIO_DAILY_BUDGET_KEY, String(dailyBudgetMinutes));
+    });
     const selected = states.find((state) => state.plan.id === selectedPlanId);
     if (selected) this.writeCurrentMirror(selected);
     else this.removeCurrentKeys();
@@ -398,11 +431,13 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
       { archivedAt: now.toISOString(), state: structuredClone(state) },
       ...this.loadArchived().filter((entry) => entry.state.plan.id !== state.plan.id),
     ];
-    this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(archived));
     const collection = this.readActiveCollection();
     const remaining = collection?.states.filter((item) => item.plan.id !== state.plan.id) ?? [];
     const nextPlanId = remaining[0]?.plan.id ?? null;
-    this.writeActiveCollection({ selectedPlanId: nextPlanId, states: remaining });
+    this.runPortfolioTransaction([ARCHIVED_LEARNING_STATES_KEY, ACTIVE_LEARNING_STATES_KEY], () => {
+      this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(archived));
+      this.writeActiveCollection({ selectedPlanId: nextPlanId, states: remaining });
+    });
     if (remaining[0]) this.writeCurrentMirror(remaining[0]);
     else this.removeCurrentKeys();
     return archived;
@@ -412,10 +447,15 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
     const archived = this.loadArchived();
     const entry = archived.find((item) => item.state.plan.id === planId);
     if (!entry) throw new Error("找不到要恢复的已归档目标");
-    this.save(entry.state);
     const remaining = archived.filter((item) => item.state.plan.id !== planId);
-    if (remaining.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(remaining));
-    else this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
+    const collection = this.readActiveCollection() ?? { selectedPlanId: null, states: [] };
+    const states = [entry.state, ...collection.states.filter((item) => item.plan.id !== planId)];
+    this.runPortfolioTransaction([ACTIVE_LEARNING_STATES_KEY, ARCHIVED_LEARNING_STATES_KEY], () => {
+      this.writeActiveCollection({ selectedPlanId: planId, states });
+      if (remaining.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(remaining));
+      else this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
+    });
+    this.writeCurrentMirror(entry.state);
     return structuredClone(entry.state);
   }
 
@@ -441,6 +481,15 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
   }
 
   private readActiveCollection(): { selectedPlanId: string | null; states: LearningState[] } | null {
+    this.recoverPortfolioTransaction();
+    return this.readActiveCollectionWithoutRecovery();
+  }
+
+  private readSelectedPlanIdWithoutRecovery(): string | null {
+    return this.readActiveCollectionWithoutRecovery()?.selectedPlanId ?? null;
+  }
+
+  private readActiveCollectionWithoutRecovery(): { selectedPlanId: string | null; states: LearningState[] } | null {
     const raw = this.storage.getItem(ACTIVE_LEARNING_STATES_KEY);
     if (raw === null) return null;
     try {
@@ -474,6 +523,69 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
     } catch {
       // The active collection is the canonical durable record. This mirror is
       // retained only for backwards compatibility and recovery from old data.
+    }
+  }
+
+  private runPortfolioTransaction<T>(keys: readonly PortfolioTransactionKey[], operation: () => T): T {
+    try {
+      this.recoverPortfolioTransaction();
+      const snapshots = Object.fromEntries(keys.map((key) => [key, this.storage.getItem(key)])) as Partial<
+        Record<PortfolioTransactionKey, string | null>
+      >;
+      const transaction: PortfolioStorageTransaction = { version: 1, phase: "pending", snapshots };
+      this.storage.setItem(PORTFOLIO_STORAGE_TRANSACTION_KEY, JSON.stringify(transaction));
+      try {
+        const result = operation();
+        this.storage.setItem(PORTFOLIO_STORAGE_TRANSACTION_KEY, JSON.stringify({ ...transaction, phase: "done" }));
+        this.removeTransactionJournalBestEffort();
+        return result;
+      } catch (error) {
+        this.restorePortfolioSnapshots(snapshots);
+        throw error;
+      }
+    } catch (error) {
+      if (error instanceof LearningStorageError) throw error;
+      throw new LearningStorageError({ cause: error });
+    }
+  }
+
+  private recoverPortfolioTransaction(): void {
+    const raw = this.storage.getItem(PORTFOLIO_STORAGE_TRANSACTION_KEY);
+    if (raw === null) return;
+    let transaction: PortfolioStorageTransaction;
+    try {
+      transaction = JSON.parse(raw) as PortfolioStorageTransaction;
+      const keys = Object.keys(transaction.snapshots ?? {});
+      if (transaction.version !== 1 || !["pending", "done"].includes(transaction.phase)
+        || keys.some((key) => !PORTFOLIO_TRANSACTION_KEYS.includes(key as PortfolioTransactionKey))
+        || Object.values(transaction.snapshots ?? {}).some((value) => value !== null && typeof value !== "string")) {
+        throw new TypeError("Invalid portfolio storage transaction");
+      }
+    } catch {
+      this.removeTransactionJournalBestEffort();
+      return;
+    }
+    if (transaction.phase === "pending") this.restorePortfolioSnapshots(transaction.snapshots);
+    else this.removeTransactionJournalBestEffort();
+  }
+
+  private restorePortfolioSnapshots(snapshots: Partial<Record<PortfolioTransactionKey, string | null>>): void {
+    // Removing the journal and changed values first releases enough quota to put
+    // the previously durable snapshots back, even when a larger import failed.
+    this.removeTransactionJournalBestEffort();
+    const keys = Object.keys(snapshots) as PortfolioTransactionKey[];
+    for (const key of keys) this.storage.removeItem(key);
+    for (const key of keys) {
+      const value = snapshots[key];
+      if (value !== null && value !== undefined) this.storage.setItem(key, value);
+    }
+  }
+
+  private removeTransactionJournalBestEffort(): void {
+    try {
+      this.storage.removeItem(PORTFOLIO_STORAGE_TRANSACTION_KEY);
+    } catch {
+      // A completed journal is harmless and will be removed on the next access.
     }
   }
 }
