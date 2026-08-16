@@ -58,7 +58,7 @@ import {
 } from "./learning-state";
 import { BrowserLearningStateRepository, previewPortfolioMerge, type ArchivedLearningState } from "./learning-storage";
 import { completionRate, LEARNING_GOAL_LIMITS, validateGoal } from "./planner";
-import { BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
+import { AuthSessionExpiredError, BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import { readBoundedJson } from "./bounded-json-response";
 import { agentResponseError, validateEvaluationResponse, validateLearningPlanResponse, validateRecoveryPlanResponse, validateReviewAssessmentResponse, validateTeachingSessionResponse } from "./agent-response-validation";
@@ -202,7 +202,7 @@ export function App() {
       setAutoSyncStatus(status);
       setIsSyncing(status.phase === "syncing");
     },
-    { shouldRetry: (error) => !(error instanceof SyncConflictError) },
+    { shouldRetry: (error) => !(error instanceof SyncConflictError || error instanceof AuthSessionExpiredError) },
   ));
   const plan = learningState?.plan ?? null;
   const activePortfolio = useMemo(() => activeGoalPortfolioOverview(activeGoals), [activeGoals]);
@@ -990,6 +990,11 @@ export function App() {
       setStorageNotice(changes ? `同步完成：${changes}。` : "本地与云端进度已一致。");
       setStorageNoticeIsError(false);
     } catch (error) {
+      if (error instanceof AuthSessionExpiredError) {
+        authStateRef.current = { status: "signed-out" };
+        setAuthState(authStateRef.current);
+        autoSyncQueue.stop();
+      }
       if (error instanceof SyncConflictError && error.preview) setPendingSyncConflict(error.preview);
       setStorageNotice(error instanceof Error ? error.message : "同步失败，请稍后重试。");
       setStorageNoticeIsError(true);

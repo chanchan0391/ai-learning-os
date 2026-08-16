@@ -1024,6 +1024,35 @@ describe("learning data controls", () => {
     vi.useRealTimers();
   });
 
+  it("stops retrying and asks for login when an authenticated sync session expires", async () => {
+    vi.useFakeTimers();
+    let syncAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") {
+        return Response.json({ authenticated: true, principal: { userId: "user-1", deviceId: "device-1" } });
+      }
+      if (url.pathname === "/api/sync/changes") {
+        syncAttempts += 1;
+        return Response.json({ error: "Authentication required" }, { status: 401 });
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+    await act(async () => undefined);
+
+    expect(screen.getByText("已登录")).toBeTruthy();
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(screen.getByRole("link", { name: "登录并同步" })).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("登录已过期");
+    expect(syncAttempts).toBe(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(syncAttempts).toBe(1);
+    vi.useRealTimers();
+  });
+
   it("confirms account deletion before clearing cloud and local learning data", async () => {
     const user = userEvent.setup();
     const requests: Array<{ path: string; method: string }> = [];
