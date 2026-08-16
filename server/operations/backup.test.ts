@@ -876,6 +876,30 @@ describe("dev operational runner updates", () => {
     expect(statSync(lockTarget).mode & 0o777).toBe(initialMode);
   });
 
+  it("converges deployment-managed directories to private permissions before locking", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-deploy-directory-mode-"));
+    temporaryDirectories.push(root);
+    const baseDir = join(root, "service");
+    const lockTarget = join(root, "operator-lock-target");
+    mkdirSync(join(baseDir, "releases"), { recursive: true, mode: 0o775 });
+    mkdirSync(join(baseDir, "deploy-logs"), { mode: 0o775 });
+    mkdirSync(join(baseDir, "incoming"), { mode: 0o775 });
+    chmodSync(baseDir, 0o775);
+    writeFileSync(lockTarget, "preserve me", { mode: 0o644 });
+    symlinkSync(lockTarget, join(baseDir, "deploy.lock"));
+
+    const result = spawnSync("sh", [deployScript, "a".repeat(40)], {
+      encoding: "utf8",
+      env: { ...process.env, AI_LEARNING_DEPLOY_DIR: baseDir },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Deployment lock must be a regular file, not a symlink");
+    for (const directory of [baseDir, join(baseDir, "releases"), join(baseDir, "deploy-logs"), join(baseDir, "incoming")]) {
+      expect(statSync(directory).mode & 0o777).toBe(0o700);
+    }
+  });
+
   it("rejects deployment directories not owned by the deployment user", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-deploy-owner-"));
     temporaryDirectories.push(root);

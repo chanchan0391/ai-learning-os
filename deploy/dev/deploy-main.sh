@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+umask 077
 
 base_dir=${AI_LEARNING_DEPLOY_DIR:-"$HOME/services/ai-learning-os"}
 repository=${AI_LEARNING_REPOSITORY:-"https://github.com/chanchan0391/ai-learning-os.git"}
@@ -188,6 +189,7 @@ if [ -L "$base_dir" ]; then
 fi
 mkdir -p "$base_dir"
 validate_owned_directory "$base_dir" "Deployment directory"
+chmod 700 "$base_dir"
 for managed_directory in releases deploy-logs incoming; do
   managed_path="$base_dir/$managed_directory"
   if [ -L "$managed_path" ]; then
@@ -196,6 +198,7 @@ for managed_directory in releases deploy-logs incoming; do
   fi
   mkdir -p "$managed_path"
   validate_owned_directory "$managed_path" "Managed deployment directory"
+  chmod 700 "$managed_path"
 done
 deploy_lock="$base_dir/deploy.lock"
 if [ -e "$deploy_lock" ]; then
@@ -205,7 +208,6 @@ elif [ -L "$deploy_lock" ]; then
   echo "Deployment lock must be a regular file, not a symlink" >&2
   exit 1
 fi
-umask 077
 exec 9>>"$deploy_lock"
 if ! flock -n 9; then
   echo "Another deployment is already running"
