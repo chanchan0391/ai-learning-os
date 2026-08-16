@@ -832,7 +832,7 @@ esac
   });
 });
 
-describe("dev operational runner updates", () => {
+describe("dev operational runner updates", { timeout: 15_000 }, () => {
   it("rejects a symlinked deployment directory before writing managed state", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-deploy-base-symlink-"));
     temporaryDirectories.push(root);

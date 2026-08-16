@@ -70,6 +70,7 @@ const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const MAX_AGENT_RESPONSE_BYTES = 1024 * 1024;
 const AGENT_RESPONSE_TOO_LARGE = "Agent 响应超过安全上限，请稍后重试";
 const AUTH_RECOVERY_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
+const AUTH_RECOVERY_MIN_JITTER_RATIO = 0.75;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
 const syncClient = new BrowserSyncClient(localStorage);
 
@@ -192,6 +193,7 @@ export function App() {
   const learningStateRef = useRef<LearningState | null>(initialLoad.state);
   const archivedGoalsRef = useRef<ArchivedLearningState[]>(learningStateRepository.loadArchived());
   const authStateRef = useRef<AuthState>({ status: "checking" });
+  const retryAuthRef = useRef<() => void>(() => undefined);
   const performSyncRef = useRef<() => Promise<void>>(async () => undefined);
   const [autoSyncQueue] = useState(() => new AutoSyncQueue(
     localStorage,
@@ -247,7 +249,8 @@ export function App() {
     };
     const scheduleRetry = () => {
       if (!active || retryTimer !== undefined || !navigator.onLine) return;
-      const delay = AUTH_RECOVERY_RETRY_DELAYS_MS[Math.min(retryIndex, AUTH_RECOVERY_RETRY_DELAYS_MS.length - 1)];
+      const baseDelay = AUTH_RECOVERY_RETRY_DELAYS_MS[Math.min(retryIndex, AUTH_RECOVERY_RETRY_DELAYS_MS.length - 1)];
+      const delay = Math.round(baseDelay * (AUTH_RECOVERY_MIN_JITTER_RATIO + Math.random() * (1 - AUTH_RECOVERY_MIN_JITTER_RATIO)));
       retryIndex += 1;
       retryTimer = window.setTimeout(() => {
         retryTimer = undefined;
@@ -285,10 +288,12 @@ export function App() {
         void refreshAuthState();
       }
     };
+    retryAuthRef.current = handleOnline;
     void refreshAuthState();
     window.addEventListener("online", handleOnline);
     return () => {
       active = false;
+      retryAuthRef.current = () => undefined;
       window.removeEventListener("online", handleOnline);
       clearRetry();
       autoSyncQueue.stop();
@@ -1195,7 +1200,10 @@ export function App() {
   ) : authState.status === "signed-out" ? (
     <a className="text-button account-link" href={`/api/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`}>登录并同步</a>
   ) : authState.status === "local-only" ? (
-    <span className="sync-status" aria-live="polite">仅本地 · 连接恢复后自动重试</span>
+    <div className="account-controls local-only-controls" aria-label="账号连接恢复">
+      <span className="sync-status" aria-live="polite">仅本地 · 连接恢复后自动重试</span>
+      <button className="text-button sync-button" type="button" onClick={() => retryAuthRef.current()}>立即重试</button>
+    </div>
   ) : null;
 
   const importDialog = pendingImport && (

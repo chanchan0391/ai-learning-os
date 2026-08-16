@@ -45,6 +45,7 @@ input:focus, textarea:focus { border-color: #237a5b; box-shadow: 0 0 0 3px rgba(
 .text-button { color: #66716b; background: transparent; border: 0; font-size: 12px; }
 .text-button:disabled { cursor: wait; opacity: .55; }
 .account-controls { display: flex; align-items: center; gap: 8px; padding-right: 10px; border-right: 1px solid #d7dbd5; }
+.local-only-controls { flex-wrap: wrap; }
 .account-link { text-decoration: none; }
 .sync-status { color: #64706a; font-size: 11px; }
 .sync-detail { color: #758079; font-size: 10px; white-space: nowrap; }

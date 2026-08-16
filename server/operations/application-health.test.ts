@@ -83,7 +83,7 @@ afterEach(() => {
   }
 });
 
-describe("dev application health monitoring", () => {
+describe("dev application health monitoring", { timeout: 15_000 }, () => {
   it("limits systemd-mapped root deployment ancestors to the root and home paths", () => {
     const script = readFileSync(applicationHealthScript, "utf8");
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import axe from "axe-core";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -979,6 +979,46 @@ describe("learning data controls", () => {
 
     await act(async () => vi.advanceTimersByTimeAsync(1_500));
     expect(screen.getByRole("status").textContent).toContain("上传 2 项");
+    vi.useRealTimers();
+  });
+
+  it("lets the learner retry account discovery immediately", async () => {
+    let sessionAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (new URL(rawUrl, "http://localhost").pathname !== "/api/auth/session") {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      sessionAttempts += 1;
+      if (sessionAttempts === 1) return Response.json({ error: "unavailable" }, { status: 503 });
+      return Response.json({ authenticated: false });
+    }));
+    render(<App />);
+
+    expect(await screen.findByText("仅本地 · 连接恢复后自动重试")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "立即重试" }));
+
+    expect(await screen.findByRole("link", { name: "登录并同步" })).toBeTruthy();
+    expect(sessionAttempts).toBe(2);
+  });
+
+  it("jitters account retries and cancels them when the page unmounts", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    let sessionAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      sessionAttempts += 1;
+      return Response.json({ error: "unavailable" }, { status: 503 });
+    }));
+    const { unmount } = render(<App />);
+    await act(async () => undefined);
+
+    expect(sessionAttempts).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(3_749));
+    expect(sessionAttempts).toBe(1);
+    unmount();
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(sessionAttempts).toBe(1);
     vi.useRealTimers();
   });
 
