@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeLearningState, toggleCurrentTask } from "./learning-state";
 import { generateLearningPlan } from "./planner";
-import { BrowserSyncClient, PermanentSyncError, SYNC_METADATA_KEY, SyncConflictError } from "./sync-client";
+import { AuthSessionExpiredError, BrowserSyncClient, PermanentSyncError, SYNC_METADATA_KEY, SyncConflictError } from "./sync-client";
 
 interface RemoteEntity {
   entityType: "learning-plan" | "daily-record";
@@ -132,6 +132,37 @@ describe("browser sync client", () => {
       await expect(new BrowserSyncClient(localStorage, request).getActiveDevices())
         .rejects.toThrow("登录设备响应格式无效，请稍后重试");
     }
+  });
+
+  it("classifies expired authenticated account actions without exposing server details", async () => {
+    const request = vi.fn(async () => Response.json(
+      { error: "private-session-database-detail" },
+      { status: 401 },
+    )) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request);
+
+    for (const action of [
+      () => client.logoutAll(),
+      () => client.getActiveDevices(),
+      () => client.revokeDevice("device-2"),
+      () => client.deleteAccount(),
+    ]) {
+      await expect(action()).rejects.toThrow(AuthSessionExpiredError);
+      await expect(action()).rejects.not.toThrow("private-session-database-detail");
+    }
+  });
+
+  it("uses privacy-safe account action errors for non-authentication failures", async () => {
+    const request = vi.fn(async () => Response.json(
+      { error: "private-session-database-detail" },
+      { status: 503 },
+    )) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request);
+
+    await expect(client.getActiveDevices()).rejects.toThrow("无法读取登录设备，请稍后重试");
+    await expect(client.revokeDevice("device-2")).rejects.toThrow("设备退出失败，请稍后重试");
+    await expect(client.logoutAll()).rejects.toThrow("退出所有设备失败，请稍后重试");
+    await expect(client.deleteAccount()).rejects.toThrow("账号数据删除失败，请稍后重试");
   });
 
   it("uploads a new local plan and its daily record with revision metadata", async () => {

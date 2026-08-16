@@ -1054,6 +1054,17 @@ export function App() {
     }
   }
 
+  function settleExpiredAccountSession(error: unknown): void {
+    if (!(error instanceof AuthSessionExpiredError)) return;
+    authStateRef.current = { status: "signed-out" };
+    setAuthState(authStateRef.current);
+    autoSyncQueue.stop();
+    setLogoutAllConfirmationOpen(false);
+    setAccountDeleteConfirmationOpen(false);
+    setDeviceDialogOpen(false);
+    setActiveDevices([]);
+  }
+
   async function logoutAll() {
     setIsSyncing(true);
     try {
@@ -1066,6 +1077,7 @@ export function App() {
       setStorageNotice("已退出所有设备，本地学习记录仍保留在此浏览器中。");
       setStorageNoticeIsError(false);
     } catch (error) {
+      settleExpiredAccountSession(error);
       setStorageNotice(error instanceof Error ? error.message : "退出所有设备失败，请稍后重试");
       setStorageNoticeIsError(true);
     } finally {
@@ -1079,6 +1091,7 @@ export function App() {
     try {
       setActiveDevices(await syncClient.getActiveDevices());
     } catch (error) {
+      settleExpiredAccountSession(error);
       setStorageNotice(error instanceof Error ? error.message : "无法读取登录设备");
       setStorageNoticeIsError(true);
       setDeviceDialogOpen(false);
@@ -1095,6 +1108,7 @@ export function App() {
       setStorageNotice(`已退出设备“${device.label}”。`);
       setStorageNoticeIsError(false);
     } catch (error) {
+      settleExpiredAccountSession(error);
       setStorageNotice(error instanceof Error ? error.message : "设备退出失败，请稍后重试");
       setStorageNoticeIsError(true);
     } finally {
@@ -1119,6 +1133,7 @@ export function App() {
       setStorageNotice("账号、云端学习记录和当前浏览器中的学习记录已删除。");
       setStorageNoticeIsError(false);
     } catch (error) {
+      settleExpiredAccountSession(error);
       setStorageNotice(error instanceof Error ? error.message : "账号数据删除失败，请稍后重试");
       setStorageNoticeIsError(true);
     } finally {

@@ -226,6 +226,11 @@ function responseError(body: unknown, fallback: string): string {
   return body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : fallback;
 }
 
+function throwForAccountResponse(response: Response, fallback: string): void {
+  if (response.status === 401) throw new AuthSessionExpiredError();
+  if (!response.ok) throw new Error(fallback);
+}
+
 export class BrowserSyncClient {
   constructor(
     private readonly storage: Storage,
@@ -257,17 +262,16 @@ export class BrowserSyncClient {
 
   async logoutAll(): Promise<void> {
     const response = await this.request("/api/auth/logout-all", { method: "POST", credentials: "same-origin" });
-    if (!response.ok) throw new Error("退出所有设备失败，请稍后重试");
+    throwForAccountResponse(response, "退出所有设备失败，请稍后重试");
   }
 
   async getActiveDevices(): Promise<ActiveDevice[]> {
     const response = await this.request("/api/auth/devices", { credentials: "same-origin" });
+    throwForAccountResponse(response, "无法读取登录设备，请稍后重试");
     const body = await readBoundedJson<{ devices?: ActiveDevice[]; error?: string }>(
       response, MAX_AUTH_RESPONSE_BYTES, "账号响应超过安全上限，请稍后重试",
     );
-    if (!response.ok || !body || typeof body !== "object" || Array.isArray(body)) {
-      throw new Error(responseError(body, "无法读取登录设备"));
-    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("登录设备响应格式无效，请稍后重试");
     const envelope = body as Record<string, unknown>;
     if (!hasExactKeys(envelope, ["devices"]) || !Array.isArray(envelope.devices)
       || envelope.devices.length === 0 || envelope.devices.length > MAX_ACTIVE_DEVICES
@@ -287,15 +291,12 @@ export class BrowserSyncClient {
       method: "DELETE",
       credentials: "same-origin",
     });
-    const body = await readBoundedJson<{ error?: string }>(
-      response, MAX_AUTH_RESPONSE_BYTES, "账号响应超过安全上限，请稍后重试",
-    ).catch(() => ({}));
-    if (!response.ok) throw new Error(responseError(body, "设备退出失败，请稍后重试"));
+    throwForAccountResponse(response, "设备退出失败，请稍后重试");
   }
 
   async deleteAccount(): Promise<void> {
     const response = await this.request("/api/auth/account", { method: "DELETE", credentials: "same-origin" });
-    if (!response.ok) throw new Error("账号数据删除失败，请稍后重试");
+    throwForAccountResponse(response, "账号数据删除失败，请稍后重试");
   }
 
   clearMetadata(): void {

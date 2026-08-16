@@ -1113,6 +1113,34 @@ describe("learning data controls", () => {
     expect(screen.getByRole("status").textContent).toContain("已删除");
   });
 
+  it("preserves local data and asks for login when account deletion finds an expired session", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") {
+        return Response.json({ authenticated: true, principal: { userId: "user-1", deviceId: "device-1" } });
+      }
+      if (url.pathname === "/api/auth/account" && init?.method === "DELETE") {
+        return Response.json({ error: "private-session-database-detail" }, { status: 401 });
+      }
+      if (url.pathname === "/api/sync/changes") return Response.json({ changes: [], cursor: "cursor-1" });
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+
+    await screen.findByText("已登录");
+    await user.click(screen.getByRole("button", { name: "删除账号" }));
+    await user.click(screen.getByRole("button", { name: "永久删除账号" }));
+
+    expect(await screen.findByRole("link", { name: "登录并同步" })).toBeTruthy();
+    expect(screen.queryByRole("alertdialog", { name: "永久删除账号和全部学习数据？" })).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("登录已过期");
+    expect(screen.getByRole("alert").textContent).not.toContain("private-session-database-detail");
+    expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
+    expect(JSON.parse(localStorage.getItem("ai-learning-os-auto-sync-v1")!).pending).toBe(true);
+  });
+
   it("confirms signing out every device without deleting local learning data", async () => {
     const user = userEvent.setup();
     const requests: Array<{ path: string; method: string }> = [];
