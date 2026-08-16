@@ -43,6 +43,7 @@ function storageLeaseRunner(
   const leaseMs = 15_000;
   const heartbeatMs = 5_000;
   return async (task) => {
+    let storageAvailable = true;
     const readLease = (): { ownerId: string; expiresAt: number } | null => {
       try {
         const parsed = JSON.parse(storage.getItem(AUTO_SYNC_LEASE_KEY) ?? "null") as { ownerId?: unknown; expiresAt?: unknown } | null;
@@ -51,19 +52,33 @@ function storageLeaseRunner(
         }
         return null;
       } catch {
+        storageAvailable = false;
         return null;
       }
     };
     const now = Date.now();
     const existing = readLease();
+    if (!storageAvailable) {
+      await task();
+      return true;
+    }
     if (existing && existing.ownerId !== ownerId && existing.expiresAt > now) return false;
-    storage.setItem(AUTO_SYNC_LEASE_KEY, JSON.stringify({ ownerId, expiresAt: now + leaseMs }));
+    try {
+      storage.setItem(AUTO_SYNC_LEASE_KEY, JSON.stringify({ ownerId, expiresAt: now + leaseMs }));
+    } catch {
+      await task();
+      return true;
+    }
     if (readLease()?.ownerId !== ownerId) return false;
 
     let heartbeat: number | undefined;
     const renew = () => {
       if (readLease()?.ownerId !== ownerId) return;
-      storage.setItem(AUTO_SYNC_LEASE_KEY, JSON.stringify({ ownerId, expiresAt: Date.now() + leaseMs }));
+      try {
+        storage.setItem(AUTO_SYNC_LEASE_KEY, JSON.stringify({ ownerId, expiresAt: Date.now() + leaseMs }));
+      } catch {
+        return;
+      }
       heartbeat = setTimer(renew, heartbeatMs);
     };
     heartbeat = setTimer(renew, heartbeatMs);
@@ -72,7 +87,13 @@ function storageLeaseRunner(
       return true;
     } finally {
       if (heartbeat !== undefined) clearTimer(heartbeat);
-      if (readLease()?.ownerId === ownerId) storage.removeItem(AUTO_SYNC_LEASE_KEY);
+      if (readLease()?.ownerId === ownerId) {
+        try {
+          storage.removeItem(AUTO_SYNC_LEASE_KEY);
+        } catch {
+          // Lease expiry lets another tab recover when browser storage is writable again.
+        }
+      }
     }
   };
 }
@@ -97,6 +118,7 @@ export class AutoSyncQueue {
   private generation = 0;
   private retryIndex = 0;
   private started = false;
+  private volatileMetadata = false;
   private persisted: PersistedAutoSyncStatus;
 
   constructor(
@@ -181,7 +203,12 @@ export class AutoSyncQueue {
 
   clear(): void {
     this.stop();
-    this.storage.removeItem(AUTO_SYNC_STATUS_KEY);
+    try {
+      this.storage.removeItem(AUTO_SYNC_STATUS_KEY);
+      this.volatileMetadata = false;
+    } catch {
+      this.volatileMetadata = true;
+    }
     this.persisted = { version: 2, pending: false };
     this.emit("idle");
   }
@@ -206,7 +233,7 @@ export class AutoSyncQueue {
       return Promise.resolve();
     }
     this.running = this.runExclusive(async () => {
-      this.persisted = this.load();
+      if (!this.volatileMetadata) this.persisted = this.load();
       if (!this.persisted.pending) {
         this.emit("idle");
         return;
@@ -217,14 +244,14 @@ export class AutoSyncQueue {
       try {
         await this.synchronize();
         this.retryIndex = 0;
-        const latest = this.load();
+        const latest = this.volatileMetadata ? this.persisted : this.load();
         const moreWork = generation !== this.generation
           || (latest.pending && latest.changeId !== changeId);
         this.setPending(moreWork, this.now().toISOString(), moreWork ? latest.changeId : undefined);
         this.emit(moreWork ? "pending" : "idle");
         if (moreWork) this.schedule(this.debounceMs);
       } catch (error: unknown) {
-        this.persisted = this.load();
+        if (!this.volatileMetadata) this.persisted = this.load();
         if (!this.persisted.pending) this.setPending(true, undefined, changeId ?? uniqueId());
         if (!this.shouldRetry(error)) {
           this.emit("blocked");
@@ -257,7 +284,14 @@ export class AutoSyncQueue {
       ...(pending && changeId ? { changeId } : {}),
       ...(lastSyncedAt ? { lastSyncedAt } : {}),
     };
-    this.storage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify(this.persisted));
+    try {
+      this.storage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify(this.persisted));
+      this.volatileMetadata = false;
+    } catch {
+      // Learning data is stored separately. Keep the queue usable in memory;
+      // signed-in startup will enqueue reconciliation again after a reload.
+      this.volatileMetadata = true;
+    }
   }
 
   private emit(phase: AutoSyncPhase): void {

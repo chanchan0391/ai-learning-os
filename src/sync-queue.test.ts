@@ -171,4 +171,53 @@ describe("automatic sync queue", () => {
     expect(synchronize).toHaveBeenCalledTimes(1);
     queue.stop();
   });
+
+  it("continues synchronization in memory when queue metadata cannot be written", async () => {
+    const storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key: string) => localStorage.getItem(key),
+      key: (index: number) => localStorage.key(index),
+      removeItem: (key: string) => localStorage.removeItem(key),
+      setItem: () => { throw new DOMException("blocked", "QuotaExceededError"); },
+    } satisfies Storage;
+    const synchronize = vi.fn(async () => undefined);
+    const statuses: AutoSyncStatus[] = [];
+    const queue = new AutoSyncQueue(storage, synchronize, (status) => statuses.push(status), {
+      debounceMs: 10,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+
+    expect(() => queue.enqueue()).not.toThrow();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    expect(statuses.at(-1)?.phase).toBe("idle");
+    queue.stop();
+  });
+
+  it("falls back to an idempotent sync when lease storage is unavailable", async () => {
+    const storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key: string) => {
+        if (key.includes("lease")) throw new DOMException("blocked", "SecurityError");
+        return localStorage.getItem(key);
+      },
+      key: (index: number) => localStorage.key(index),
+      removeItem: (key: string) => localStorage.removeItem(key),
+      setItem: (key: string, value: string) => localStorage.setItem(key, value),
+    } satisfies Storage;
+    const synchronize = vi.fn(async () => undefined);
+    const queue = new AutoSyncQueue(storage, synchronize, () => undefined, { debounceMs: 10 });
+    queue.start();
+    queue.enqueue();
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    expect(queue.getStatus().phase).toBe("idle");
+    queue.stop();
+  });
 });
