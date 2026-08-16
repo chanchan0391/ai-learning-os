@@ -18,6 +18,7 @@
     "preview": "vite preview",
     "db:migrate": "tsx server/sync/migrate.ts",
     "eval:agents": "tsx server/evals/run-agent-evaluation.ts",
+    "acceptance:oidc-sync": "playwright test --config=playwright.acceptance.config.ts",
     "start": "concurrently -k -n web,api \"vite --host 127.0.0.1 --open\" \"tsx server/index.ts\"",
     "build": "tsc -b && vite build",
     "test": "vitest run",
@@ -32,6 +33,7 @@
     "vite": "^8.2.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.3",
     "@types/node": "^22.20.1",
