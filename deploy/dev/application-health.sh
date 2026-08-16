@@ -36,10 +36,12 @@ is_systemd_mapped_root_executable() {
 resolve_trusted_executable() {
   candidate=$1
   label=$2
+  require_root=false
   case "$candidate" in
     /*) resolved=$candidate ;;
     */*) echo "$label executable path must be absolute" >&2; return 2 ;;
     *)
+      require_root=true
       resolved=$(command -v "$candidate" 2>/dev/null || true)
       case "$resolved" in
         /*) ;;
@@ -62,8 +64,15 @@ resolve_trusted_executable() {
   executable_owner=$(read_stat_value '%u' '%u' "$resolved")
   directory_owner=$(read_stat_value '%u' '%u' "$executable_dir")
   if ! is_systemd_mapped_root_executable "$executable_owner" "$directory_owner" "$resolved" "$executable_dir"; then
-    case "$executable_owner" in 0|"$current_uid") ;; *) echo "$label executable must be owned by root or the current user" >&2; return 2 ;; esac
-    case "$directory_owner" in 0|"$current_uid") ;; *) echo "$label executable directory must be owned by root or the current user" >&2; return 2 ;; esac
+    if [ "$require_root" = true ]; then
+      [ "$executable_owner" = 0 ] && [ "$directory_owner" = 0 ] || {
+        echo "$label resolved from PATH must be owned by root" >&2
+        return 2
+      }
+    else
+      case "$executable_owner" in 0|"$current_uid") ;; *) echo "$label executable must be owned by root or the current user" >&2; return 2 ;; esac
+      case "$directory_owner" in 0|"$current_uid") ;; *) echo "$label executable directory must be owned by root or the current user" >&2; return 2 ;; esac
+    fi
   fi
 
   executable_mode=$(read_stat_value '%Lp' '%a' "$resolved")

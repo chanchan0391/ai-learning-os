@@ -105,7 +105,7 @@ cat ~/services/ai-learning-os/current/DEPLOYED_COMMIT
 
 应用周期健康检查要求 `current` 保持为部署管理的符号链接，并严格指向 `releases/<DEPLOYED_COMMIT>` 对应的当前用户真实目录。错指 release 或手工目录即使复用合法 revision 文件，也会在网络探测前失败。
 
-应用监控在读取 release 或发起网络探测前还会用只读系统镜像中的绝对 `stat` 引导工具验证：`systemctl`、`curl` 与 Node 必须解析为绝对路径，只能由 root 或当前用户拥有，且其文件与直接父目录不可被组或其他用户写入；符号链接和额外硬链接同样被拒绝。systemd 只读系统视图将 root 映射为 nobody 时，仅在存在 invocation ID 且目标严格为 `/usr/bin/systemctl` 或 `/usr/bin/curl` 时接受该映射。这样用户管理器中意外污染的 `PATH` 不能用替代工具伪造服务、网络或 JSON 健康证明。
+应用监控在读取 release 或发起网络探测前还会用只读系统镜像中的绝对 `stat` 引导工具验证：`systemctl`、`curl` 与 Node 必须解析为绝对路径，且其文件与直接父目录不可被组或其他用户写入；符号链接和额外硬链接同样被拒绝。通过 `PATH` 解析的裸命令名要求文件与父目录均由 root 拥有，只有显式绝对路径才允许当前部署用户拥有的受管运行时。systemd 只读系统视图将 root 映射为 nobody 时，仅在存在 invocation ID 且目标严格为 `/usr/bin/systemctl` 或 `/usr/bin/curl` 时接受该映射。这样用户管理器中意外污染的 `PATH` 不能用替代工具伪造服务、网络或 JSON 健康证明。
 
 恢复前必须先运行只读预检；它拒绝相对路径、符号链接、硬链接、非当前用户文件、对组或其他用户开放的权限、错误 sidecar 文件名和校验和，要求归档与 sidecar 都是当前用户独占的私有普通文件，并再次通过容器内 `pg_restore --list` 验证归档：
 
