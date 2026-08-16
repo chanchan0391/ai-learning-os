@@ -284,4 +284,72 @@ describe("automatic sync queue", () => {
     expect(localStorage.getItem(AUTO_SYNC_STATUS_KEY)).toBeNull();
     expect(statuses.at(-1)?.phase).toBe("idle");
   });
+
+  it("preserves pending work when stopped during an in-flight sync", async () => {
+    let release!: () => void;
+    const synchronize = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    const statuses: AutoSyncStatus[] = [];
+    const queue = new AutoSyncQueue(localStorage, synchronize, (status) => statuses.push(status), {
+      debounceMs: 10,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+    queue.enqueue();
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.stop();
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!).pending).toBe(true);
+    expect(statuses.at(-1)?.phase).toBe("pending");
+  });
+
+  it("does not start work after stopping while exclusive coordination is pending", async () => {
+    let grant!: () => void;
+    const runExclusive = vi.fn(async (task: () => Promise<void>) => {
+      await new Promise<void>((resolve) => { grant = resolve; });
+      await task();
+      return true;
+    });
+    const synchronize = vi.fn().mockResolvedValue(undefined);
+    const queue = new AutoSyncQueue(localStorage, synchronize, () => undefined, {
+      debounceMs: 10,
+      runExclusive,
+    });
+    queue.start();
+    queue.enqueue();
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.stop();
+    grant();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(synchronize).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!).pending).toBe(true);
+  });
+
+  it("runs preserved work after restarting once stale in-flight work settles", async () => {
+    let release!: () => void;
+    const synchronize = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }))
+      .mockResolvedValueOnce(undefined);
+    const queue = new AutoSyncQueue(localStorage, synchronize, () => undefined, {
+      debounceMs: 10,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+    queue.enqueue();
+    await vi.advanceTimersByTimeAsync(10);
+    queue.stop();
+    queue.start();
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(synchronize).toHaveBeenCalledTimes(2);
+    expect(queue.getStatus().phase).toBe("idle");
+    queue.stop();
+  });
 });

@@ -120,6 +120,7 @@ export class AutoSyncQueue {
   private started = false;
   private volatileMetadata = false;
   private clearGeneration = 0;
+  private lifecycleGeneration = 0;
   private persisted: PersistedAutoSyncStatus;
 
   constructor(
@@ -175,9 +176,11 @@ export class AutoSyncQueue {
 
   stop(): void {
     this.started = false;
+    this.lifecycleGeneration += 1;
     this.eventTarget?.removeEventListener("online", this.handleOnline);
     if (this.timer !== undefined) this.clearTimer(this.timer);
     this.timer = undefined;
+    this.emit(this.getStatus().phase);
   }
 
   enqueue(): void {
@@ -244,7 +247,9 @@ export class AutoSyncQueue {
       this.emit("offline");
       return Promise.resolve();
     }
+    const lifecycleGeneration = this.lifecycleGeneration;
     this.running = this.runExclusive(async () => {
+      if (lifecycleGeneration !== this.lifecycleGeneration) return;
       if (!this.volatileMetadata) this.persisted = this.load();
       if (!this.persisted.pending) {
         this.emit("idle");
@@ -256,6 +261,7 @@ export class AutoSyncQueue {
       this.emit("syncing");
       try {
         await this.synchronize();
+        if (lifecycleGeneration !== this.lifecycleGeneration) return;
         if (clearGeneration !== this.clearGeneration) return;
         this.retryIndex = 0;
         const latest = this.volatileMetadata ? this.persisted : this.load();
@@ -265,6 +271,7 @@ export class AutoSyncQueue {
         this.emit(moreWork ? "pending" : "idle");
         if (moreWork) this.schedule(this.debounceMs);
       } catch (error: unknown) {
+        if (lifecycleGeneration !== this.lifecycleGeneration) return;
         if (clearGeneration !== this.clearGeneration) return;
         if (!this.volatileMetadata) this.persisted = this.load();
         if (!this.persisted.pending) this.setPending(true, undefined, changeId ?? uniqueId());
@@ -282,11 +289,13 @@ export class AutoSyncQueue {
         this.schedule(delay);
       }
     }).then((acquired) => {
+      if (lifecycleGeneration !== this.lifecycleGeneration) return;
       if (acquired) return;
       this.persisted = this.load();
       this.emit(this.persisted.pending ? "pending" : "idle");
       if (this.persisted.pending) this.schedule(Math.min(this.debounceMs, 500));
     }).catch((error: unknown) => {
+      if (lifecycleGeneration !== this.lifecycleGeneration) return;
       // Coordination itself can fail before the task callback runs. Preserve
       // the pending generation and use the same bounded retry policy as a
       // transient synchronization failure.
@@ -305,6 +314,7 @@ export class AutoSyncQueue {
       this.schedule(delay);
     }).finally(() => {
       this.running = null;
+      if (lifecycleGeneration !== this.lifecycleGeneration && this.started && this.persisted.pending) this.schedule(0);
     });
     return this.running;
   }
