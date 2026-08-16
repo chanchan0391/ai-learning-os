@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# The scheduled drill needs only base-system helpers. Constrain PATH before
+# deriving script_dir so selection and result parsing cannot be forged by a
+# user-manager environment; configurable runners remain explicit paths.
+PATH=/usr/bin:/bin
+export PATH
+
 backup=${1:-}
 backup_dir=${AI_LEARNING_BACKUP_DIR:-"$HOME/backups/ai-learning-os"}
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)

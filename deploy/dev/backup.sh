@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Recovery automation only needs base-system utilities. Constrain PATH before
+# deriving script_dir so a user-manager environment cannot replace dirname or
+# any later checksum, metadata, retention, or publication helper.
+PATH=/usr/bin:/bin
+export PATH
+
 backup_dir=${AI_LEARNING_BACKUP_DIR:-"$HOME/backups/ai-learning-os"}
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 . "$script_dir/resolve-docker-bin.sh"

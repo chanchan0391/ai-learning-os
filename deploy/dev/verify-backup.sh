@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+# Resolve every metadata, checksum, and parsing helper from the read-only
+# system image before deriving script_dir or inspecting a backup artifact.
+PATH=/usr/bin:/bin
+export PATH
+
 backup=${1:-}
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 

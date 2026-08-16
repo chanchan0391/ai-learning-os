@@ -1,5 +1,10 @@
 #!/bin/sh
 
+# This helper can also be sourced directly. Bootstrap Docker validation only
+# with tools from the read-only system image, never caller-provided PATH entries.
+PATH=/usr/bin:/bin
+export PATH
+
 is_systemd_mapped_root_docker() {
   mapped_file_owner=$1
   mapped_dir_owner=$2

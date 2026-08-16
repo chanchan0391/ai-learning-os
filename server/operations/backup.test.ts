@@ -78,6 +78,26 @@ describe("dev Docker client trust", () => {
   it("rejects mapped ownership outside a systemd invocation", () => {
     expect(mappedRootCheck("", "/usr/bin/docker", "/usr/bin").status).toBe(1);
   });
+
+  it("does not execute Docker validation helpers injected through PATH", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-docker-path-"));
+    temporaryDirectories.push(root);
+    const fakeBin = join(root, "bin");
+    const marker = join(root, "injected-helper-called");
+    const docker = executable(join(root, "docker"), "#!/bin/sh\nexit 0\n");
+    mkdirSync(fakeBin);
+    for (const helper of ["dirname", "stat", "id"]) {
+      executable(join(fakeBin, helper), `#!/bin/sh\ntouch "${marker}"\nexit 2\n`);
+    }
+
+    const result = spawnSync("sh", ["-c", '. "$1"; AI_LEARNING_DOCKER_BIN="$2"; resolve_trusted_docker_bin', "sh", resolveDockerScript, docker], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+  });
 });
 
 describe("dev database backup", () => {
@@ -428,6 +448,28 @@ describe("dev backup restore preflight", () => {
     expect(result.stdout).toContain("Verified backup ai-learning-os-20260814T120000Z-test.dump");
   });
 
+  it("does not execute checksum or parsing helpers injected through PATH", () => {
+    const fixture = makeBackupFixture();
+    const fakeBin = join(dirname(fixture.docker), "bin");
+    const marker = join(dirname(fixture.docker), "injected-helper-called");
+    mkdirSync(fakeBin);
+    for (const helper of ["sha256sum", "shasum", "awk", "cat", "wc", "tr"]) {
+      executable(join(fakeBin, helper), `#!/bin/sh\ntouch "${marker}"\nexit 2\n`);
+    }
+
+    const result = spawnSync("sh", [verifyBackupScript, fixture.backup], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:/usr/bin:/bin`,
+        AI_LEARNING_DOCKER_BIN: fixture.docker,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("rejects a tampered backup before PostgreSQL inspection", () => {
     const fixture = makeBackupFixture();
     writeFileSync(fixture.backup, "tampered archive", { mode: 0o600 });
@@ -570,6 +612,32 @@ esac
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("Restore drill passed");
+  });
+
+  it("does not execute selection or result parsers injected through PATH", () => {
+    const fixture = makeRestoreFixture();
+    const fakeBin = join(dirname(fixture.docker), "bin");
+    const marker = join(dirname(fixture.docker), "injected-helper-called");
+    mkdirSync(fakeBin);
+    for (const helper of ["dirname", "stat", "id", "find", "sort", "sed", "date", "tail"]) {
+      executable(join(fakeBin, helper), `#!/bin/sh\ntouch "${marker}"\nexit 2\n`);
+    }
+
+    const result = spawnSync("sh", [restoreDrillScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:/usr/bin:/bin`,
+        AI_LEARNING_BACKUP_DIR: dirname(fixture.backup),
+        AI_LEARNING_DOCKER_BIN: fixture.docker,
+        AI_LEARNING_VERIFY_BACKUP_BIN: fixture.verify,
+        FAKE_BACKUP: fixture.backup,
+        FAKE_DOCKER_LOG: fixture.dockerLog,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("removes the isolated database when restore fails", () => {
