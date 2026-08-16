@@ -27,7 +27,7 @@ describe("automatic sync queue", () => {
     expect(synchronize).toHaveBeenCalledTimes(1);
     expect(statuses.at(-1)).toEqual({ phase: "idle", lastSyncedAt: "2026-08-01T12:00:00.000Z" });
     expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!)).toEqual({
-      version: 1, pending: false, lastSyncedAt: "2026-08-01T12:00:00.000Z",
+      version: 2, pending: false, lastSyncedAt: "2026-08-01T12:00:00.000Z",
     });
     queue.stop();
   });
@@ -89,6 +89,86 @@ describe("automatic sync queue", () => {
     expect(synchronize).toHaveBeenCalledTimes(1);
     expect(statuses.at(-1)?.phase).toBe("blocked");
     expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!).pending).toBe(true);
+    queue.stop();
+  });
+
+  it("lets only one tab reconcile a shared pending generation", async () => {
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({ version: 2, pending: true, changeId: "change-1" }));
+    let lockHeld = false;
+    const runExclusive = async (task: () => Promise<void>) => {
+      if (lockHeld) return false;
+      lockHeld = true;
+      try {
+        await task();
+        return true;
+      } finally {
+        lockHeld = false;
+      }
+    };
+    let release!: () => void;
+    const firstSync = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    const secondSync = vi.fn(async () => undefined);
+    const first = new AutoSyncQueue(localStorage, firstSync, () => undefined, { runExclusive, debounceMs: 100 });
+    const second = new AutoSyncQueue(localStorage, secondSync, () => undefined, { runExclusive, debounceMs: 100 });
+
+    first.start();
+    second.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(firstSync).toHaveBeenCalledTimes(1);
+    expect(secondSync).not.toHaveBeenCalled();
+
+    release();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(secondSync).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!).pending).toBe(false);
+    first.stop();
+    second.stop();
+  });
+
+  it("preserves a newer generation enqueued by another tab during synchronization", async () => {
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({ version: 2, pending: true, changeId: "change-1" }));
+    let release!: () => void;
+    const synchronize = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }))
+      .mockResolvedValue(undefined);
+    const queue = new AutoSyncQueue(localStorage, synchronize, () => undefined, {
+      debounceMs: 100,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({ version: 2, pending: true, changeId: "change-2" }));
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!)).toMatchObject({ pending: true, changeId: "change-2" });
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(synchronize).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!).pending).toBe(false);
+    queue.stop();
+  });
+
+  it("migrates version one queue metadata without losing pending work", () => {
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({ version: 1, pending: true, lastSyncedAt: "2026-08-01T10:00:00.000Z" }));
+    const queue = new AutoSyncQueue(localStorage, async () => undefined, () => undefined);
+    expect(queue.getStatus()).toEqual({ phase: "pending", lastSyncedAt: "2026-08-01T10:00:00.000Z" });
+  });
+
+  it("does not clear another tab's newer generation after external conflict resolution", async () => {
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({ version: 2, pending: true, changeId: "conflict" }));
+    const synchronize = vi.fn(async () => undefined);
+    const queue = new AutoSyncQueue(localStorage, synchronize, () => undefined, { debounceMs: 100 });
+    queue.start();
+    queue.stop();
+
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({ version: 2, pending: true, changeId: "newer-tab-edit" }));
+    queue.start();
+    queue.completeExternalSync();
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!)).toMatchObject({ pending: true, changeId: "newer-tab-edit" });
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(synchronize).toHaveBeenCalledTimes(1);
     queue.stop();
   });
 });
