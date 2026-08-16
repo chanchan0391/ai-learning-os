@@ -8,6 +8,8 @@ node_bin=${AI_LEARNING_NODE_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/node"}
 # The system image is read-only in the monitor unit, so use its absolute stat
 # binary to bootstrap ownership and permission checks without trusting PATH.
 stat_bin=/usr/bin/stat
+id_bin=/usr/bin/id
+cat_bin=/bin/cat
 web_url=${AI_LEARNING_WEB_HEALTH_URL:-http://127.0.0.1:8088/}
 api_url=${AI_LEARNING_API_HEALTH_URL:-http://127.0.0.1:8787/api/health}
 
@@ -60,7 +62,7 @@ resolve_trusted_executable() {
     return 2
   fi
 
-  current_uid=$(id -u)
+  current_uid=$($id_bin -u)
   executable_owner=$(read_stat_value '%u' '%u' "$resolved")
   directory_owner=$(read_stat_value '%u' '%u' "$executable_dir")
   if ! is_systemd_mapped_root_executable "$executable_owner" "$directory_owner" "$resolved" "$executable_dir"; then
@@ -92,10 +94,12 @@ resolve_trusted_executable() {
   printf '%s\n' "$resolved"
 }
 
-if [ -L "$stat_bin" ] || [ ! -f "$stat_bin" ] || [ ! -x "$stat_bin" ]; then
-  echo "Trusted system stat executable is unavailable" >&2
-  exit 2
-fi
+for trusted_system_tool in "$stat_bin" "$id_bin" "$cat_bin"; do
+  if [ -L "$trusted_system_tool" ] || [ ! -f "$trusted_system_tool" ] || [ ! -x "$trusted_system_tool" ]; then
+    echo "Required trusted system executable is unavailable" >&2
+    exit 2
+  fi
+done
 systemctl_bin=$(resolve_trusted_executable "$systemctl_bin" "systemctl")
 curl_bin=$(resolve_trusted_executable "$curl_bin" "curl")
 node_bin=$(resolve_trusted_executable "$node_bin" "Node")
@@ -121,7 +125,7 @@ fi
 revision_owner=$(read_stat_value '%u' '%u' "$revision_file")
 revision_links=$(read_stat_value '%l' '%h' "$revision_file")
 revision_bytes=$(read_stat_value '%z' '%s' "$revision_file")
-if [ "$revision_owner" != "$(id -u)" ]; then
+if [ "$revision_owner" != "$($id_bin -u)" ]; then
   echo "Deployed revision file must be owned by the current user" >&2
   exit 1
 fi
@@ -133,7 +137,7 @@ if [ "$revision_bytes" -ne 41 ]; then
   echo "Deployed revision file must contain exactly one full Git commit SHA" >&2
   exit 1
 fi
-revision=$(cat "$revision_file")
+revision=$($cat_bin "$revision_file")
 case "$revision" in
   *[!0-9a-f]*|'') echo "Deployed revision must be a full lowercase Git commit SHA" >&2; exit 1 ;;
 esac
@@ -154,7 +158,7 @@ if [ "$active_release" != "$expected_release" ]; then
   exit 1
 fi
 release_owner=$(read_stat_value '%u' '%u' "$expected_release")
-if [ "$release_owner" != "$(id -u)" ]; then
+if [ "$release_owner" != "$($id_bin -u)" ]; then
   echo "Active release directory must be owned by the current user" >&2
   exit 1
 fi

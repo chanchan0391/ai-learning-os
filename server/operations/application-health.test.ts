@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -170,6 +170,19 @@ describe("dev application health monitoring", () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("curl resolved from PATH must be owned by root");
     expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("does not execute identity or revision helpers injected through PATH", () => {
+    const fixture = makeFixture();
+    const helperMarker = join(dirname(fixture.curl), "path-helper-called");
+    for (const helper of ["id", "cat"]) {
+      executable(join(dirname(fixture.curl), helper), `#!/bin/sh\ntouch "${helperMarker}"\nexit 2\n`);
+    }
+
+    const result = runHealth(fixture, { PATH: `${dirname(fixture.curl)}:/usr/bin:/bin` });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(helperMarker)).toBe(false);
   });
 
   it("aggregates failed timer-triggered operational services before network probes", () => {
