@@ -100,9 +100,39 @@ for trusted_system_tool in "$stat_bin" "$id_bin" "$cat_bin"; do
     exit 2
   fi
 done
+current_uid=$($id_bin -u)
 systemctl_bin=$(resolve_trusted_executable "$systemctl_bin" "systemctl")
 curl_bin=$(resolve_trusted_executable "$curl_bin" "curl")
 node_bin=$(resolve_trusted_executable "$node_bin" "Node")
+
+validate_private_managed_directory() {
+  managed_directory=$1
+  managed_label=$2
+  managed_owner=$(read_stat_value '%u' '%u' "$managed_directory")
+  managed_mode=$(read_stat_value '%Lp' '%a' "$managed_directory")
+  if [ "$managed_owner" != "$current_uid" ]; then
+    echo "$managed_label must be owned by the current user" >&2
+    exit 1
+  fi
+  if [ $((0$managed_mode & 022)) -ne 0 ]; then
+    echo "$managed_label must not be group or other writable" >&2
+    exit 1
+  fi
+}
+
+validate_trusted_ancestor_directory() {
+  ancestor_directory=$1
+  ancestor_owner=$(read_stat_value '%u' '%u' "$ancestor_directory")
+  ancestor_mode=$(read_stat_value '%Lp' '%a' "$ancestor_directory")
+  case "$ancestor_owner" in
+    0|"$current_uid") ;;
+    *) echo "Deployment path ancestor must be owned by root or the current user" >&2; exit 1 ;;
+  esac
+  if [ $((0$ancestor_mode & 022)) -ne 0 ] && [ $((0$ancestor_mode & 01000)) -eq 0 ]; then
+    echo "Deployment path ancestor must not be shared writable without the sticky bit" >&2
+    exit 1
+  fi
+}
 
 case "$base_dir" in
   /*) ;;
@@ -147,6 +177,25 @@ if [ "${#revision}" -ne 40 ]; then
 fi
 
 base_physical=$(cd "$base_dir" && pwd -P)
+if [ "$base_physical" != "$base_dir" ]; then
+  echo "Deployment directory path must be canonical and contain no symlinked ancestors" >&2
+  exit 1
+fi
+validate_private_managed_directory "$base_physical" "Deployment directory"
+releases_directory="$base_physical/releases"
+if [ -L "$releases_directory" ] || [ ! -d "$releases_directory" ]; then
+  echo "Release root must be a real directory, not a symlink" >&2
+  exit 1
+fi
+validate_private_managed_directory "$releases_directory" "Release root"
+ancestor_directory=${base_physical%/*}
+[ -n "$ancestor_directory" ] || ancestor_directory=/
+while :; do
+  validate_trusted_ancestor_directory "$ancestor_directory"
+  [ "$ancestor_directory" = / ] && break
+  ancestor_directory=${ancestor_directory%/*}
+  [ -n "$ancestor_directory" ] || ancestor_directory=/
+done
 expected_release="$base_physical/releases/$revision"
 if [ -L "$expected_release" ] || [ ! -d "$expected_release" ]; then
   echo "Expected release must be a real directory, not a symlink" >&2
@@ -157,11 +206,7 @@ if [ "$active_release" != "$expected_release" ]; then
   echo "Current release target does not match the deployed revision" >&2
   exit 1
 fi
-release_owner=$(read_stat_value '%u' '%u' "$expected_release")
-if [ "$release_owner" != "$($id_bin -u)" ]; then
-  echo "Active release directory must be owned by the current user" >&2
-  exit 1
-fi
+validate_private_managed_directory "$expected_release" "Active release directory"
 
 for service in ai-learning-os-api.service ai-learning-os-web.service; do
   if ! "$systemctl_bin" --user is-active --quiet "$service"; then

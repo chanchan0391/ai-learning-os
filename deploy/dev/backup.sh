@@ -13,6 +13,98 @@ script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 resolve_trusted_docker_bin
 flock_bin=${AI_LEARNING_FLOCK_BIN:-flock}
 stat_bin=${AI_LEARNING_STAT_BIN:-stat}
+bootstrap_stat_bin=/usr/bin/stat
+bootstrap_id_bin=/usr/bin/id
+
+read_bootstrap_stat_value() {
+  bootstrap_bsd_format=$1
+  bootstrap_gnu_format=$2
+  bootstrap_target=$3
+  bootstrap_value=$($bootstrap_stat_bin -f "$bootstrap_bsd_format" "$bootstrap_target" 2>/dev/null || true)
+  case "$bootstrap_value" in ''|*[!0-9]*) bootstrap_value=$($bootstrap_stat_bin -c "$bootstrap_gnu_format" "$bootstrap_target" 2>/dev/null || true) ;; esac
+  case "$bootstrap_value" in ''|*[!0-9]*) echo "Could not verify backup helper metadata" >&2; return 2 ;; esac
+  printf '%s\n' "$bootstrap_value"
+}
+
+is_systemd_mapped_root_backup_helper() {
+  helper_file_owner=$1
+  helper_dir_owner=$2
+  helper_path=$3
+  helper_dir=$4
+  [ "$helper_file_owner" = 65534 ] \
+    && [ "$helper_dir_owner" = 65534 ] \
+    && [ -n "${INVOCATION_ID:-}" ] \
+    && [ "$helper_dir" = /usr/bin ] \
+    && { [ "$helper_path" = /usr/bin/flock ] || [ "$helper_path" = /usr/bin/stat ]; }
+}
+
+resolve_trusted_backup_helper() {
+  helper_candidate=$1
+  helper_label=$2
+  helper_require_root=false
+  case "$helper_candidate" in
+    /*) helper_resolved=$helper_candidate ;;
+    */*) echo "$helper_label executable path must be absolute" >&2; return 2 ;;
+    *)
+      helper_require_root=true
+      helper_resolved=$(command -v "$helper_candidate" 2>/dev/null || true)
+      case "$helper_resolved" in
+        /*) ;;
+        *) echo "Could not resolve $helper_label executable to an absolute path" >&2; return 2 ;;
+      esac
+      ;;
+  esac
+  helper_directory=${helper_resolved%/*}
+  if [ -L "$helper_directory" ] || [ ! -d "$helper_directory" ]; then
+    echo "$helper_label executable directory must be a real directory, not a symlink" >&2
+    return 2
+  fi
+  if [ -L "$helper_resolved" ] || [ ! -f "$helper_resolved" ] || [ ! -x "$helper_resolved" ]; then
+    echo "$helper_label executable is missing or unsafe" >&2
+    return 2
+  fi
+  helper_owner=$(read_bootstrap_stat_value '%u' '%u' "$helper_resolved") || return 2
+  helper_directory_owner=$(read_bootstrap_stat_value '%u' '%u' "$helper_directory") || return 2
+  current_uid=$($bootstrap_id_bin -u)
+  if ! is_systemd_mapped_root_backup_helper "$helper_owner" "$helper_directory_owner" "$helper_resolved" "$helper_directory"; then
+    if [ "$helper_require_root" = true ]; then
+      [ "$helper_owner" = 0 ] && [ "$helper_directory_owner" = 0 ] || {
+        echo "$helper_label resolved from PATH must be owned by root" >&2
+        return 2
+      }
+    else
+      case "$helper_owner" in 0|"$current_uid") ;; *) echo "$helper_label executable must be owned by root or the current user" >&2; return 2 ;; esac
+      case "$helper_directory_owner" in 0|"$current_uid") ;; *) echo "$helper_label executable directory must be owned by root or the current user" >&2; return 2 ;; esac
+    fi
+  fi
+  helper_mode=$(read_bootstrap_stat_value '%Lp' '%a' "$helper_resolved") || return 2
+  helper_directory_mode=$(read_bootstrap_stat_value '%Lp' '%a' "$helper_directory") || return 2
+  if [ $((0$helper_mode & 022)) -ne 0 ]; then
+    echo "$helper_label executable must not be group or other writable" >&2
+    return 2
+  fi
+  if [ $((0$helper_directory_mode & 022)) -ne 0 ]; then
+    echo "$helper_label executable directory must not be group or other writable" >&2
+    return 2
+  fi
+  helper_links=$(read_bootstrap_stat_value '%l' '%h' "$helper_resolved") || return 2
+  if [ "$helper_links" != 1 ] \
+    && [ "$helper_owner" != 0 ] \
+    && ! is_systemd_mapped_root_backup_helper "$helper_owner" "$helper_directory_owner" "$helper_resolved" "$helper_directory"; then
+      echo "$helper_label executable must not be hard-linked unless it is a root-managed system tool" >&2
+      return 2
+  fi
+  printf '%s\n' "$helper_resolved"
+}
+
+for bootstrap_helper in "$bootstrap_stat_bin" "$bootstrap_id_bin"; do
+  if [ -L "$bootstrap_helper" ] || [ ! -f "$bootstrap_helper" ] || [ ! -x "$bootstrap_helper" ]; then
+    echo "Required trusted backup bootstrap helper is unavailable" >&2
+    exit 2
+  fi
+done
+flock_bin=$(resolve_trusted_backup_helper "$flock_bin" "flock")
+stat_bin=$(resolve_trusted_backup_helper "$stat_bin" "stat")
 if command -v sha256sum >/dev/null 2>&1; then
   sha256_command=sha256sum
 else
@@ -32,9 +124,9 @@ if [ -L "$backup_dir" ] || [ ! -d "$backup_dir" ]; then
   echo "Backup directory must be a real directory, not a symlink" >&2
   exit 1
 fi
-backup_dir_owner=$(stat -f '%u' "$backup_dir" 2>/dev/null || true)
+backup_dir_owner=$($stat_bin -f '%u' "$backup_dir" 2>/dev/null || true)
 case "$backup_dir_owner" in
-  ''|*[!0-9]*) backup_dir_owner=$(stat -c '%u' "$backup_dir" 2>/dev/null || true) ;;
+  ''|*[!0-9]*) backup_dir_owner=$($stat_bin -c '%u' "$backup_dir" 2>/dev/null || true) ;;
 esac
 case "$backup_dir_owner" in
   ''|*[!0-9]*) echo "Could not verify backup directory ownership" >&2; exit 1 ;;
@@ -44,10 +136,6 @@ if [ "$backup_dir_owner" != "$(id -u)" ]; then
   exit 1
 fi
 chmod 700 "$backup_dir"
-if ! command -v "$flock_bin" >/dev/null 2>&1; then
-  echo "flock is required for crash-safe backup locking" >&2
-  exit 1
-fi
 lock_file="$backup_dir/.backup.lock"
 read_file_owner() {
   file_owner=$($stat_bin -f '%u' "$1" 2>/dev/null || true)

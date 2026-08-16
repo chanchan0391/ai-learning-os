@@ -124,6 +124,39 @@ describe("dev database backup", () => {
     expect(statSync(checksum).mode & 0o777).toBe(0o600);
   });
 
+  it("rejects a relative backup lock helper before creating the backup directory", () => {
+    const fixture = makeFixture();
+
+    const result = runBackup(fixture, { AI_LEARNING_FLOCK_BIN: "./flock" });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("flock executable path must be absolute");
+    expect(existsSync(fixture.backupDir)).toBe(false);
+  });
+
+  it("rejects a shared-writable backup lock helper before creating the backup directory", () => {
+    const fixture = makeFixture();
+    chmodSync(fixture.flock, 0o775);
+
+    const result = runBackup(fixture);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("flock executable must not be group or other writable");
+    expect(existsSync(fixture.backupDir)).toBe(false);
+  });
+
+  it("rejects a hard-linked metadata helper before creating the backup directory", () => {
+    const fixture = makeFixture();
+    const fakeStat = executable(join(dirname(fixture.flock), "stat"), "#!/bin/sh\nexec /usr/bin/stat \"$@\"\n");
+    linkSync(fakeStat, join(dirname(fakeStat), "stat-shared"));
+
+    const result = runBackup(fixture, { AI_LEARNING_STAT_BIN: fakeStat });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("stat executable must not be hard-linked unless it is a root-managed system tool");
+    expect(existsSync(fixture.backupDir)).toBe(false);
+  });
+
   it("removes the temporary artifact when archive verification fails", () => {
     const fixture = makeFixture();
     executable(fixture.docker, "#!/bin/sh\nset -eu\ncase \"$*\" in\n  *pg_dump*) printf 'invalid archive' ;;\n  *) exit 1 ;;\nesac\n");

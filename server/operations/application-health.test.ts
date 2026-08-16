@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -20,9 +20,9 @@ function shellSingleQuote(value: string) {
 }
 
 function makeFixture() {
-  const root = mkdtempSync(join(tmpdir(), "ai-learning-application-health-"));
+  const root = mkdtempSync(join(realpathSync(tmpdir()), "ai-learning-application-health-"));
   temporaryDirectories.push(root);
-  const baseDir = join(root, "service");
+  const baseDir = join(root, "managed", "service");
   const release = join(baseDir, "releases", revision);
   const current = join(baseDir, "current");
   const curlMarker = join(root, "curl-called");
@@ -252,6 +252,63 @@ describe("dev application health monitoring", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("does not match the deployed revision");
+  });
+
+  it("rejects a shared-writable deployment directory before any network probe", () => {
+    const fixture = makeFixture();
+    chmodSync(fixture.baseDir, 0o770);
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Deployment directory must not be group or other writable");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("rejects a shared-writable release root before any network probe", () => {
+    const fixture = makeFixture();
+    chmodSync(join(fixture.baseDir, "releases"), 0o770);
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Release root must not be group or other writable");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("rejects a shared-writable active release before any network probe", () => {
+    const fixture = makeFixture();
+    chmodSync(join(fixture.baseDir, "releases", revision), 0o770);
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Active release directory must not be group or other writable");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("rejects a shared-writable deployment ancestor without sticky protection", () => {
+    const fixture = makeFixture();
+    chmodSync(dirname(fixture.baseDir), 0o770);
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Deployment path ancestor must not be shared writable without the sticky bit");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("rejects a deployment path that traverses a symlinked ancestor", () => {
+    const fixture = makeFixture();
+    const managedDirectory = dirname(fixture.baseDir);
+    const linkedManagedDirectory = join(dirname(managedDirectory), "managed-link");
+    symlinkSync(managedDirectory, linkedManagedDirectory);
+
+    const result = runHealth({ ...fixture, baseDir: join(linkedManagedDirectory, "service") });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must be canonical and contain no symlinked ancestors");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
   });
 
   it("rejects a health response for a different release", () => {
