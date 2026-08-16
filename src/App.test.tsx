@@ -1053,6 +1053,38 @@ describe("learning data controls", () => {
     vi.useRealTimers();
   });
 
+  it("settles an expired Agent session without exposing server details or clearing local learning data", async () => {
+    const user = userEvent.setup();
+    let teachingAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") {
+        return Response.json({ authenticated: true, principal: { userId: "user-1", deviceId: "device-1" } });
+      }
+      if (url.pathname === "/api/sync/changes") return Response.json({ changes: [], cursor: "cursor-1" });
+      if (url.pathname === "/api/teaching-sessions") {
+        teachingAttempts += 1;
+        return Response.json({ error: "private-session-database-detail" }, { status: 401 });
+      }
+      if (url.pathname.startsWith("/api/sync/") && url.pathname.includes("/learning-plans/")) {
+        const value = JSON.parse(String(init?.body));
+        return Response.json({ entityType: "learning-plan", entityId: value.id, revision: 1, updatedAt: "2026-08-01T10:00:00.000Z", value });
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+
+    await screen.findByText("已登录");
+    await user.click(screen.getByRole("button", { name: "开始短教学会话" }));
+
+    expect(await screen.findByRole("link", { name: "登录并同步" })).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("登录已过期");
+    expect(screen.getByRole("alert").textContent).not.toContain("private-session-database-detail");
+    expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
+    expect(teachingAttempts).toBe(1);
+  });
+
   it("pauses automatic retries after a permanent sync request failure", async () => {
     vi.useFakeTimers();
     let syncAttempts = 0;

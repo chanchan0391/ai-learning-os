@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentSessionExpiredError,
   InvalidAgentResponseError,
-  agentResponseError,
+  agentRequestError,
   validateEvaluationResponse,
   validateLearningPlanResponse,
   validateRecoveryPlanResponse,
@@ -11,10 +12,14 @@ import {
 import { generateLearningPlan } from "./planner";
 
 describe("browser Agent response validation", () => {
-  it("only exposes bounded, closed error envelopes", () => {
-    expect(agentResponseError({ error: "请求受限" }, "请求失败")).toBe("请求受限");
-    expect(agentResponseError({ error: "上游错误", debug: "private" }, "请求失败")).toBe("请求失败");
-    expect(agentResponseError(null, "请求失败")).toBe("请求失败");
+  it("classifies HTTP failures without exposing server-provided details", () => {
+    expect(agentRequestError(401, "请求失败")).toBeInstanceOf(AgentSessionExpiredError);
+    expect(agentRequestError(401, "请求失败").message).toContain("重新登录");
+    expect(agentRequestError(402, "请求失败").message).toContain("权益");
+    expect(agentRequestError(413, "请求失败").message).toContain("请求上限");
+    expect(agentRequestError(429, "请求失败").message).toContain("额度");
+    expect(agentRequestError(400, "请求失败").message).toContain("检查输入");
+    expect(agentRequestError(503, "教学会话生成失败").message).toBe("教学会话生成失败，服务暂时不可用，请稍后重试。");
   });
 
   it("accepts a complete learning plan and rejects undeclared or inconsistent data", () => {

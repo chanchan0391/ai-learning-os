@@ -9,6 +9,22 @@ export class InvalidAgentResponseError extends Error {
   }
 }
 
+export class AgentSessionExpiredError extends Error {
+  constructor() {
+    super("登录已过期，请重新登录后继续使用 Agent。");
+    this.name = "AgentSessionExpiredError";
+  }
+}
+
+export function agentRequestError(status: number, fallback: string): Error {
+  if (status === 401) return new AgentSessionExpiredError();
+  if (status === 402) return new Error("当前账号暂无可用的 Agent 权益，请检查订阅状态。");
+  if (status === 413) return new Error("学习内容超过 Agent 请求上限，请缩短后重试。");
+  if (status === 429) return new Error("Agent 请求暂时受限或本月额度已用完，请稍后重试。");
+  if (status >= 400 && status < 500) return new Error("Agent 请求无法处理，请检查输入后重试。");
+  return new Error(`${fallback}，服务暂时不可用，请稍后重试。`);
+}
+
 function hasOnlyKeys(value: unknown, allowedKeys: readonly string[]): value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const allowed = new Set(allowedKeys);
@@ -28,12 +44,6 @@ function isIsoTimestamp(value: unknown): value is string {
 function assertValid<T>(value: unknown, valid: boolean): T {
   if (!valid) throw new InvalidAgentResponseError();
   return value as T;
-}
-
-export function agentResponseError(value: unknown, fallback: string): string {
-  return hasOnlyKeys(value, ["error"]) && isBoundedText(value.error, AGENT_OUTPUT_LIMITS.shortTextCharacters)
-    ? value.error
-    : fallback;
 }
 
 function isTask(value: unknown): boolean {

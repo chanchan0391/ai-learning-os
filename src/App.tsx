@@ -61,7 +61,7 @@ import { completionRate, LEARNING_GOAL_LIMITS, validateGoal } from "./planner";
 import { AuthSessionExpiredError, BrowserSyncClient, PermanentSyncError, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import { readBoundedJson } from "./bounded-json-response";
-import { agentResponseError, validateEvaluationResponse, validateLearningPlanResponse, validateRecoveryPlanResponse, validateReviewAssessmentResponse, validateTeachingSessionResponse } from "./agent-response-validation";
+import { AgentSessionExpiredError, agentRequestError, validateEvaluationResponse, validateLearningPlanResponse, validateRecoveryPlanResponse, validateReviewAssessmentResponse, validateTeachingSessionResponse } from "./agent-response-validation";
 import { AGENT_INPUT_LIMITS } from "./agent-limits";
 import type { LearningStateExport, PortfolioLearningStateExport } from "./learning-state";
 import type { DailyTask, LearningGoal, LearningState, RecoveryPlan, StageLearningNote, StageRetrospective, TaskDifficulty } from "./types";
@@ -73,6 +73,12 @@ const AUTH_RECOVERY_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
 const AUTH_RECOVERY_MIN_JITTER_RATIO = 0.75;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
 const syncClient = new BrowserSyncClient(localStorage);
+
+async function requireAgentSuccess(response: Response, fallback: string): Promise<void> {
+  if (response.ok) return;
+  await response.body?.cancel().catch(() => undefined);
+  throw agentRequestError(response.status, fallback);
+}
 
 function shiftCalendarMonth(month: string, offset: number): string {
   const [year, monthNumber] = month.split("-").map(Number);
@@ -399,11 +405,12 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(goal),
       });
+      await requireAgentSuccess(response, "学习计划生成失败");
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
-      if (!response.ok) throw new Error(agentResponseError(body, "学习计划生成失败"));
       saveState(initializeLearningState(validateLearningPlanResponse(body)));
       setStorageNotice("");
     } catch (error) {
+      settleExpiredSession(error);
       setErrors([error instanceof Error ? error.message : "学习计划生成失败"]);
     } finally {
       setIsGenerating(false);
@@ -427,10 +434,11 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: plan?.goal, task, learnerContext: { knownConcepts: [plan?.goal.currentLevel ?? ""], recentErrors } }),
       });
+      await requireAgentSuccess(response, "教学会话生成失败");
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
-      if (!response.ok) throw new Error(agentResponseError(body, "教学会话生成失败"));
       updateState((current) => saveTeachingSession(current, task.id, validateTeachingSessionResponse(body)));
     } catch (error) {
+      settleExpiredSession(error);
       setAgentError(error instanceof Error ? error.message : "教学会话生成失败");
     } finally {
       setBusyTaskId("");
@@ -465,13 +473,14 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: plan.goal, items, answer }),
       });
+      await requireAgentSuccess(response, "主动回忆判分失败");
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
-      if (!response.ok) throw new Error(agentResponseError(body, "主动回忆判分失败"));
       const assessment = validateReviewAssessmentResponse(body, answer);
       saveState(linkedInsight
         ? saveCrossStageReviewAssessment(learningState, task.id, linkedInsight.misconception, assessment)
         : saveReviewAssessment(learningState, task.id, assessment));
     } catch (error) {
+      settleExpiredSession(error);
       setAgentError(error instanceof Error ? error.message : "主动回忆判分失败");
     } finally {
       setBusyTaskId("");
@@ -490,10 +499,11 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: plan.goal, task, submission }),
       });
+      await requireAgentSuccess(response, "学习成果评估失败");
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
-      if (!response.ok) throw new Error(agentResponseError(body, "学习成果评估失败"));
       updateState((current) => saveEvaluation(current, task.id, submission, validateEvaluationResponse(body)));
     } catch (error) {
+      settleExpiredSession(error);
       setAgentError(error instanceof Error ? error.message : "学习成果评估失败");
     } finally {
       setBusyTaskId("");
@@ -511,10 +521,11 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal: learningState.plan.goal, currentTask, interruption }),
       });
+      await requireAgentSuccess(response, "恢复计划生成失败");
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
-      if (!response.ok) throw new Error(agentResponseError(body, "恢复计划生成失败"));
       setRecoveryPlan(validateRecoveryPlanResponse(body, learningState.plan.goal.dailyMinutes));
     } catch (error) {
+      settleExpiredSession(error);
       setAgentError(error instanceof Error ? error.message : "恢复计划生成失败");
     } finally {
       setIsGeneratingRecovery(false);
@@ -1054,8 +1065,8 @@ export function App() {
     }
   }
 
-  function settleExpiredAccountSession(error: unknown): void {
-    if (!(error instanceof AuthSessionExpiredError)) return;
+  function settleExpiredSession(error: unknown): void {
+    if (!(error instanceof AuthSessionExpiredError || error instanceof AgentSessionExpiredError)) return;
     authStateRef.current = { status: "signed-out" };
     setAuthState(authStateRef.current);
     autoSyncQueue.stop();
@@ -1077,7 +1088,7 @@ export function App() {
       setStorageNotice("已退出所有设备，本地学习记录仍保留在此浏览器中。");
       setStorageNoticeIsError(false);
     } catch (error) {
-      settleExpiredAccountSession(error);
+      settleExpiredSession(error);
       setStorageNotice(error instanceof Error ? error.message : "退出所有设备失败，请稍后重试");
       setStorageNoticeIsError(true);
     } finally {
@@ -1091,7 +1102,7 @@ export function App() {
     try {
       setActiveDevices(await syncClient.getActiveDevices());
     } catch (error) {
-      settleExpiredAccountSession(error);
+      settleExpiredSession(error);
       setStorageNotice(error instanceof Error ? error.message : "无法读取登录设备");
       setStorageNoticeIsError(true);
       setDeviceDialogOpen(false);
@@ -1108,7 +1119,7 @@ export function App() {
       setStorageNotice(`已退出设备“${device.label}”。`);
       setStorageNoticeIsError(false);
     } catch (error) {
-      settleExpiredAccountSession(error);
+      settleExpiredSession(error);
       setStorageNotice(error instanceof Error ? error.message : "设备退出失败，请稍后重试");
       setStorageNoticeIsError(true);
     } finally {
@@ -1133,7 +1144,7 @@ export function App() {
       setStorageNotice("账号、云端学习记录和当前浏览器中的学习记录已删除。");
       setStorageNoticeIsError(false);
     } catch (error) {
-      settleExpiredAccountSession(error);
+      settleExpiredSession(error);
       setStorageNotice(error instanceof Error ? error.message : "账号数据删除失败，请稍后重试");
       setStorageNoticeIsError(true);
     } finally {
