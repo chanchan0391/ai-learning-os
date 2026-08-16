@@ -17,6 +17,7 @@ interface PersistedAutoSyncStatus {
 }
 
 type ExclusiveRunner = (task: () => Promise<void>) => Promise<boolean>;
+type Synchronize = (signal: AbortSignal) => Promise<void>;
 
 interface AutoSyncQueueOptions {
   debounceMs?: number;
@@ -115,6 +116,7 @@ export class AutoSyncQueue {
   private readonly runExclusive: ExclusiveRunner;
   private timer: number | undefined;
   private running: Promise<void> | null = null;
+  private activeSyncController: AbortController | null = null;
   private generation = 0;
   private retryIndex = 0;
   private started = false;
@@ -125,7 +127,7 @@ export class AutoSyncQueue {
 
   constructor(
     private readonly storage: Storage,
-    private readonly synchronize: () => Promise<void>,
+    private readonly synchronize: Synchronize,
     private readonly onStatus: (status: AutoSyncStatus) => void,
     options: AutoSyncQueueOptions = {},
   ) {
@@ -177,6 +179,7 @@ export class AutoSyncQueue {
   stop(): void {
     this.started = false;
     this.lifecycleGeneration += 1;
+    this.activeSyncController?.abort();
     this.eventTarget?.removeEventListener("online", this.handleOnline);
     if (this.timer !== undefined) this.clearTimer(this.timer);
     this.timer = undefined;
@@ -259,8 +262,10 @@ export class AutoSyncQueue {
       const clearGeneration = this.clearGeneration;
       const changeId = this.persisted.changeId;
       this.emit("syncing");
+      const controller = new AbortController();
+      this.activeSyncController = controller;
       try {
-        await this.synchronize();
+        await this.synchronize(controller.signal);
         if (lifecycleGeneration !== this.lifecycleGeneration) return;
         if (clearGeneration !== this.clearGeneration) return;
         this.retryIndex = 0;
@@ -287,6 +292,8 @@ export class AutoSyncQueue {
         const delay = this.retryDelaysMs[Math.min(this.retryIndex, this.retryDelaysMs.length - 1)] ?? 30_000;
         this.retryIndex += 1;
         this.schedule(delay);
+      } finally {
+        if (this.activeSyncController === controller) this.activeSyncController = null;
       }
     }).then((acquired) => {
       if (lifecycleGeneration !== this.lifecycleGeneration) return;

@@ -209,11 +209,11 @@ export function App() {
   const archivedGoalsRef = useRef<ArchivedLearningState[]>(learningStateRepository.loadArchived());
   const authStateRef = useRef<AuthState>({ status: "checking" });
   const retryAuthRef = useRef<() => void>(() => undefined);
-  const performSyncRef = useRef<() => Promise<void>>(async () => undefined);
+  const performSyncRef = useRef<(signal: AbortSignal) => Promise<void>>(async () => undefined);
   const agentRequestRef = useRef<AbortController | null>(null);
   const [autoSyncQueue] = useState(() => new AutoSyncQueue(
     localStorage,
-    () => performSyncRef.current(),
+    (signal) => performSyncRef.current(signal),
     (status) => {
       setAutoSyncStatus(status);
       setIsSyncing(status.phase === "syncing");
@@ -1076,20 +1076,21 @@ export function App() {
     }
   }
 
-  async function performSync() {
+  async function performSync(signal: AbortSignal) {
     setStorageNotice("");
     try {
       let archivedUploaded = 0;
       let archivedDownloaded = 0;
       for (const entry of archivedGoalsRef.current) {
-        const archivedResult = await syncClient.syncArchived(entry);
+        const archivedResult = await syncClient.syncArchived(entry, signal);
         archivedUploaded += archivedResult.uploaded;
         archivedDownloaded += archivedResult.downloaded;
       }
       const selectedPlanId = learningStateRef.current?.plan.id;
       const localActive = learningStateRepository.loadActive();
       localActive.sort((left, right) => left.plan.id === selectedPlanId ? -1 : right.plan.id === selectedPlanId ? 1 : 0);
-      const result = await syncClient.syncActive(localActive);
+      const result = await syncClient.syncActive(localActive, signal);
+      signal.throwIfAborted();
       const syncedActive = learningStateRepository.replaceActive(result.states);
       setActiveGoals(syncedActive);
       const selected = selectedPlanId
@@ -1107,7 +1108,10 @@ export function App() {
           ...archivedGoalsRef.current.map((entry) => entry.state.plan.id),
           ...result.states.map((state) => state.plan.id),
         ],
+        undefined,
+        signal,
       );
+      signal.throwIfAborted();
       if (remoteArchives.entries.length > 0) {
         const merged = learningStateRepository.mergeArchived(remoteArchives.entries);
         archivedGoalsRef.current = merged;
@@ -1117,9 +1121,11 @@ export function App() {
         result.uploaded + archivedUploaded > 0 ? `上传 ${result.uploaded + archivedUploaded} 项` : "",
         result.downloaded + archivedDownloaded + remoteArchives.downloaded > 0 ? `下载 ${result.downloaded + archivedDownloaded + remoteArchives.downloaded} 项` : "",
       ].filter(Boolean).join("，");
+      signal.throwIfAborted();
       setStorageNotice(changes ? `同步完成：${changes}。` : "本地与云端进度已一致。");
       setStorageNoticeIsError(false);
     } catch (error) {
+      if (signal.aborted) throw error;
       if (error instanceof AuthSessionExpiredError) {
         authStateRef.current = { status: "signed-out" };
         setAuthState(authStateRef.current);

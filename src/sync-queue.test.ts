@@ -305,6 +305,31 @@ describe("automatic sync queue", () => {
     expect(statuses.at(-1)?.phase).toBe("pending");
   });
 
+  it("aborts in-flight synchronization when stopped and preserves its pending generation", async () => {
+    let observedSignal!: AbortSignal;
+    const synchronize = vi.fn((signal: AbortSignal) => {
+      observedSignal = signal;
+      return new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    const statuses: AutoSyncStatus[] = [];
+    const queue = new AutoSyncQueue(localStorage, synchronize, (status) => statuses.push(status), {
+      debounceMs: 10,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+    queue.enqueue();
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.stop();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(observedSignal.aborted).toBe(true);
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!).pending).toBe(true);
+    expect(statuses.at(-1)?.phase).toBe("pending");
+  });
+
   it("does not start work after stopping while exclusive coordination is pending", async () => {
     let grant!: () => void;
     const runExclusive = vi.fn(async (task: () => Promise<void>) => {

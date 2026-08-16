@@ -308,8 +308,8 @@ export class BrowserSyncClient {
     this.storage.setItem(RESTORED_ARCHIVE_PLAN_KEY, planId);
   }
 
-  async sync(localState: LearningState | null): Promise<SyncResult> {
-    const remoteEntities = await this.readAllChanges("无法读取云端进度");
+  async sync(localState: LearningState | null, signal?: AbortSignal): Promise<SyncResult> {
+    const remoteEntities = await this.readAllChanges("无法读取云端进度", signal);
     if (!localState) {
       if (!remoteEntities.some((entity) => entity.entityType === "learning-plan" && !(entity.value as LearningPlan).archivedAt)) {
         return { state: null, uploaded: 0, downloaded: 0 };
@@ -332,7 +332,7 @@ export class BrowserSyncClient {
     const localPlanEntity = { entityType: "learning-plan" as const, entityId: localState.plan.id, value: nextState.plan };
     const planResult = restoringArchived && matchingRemotePlan
       ? {
-          entity: await this.write(localPlanEntity, matchingRemotePlan.revision),
+          entity: await this.write(localPlanEntity, matchingRemotePlan.revision, signal),
           metadata: { revision: matchingRemotePlan.revision + 1, fingerprint: fingerprint(localPlanEntity.value) },
           direction: "upload" as const,
         }
@@ -340,6 +340,7 @@ export class BrowserSyncClient {
           localPlanEntity,
           matchingRemotePlan,
           previous.entities[metadataKey(localPlanEntity)],
+          signal,
         );
     nextMetadata.entities[metadataKey(planResult.entity)] = planResult.metadata;
     if (planResult.direction === "upload") uploaded += 1;
@@ -357,6 +358,7 @@ export class BrowserSyncClient {
         { entityType: "daily-record", entityId, value: { planId: nextState.plan.id, record } },
         remote,
         previous.entities[key],
+        signal,
       );
       nextMetadata.entities[key] = result.metadata;
       if (result.direction === "upload") uploaded += 1;
@@ -379,6 +381,7 @@ export class BrowserSyncClient {
     nextState.days.sort((left, right) => left.day - right.day);
     nextState.currentDay = nextState.days.find((day) => day.status === "active")?.day ?? nextState.days.at(-1)?.day ?? 1;
     nextState = this.validateState(nextState);
+    signal?.throwIfAborted();
     this.saveMetadata(nextMetadata);
     if (this.storage.getItem(RESTORED_ARCHIVE_PLAN_KEY) === localState.plan.id) {
       this.storage.removeItem(RESTORED_ARCHIVE_PLAN_KEY);
@@ -386,18 +389,18 @@ export class BrowserSyncClient {
     return { state: nextState, uploaded, downloaded };
   }
 
-  async syncActive(localStates: LearningState[]): Promise<ActiveSyncResult> {
+  async syncActive(localStates: LearningState[], signal?: AbortSignal): Promise<ActiveSyncResult> {
     const states: LearningState[] = [];
     let uploaded = 0;
     let downloaded = 0;
     for (const localState of localStates) {
-      const result = await this.sync(localState);
+      const result = await this.sync(localState, signal);
       if (result.state) states.push(result.state);
       uploaded += result.uploaded;
       downloaded += result.downloaded;
     }
 
-    const remoteEntities = await this.readAllChanges("无法读取云端进度");
+    const remoteEntities = await this.readAllChanges("无法读取云端进度", signal);
     const knownPlanIds = new Set(states.map((state) => state.plan.id));
     const missingPlans = remoteEntities
       .filter((entity) => entity.entityType === "learning-plan" && !(entity.value as LearningPlan).archivedAt)
@@ -416,15 +419,15 @@ export class BrowserSyncClient {
    * as an active goal. The archive timestamp lives on the synchronized plan so
    * other devices can distinguish it from the one active plan.
    */
-  async syncArchived(entry: ArchivedLearningState): Promise<SyncResult> {
+  async syncArchived(entry: ArchivedLearningState, signal?: AbortSignal): Promise<SyncResult> {
     return this.sync({
       ...structuredClone(entry.state),
       plan: { ...structuredClone(entry.state.plan), archivedAt: entry.archivedAt },
-    });
+    }, signal);
   }
 
-  async downloadArchived(existingPlanIds: Iterable<string>, activePlanId?: string): Promise<ArchivedSyncResult> {
-    const remoteEntities = await this.readAllChanges("无法读取云端归档");
+  async downloadArchived(existingPlanIds: Iterable<string>, activePlanId?: string, signal?: AbortSignal): Promise<ArchivedSyncResult> {
+    const remoteEntities = await this.readAllChanges("无法读取云端归档", signal);
 
     const excluded = new Set(existingPlanIds);
     if (activePlanId) excluded.add(activePlanId);
@@ -543,13 +546,13 @@ export class BrowserSyncClient {
     return { state, uploaded, downloaded: 0 };
   }
 
-  private async readAllChanges(fallbackError: string): Promise<SyncEntity[]> {
+  private async readAllChanges(fallbackError: string, signal?: AbortSignal): Promise<SyncEntity[]> {
     const entities = new Map<string, SyncEntity>();
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     for (let page = 0; page < MAX_SYNC_PAGES; page += 1) {
       const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-      const response = await this.request(`/api/sync/changes${query}`, { credentials: "same-origin" });
+      const response = await this.request(`/api/sync/changes${query}`, { credentials: "same-origin", signal });
       const body = await readBoundedJson<{ changes?: SyncEntity[]; cursor?: string; hasMore?: boolean; error?: string }>(
         response, MAX_SYNC_RESPONSE_BYTES, "云端同步响应超过安全上限，请稍后重试",
       );
@@ -577,10 +580,11 @@ export class BrowserSyncClient {
     local: { entityType: SyncEntity["entityType"]; entityId: string; value: unknown },
     remote: SyncEntity | undefined,
     previous: SyncMetadataEntry | undefined,
+    signal?: AbortSignal,
   ): Promise<{ entity: SyncEntity; metadata: SyncMetadataEntry; direction: "none" | "upload" | "download" }> {
     const localFingerprint = fingerprint(local.value);
     if (!remote) {
-      const entity = await this.write(local, null);
+      const entity = await this.write(local, null, signal);
       return { entity, metadata: { revision: entity.revision, fingerprint: localFingerprint }, direction: "upload" };
     }
     const remoteFingerprint = fingerprint(remote.value);
@@ -588,7 +592,7 @@ export class BrowserSyncClient {
       return { entity: remote, metadata: { revision: remote.revision, fingerprint: remoteFingerprint }, direction: "none" };
     }
     if (previous?.revision === remote.revision && previous.fingerprint !== localFingerprint) {
-      const entity = await this.write(local, remote.revision);
+      const entity = await this.write(local, remote.revision, signal);
       return { entity, metadata: { revision: entity.revision, fingerprint: localFingerprint }, direction: "upload" };
     }
     if (previous?.fingerprint === localFingerprint && previous.revision !== remote.revision) {
@@ -597,7 +601,7 @@ export class BrowserSyncClient {
     throw new SyncConflictError();
   }
 
-  private async write(local: { entityType: SyncEntity["entityType"]; entityId: string; value: unknown }, revision: number | null): Promise<SyncEntity> {
+  private async write(local: { entityType: SyncEntity["entityType"]; entityId: string; value: unknown }, revision: number | null, signal?: AbortSignal): Promise<SyncEntity> {
     const collection = local.entityType === "learning-plan" ? "plans" : "daily-records";
     const response = await this.request(`/api/sync/${collection}/${encodeURIComponent(local.entityId)}`, {
       method: "PUT",
@@ -608,6 +612,7 @@ export class BrowserSyncClient {
         ...(revision === null ? { "If-None-Match": "*" } : { "If-Match": `"${revision}"` }),
       },
       body: JSON.stringify(local.value),
+      signal,
     });
     const body = await readBoundedJson<unknown>(
       response, MAX_SYNC_RESPONSE_BYTES, "云端同步响应超过安全上限，请稍后重试",

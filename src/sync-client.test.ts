@@ -66,6 +66,25 @@ function fakeServer(initial: RemoteEntity[] = []) {
 describe("browser sync client", () => {
   beforeEach(() => localStorage.clear());
 
+  it("propagates cancellation to sync requests without committing metadata", async () => {
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | null | undefined;
+    const request = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      observedSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      });
+    }) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request);
+    const pending = client.sync(learningState(), controller.signal);
+
+    controller.abort();
+
+    await expect(pending).rejects.toBeDefined();
+    expect(observedSignal).toBe(controller.signal);
+    expect(localStorage.getItem(SYNC_METADATA_KEY)).toBeNull();
+  });
+
   it("lists active devices and requests targeted revocation with an encoded ID", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
