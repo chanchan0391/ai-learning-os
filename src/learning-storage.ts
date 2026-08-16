@@ -23,6 +23,13 @@ const CURRENT_AND_LEGACY_KEYS = [
   LEGACY_LEARNING_PLAN_KEY,
 ] as const;
 
+export class LearningStorageError extends Error {
+  constructor(options?: ErrorOptions) {
+    super("无法把更改保存到此浏览器；更改未应用。请释放存储空间或关闭无痕/严格隐私模式后重试。", options);
+    this.name = "LearningStorageError";
+  }
+}
+
 export interface ArchivedLearningState {
   archivedAt: string;
   state: LearningState;
@@ -167,7 +174,7 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
           this.removeCurrentKeys();
           return { state: null, status: "recovered" };
         }
-        this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(selected));
+        this.writeCurrentMirror(selected);
         return { state: selected, status: "valid" };
       }
       const source = this.firstStoredValue();
@@ -189,10 +196,12 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
   }
 
   save(state: LearningState): void {
-    this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(state));
     const collection = this.readActiveCollection() ?? { selectedPlanId: null, states: [] };
     const states = [state, ...collection.states.filter((item) => item.plan.id !== state.plan.id)];
+    // The collection is canonical. Commit it before the compatibility mirror so
+    // a mirror failure can never make a successful edit disappear on reload.
     this.writeActiveCollection({ selectedPlanId: state.plan.id, states });
+    this.writeCurrentMirror(state);
   }
 
   loadActive(): LearningState[] {
@@ -214,7 +223,7 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
       : null;
     this.writeActiveCollection({ selectedPlanId, states: uniqueStates });
     const selected = uniqueStates.find((state) => state.plan.id === selectedPlanId);
-    if (selected) this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(selected));
+    if (selected) this.writeCurrentMirror(selected);
     else this.removeCurrentKeys();
     return structuredClone(uniqueStates);
   }
@@ -225,7 +234,7 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
     const state = collection.states.find((item) => item.plan.id === planId);
     if (!state) throw new Error("找不到要切换的学习目标");
     this.writeActiveCollection({ selectedPlanId: planId, states: collection.states });
-    this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(state));
+    this.writeCurrentMirror(state);
     return structuredClone(state);
   }
 
@@ -271,14 +280,19 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
   }
 
   saveDailyBudget(minutes: number | null): void {
-    if (minutes === null) {
-      this.storage.removeItem(PORTFOLIO_DAILY_BUDGET_KEY);
-      return;
+    try {
+      if (minutes === null) {
+        this.storage.removeItem(PORTFOLIO_DAILY_BUDGET_KEY);
+        return;
+      }
+      if (!Number.isInteger(minutes) || minutes < 15 || minutes > 1440) {
+        throw new RangeError("每日总时间预算必须是 15–1440 分钟的整数");
+      }
+      this.storage.setItem(PORTFOLIO_DAILY_BUDGET_KEY, String(minutes));
+    } catch (error) {
+      if (error instanceof RangeError) throw error;
+      throw new LearningStorageError({ cause: error });
     }
-    if (!Number.isInteger(minutes) || minutes < 15 || minutes > 1440) {
-      throw new RangeError("每日总时间预算必须是 15–1440 分钟的整数");
-    }
-    this.storage.setItem(PORTFOLIO_DAILY_BUDGET_KEY, String(minutes));
   }
 
   mergeArchived(entries: ArchivedLearningState[]): ArchivedLearningState[] {
@@ -347,7 +361,7 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
     if (nextArchived.length > 0) this.storage.setItem(ARCHIVED_LEARNING_STATES_KEY, JSON.stringify(nextArchived));
     else this.storage.removeItem(ARCHIVED_LEARNING_STATES_KEY);
     const selected = nextActive.find((state) => state.plan.id === selectedPlanId);
-    if (selected) this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(selected));
+    if (selected) this.writeCurrentMirror(selected);
     else this.removeCurrentKeys();
 
     return {
@@ -371,7 +385,7 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
     if (dailyBudgetMinutes === null) this.storage.removeItem(PORTFOLIO_DAILY_BUDGET_KEY);
     else this.storage.setItem(PORTFOLIO_DAILY_BUDGET_KEY, String(dailyBudgetMinutes));
     const selected = states.find((state) => state.plan.id === selectedPlanId);
-    if (selected) this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(selected));
+    if (selected) this.writeCurrentMirror(selected);
     else this.removeCurrentKeys();
     this.removeLegacyKeys();
   }
@@ -389,7 +403,7 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
     const remaining = collection?.states.filter((item) => item.plan.id !== state.plan.id) ?? [];
     const nextPlanId = remaining[0]?.plan.id ?? null;
     this.writeActiveCollection({ selectedPlanId: nextPlanId, states: remaining });
-    if (remaining[0]) this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(remaining[0]));
+    if (remaining[0]) this.writeCurrentMirror(remaining[0]);
     else this.removeCurrentKeys();
     return archived;
   }
@@ -447,6 +461,19 @@ export class BrowserLearningStateRepository implements LearningStateRepository {
   }
 
   private writeActiveCollection(collection: { selectedPlanId: string | null; states: LearningState[] }): void {
-    this.storage.setItem(ACTIVE_LEARNING_STATES_KEY, JSON.stringify(collection));
+    try {
+      this.storage.setItem(ACTIVE_LEARNING_STATES_KEY, JSON.stringify(collection));
+    } catch (error) {
+      throw new LearningStorageError({ cause: error });
+    }
+  }
+
+  private writeCurrentMirror(state: LearningState): void {
+    try {
+      this.storage.setItem(CURRENT_LEARNING_STATE_KEY, JSON.stringify(state));
+    } catch {
+      // The active collection is the canonical durable record. This mirror is
+      // retained only for backwards compatibility and recovery from old data.
+    }
   }
 }

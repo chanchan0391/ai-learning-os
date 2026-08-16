@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { completeCurrentDay, getCurrentRecord, initializeLearningState, startStageMasteryFollowUp, toggleCurrentTask } from "./learning-state";
 import {
   BrowserLearningStateRepository,
+  LearningStorageError,
   ACTIVE_LEARNING_STATES_KEY,
   ARCHIVED_LEARNING_STATES_KEY,
   CURRENT_LEARNING_STATE_KEY,
@@ -113,6 +114,42 @@ describe("browser learning-state repository", () => {
     };
 
     expect(new BrowserLearningStateRepository(deniedStorage).load()).toEqual({ state: null, status: "recovered" });
+  });
+
+  it("commits the canonical collection before the compatibility mirror", () => {
+    const state = initializeLearningState(generateLearningPlan(goal));
+    const mirrorDeniedStorage: Storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key) => localStorage.getItem(key),
+      key: (index) => localStorage.key(index),
+      removeItem: (key) => localStorage.removeItem(key),
+      setItem: (key, value) => {
+        if (key === CURRENT_LEARNING_STATE_KEY) throw new DOMException("quota", "QuotaExceededError");
+        localStorage.setItem(key, value);
+      },
+    };
+    const repository = new BrowserLearningStateRepository(mirrorDeniedStorage);
+
+    repository.save(state);
+
+    expect(repository.load()).toEqual({ state, status: "valid" });
+    expect(localStorage.getItem(CURRENT_LEARNING_STATE_KEY)).toBeNull();
+  });
+
+  it("reports a stable recoverable error when the canonical write fails", () => {
+    const state = initializeLearningState(generateLearningPlan(goal));
+    const quotaStorage: Storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key) => localStorage.getItem(key),
+      key: (index) => localStorage.key(index),
+      removeItem: (key) => localStorage.removeItem(key),
+      setItem: () => { throw new DOMException("private detail", "QuotaExceededError"); },
+    };
+
+    expect(() => new BrowserLearningStateRepository(quotaStorage).save(state)).toThrow(LearningStorageError);
+    expect(() => new BrowserLearningStateRepository(quotaStorage).save(state)).toThrow("更改未应用");
   });
 
   it("removes every supported local version", () => {

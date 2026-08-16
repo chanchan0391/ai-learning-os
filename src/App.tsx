@@ -56,7 +56,7 @@ import {
   weeklyLearningReview,
   weeklyLearningTrend,
 } from "./learning-state";
-import { BrowserLearningStateRepository, previewPortfolioMerge, type ArchivedLearningState } from "./learning-storage";
+import { BrowserLearningStateRepository, LearningStorageError, previewPortfolioMerge, type ArchivedLearningState } from "./learning-storage";
 import { completionRate, LEARNING_GOAL_LIMITS, validateGoal } from "./planner";
 import { AuthSessionExpiredError, BrowserSyncClient, PermanentSyncError, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
@@ -321,11 +321,13 @@ export function App() {
   }, [learningState?.plan.id, learningState?.currentDay]);
 
   function saveState(next: LearningState | null, enqueueSync = true) {
-    learningStateRef.current = next;
-    setLearningState(next);
     if (next) learningStateRepository.save(next);
     else {
       learningStateRepository.clear();
+    }
+    learningStateRef.current = next;
+    setLearningState(next);
+    if (!next) {
       setDailyBudgetMinutes(null);
       setDailyBudgetDraft("");
     }
@@ -333,16 +335,23 @@ export function App() {
     if (enqueueSync && next && authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
   }
 
-  function updateState(update: (current: LearningState) => LearningState) {
-    setLearningState((current) => {
-      if (!current) return current;
+  function updateState(update: (current: LearningState) => LearningState): boolean {
+    const current = learningStateRef.current;
+    if (!current) return false;
+    try {
       const next = update(current);
-      learningStateRef.current = next;
       learningStateRepository.save(next);
+      learningStateRef.current = next;
+      setLearningState(next);
       setActiveGoals(learningStateRepository.loadActive());
       if (authStateRef.current.status === "signed-in") autoSyncQueue.enqueue();
-      return next;
-    });
+      return true;
+    } catch (error) {
+      if (!(error instanceof LearningStorageError)) throw error;
+      setStorageNotice(error.message);
+      setStorageNoticeIsError(true);
+      return false;
+    }
   }
 
   function resetGoalWorkspace(next: LearningState | null) {
@@ -390,10 +399,15 @@ export function App() {
   }
 
   function beginParallelGoal() {
-    learningStateRepository.deselectActive();
-    resetGoalWorkspace(null);
-    setStorageNotice("现有目标已安全保留。创建后可在多个目标之间切换。");
-    setStorageNoticeIsError(false);
+    try {
+      learningStateRepository.deselectActive();
+      resetGoalWorkspace(null);
+      setStorageNotice("现有目标已安全保留。创建后可在多个目标之间切换。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法新建并行目标");
+      setStorageNoticeIsError(true);
+    }
   }
 
   function saveDailyBudget(event: FormEvent) {
@@ -404,19 +418,29 @@ export function App() {
       setStorageNoticeIsError(true);
       return;
     }
-    learningStateRepository.saveDailyBudget(minutes);
-    setDailyBudgetMinutes(minutes);
-    setDailyBudgetDraft(String(minutes));
-    setStorageNotice(`跨目标每日总时间预算已设为 ${minutes} 分钟。`);
-    setStorageNoticeIsError(false);
+    try {
+      learningStateRepository.saveDailyBudget(minutes);
+      setDailyBudgetMinutes(minutes);
+      setDailyBudgetDraft(String(minutes));
+      setStorageNotice(`跨目标每日总时间预算已设为 ${minutes} 分钟。`);
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法保存每日总时间预算");
+      setStorageNoticeIsError(true);
+    }
   }
 
   function clearDailyBudget() {
-    learningStateRepository.saveDailyBudget(null);
-    setDailyBudgetMinutes(null);
-    setDailyBudgetDraft("");
-    setStorageNotice("已清除跨目标每日总时间预算。");
-    setStorageNoticeIsError(false);
+    try {
+      learningStateRepository.saveDailyBudget(null);
+      setDailyBudgetMinutes(null);
+      setDailyBudgetDraft("");
+      setStorageNotice("已清除跨目标每日总时间预算。");
+      setStorageNoticeIsError(false);
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法清除每日总时间预算");
+      setStorageNoticeIsError(true);
+    }
   }
 
   async function createPlan(event: FormEvent) {
@@ -450,7 +474,12 @@ export function App() {
 
   function toggleTask(taskId: string) {
     if (!learningState) return;
-    saveState(toggleCurrentTask(learningState, taskId));
+    try {
+      saveState(toggleCurrentTask(learningState, taskId));
+    } catch (error) {
+      setStorageNotice(error instanceof Error ? error.message : "无法保存任务进度");
+      setStorageNoticeIsError(true);
+    }
   }
 
   async function startTeaching(task: DailyTask) {
@@ -598,7 +627,7 @@ export function App() {
   function createCurrentStageNote() {
     if (!currentStage) return;
     try {
-      updateState((current) => generateStageNote(current, currentStage.id));
+      if (!updateState((current) => generateStageNote(current, currentStage.id))) return;
       setStorageNotice(`已生成“${currentStage.title}”阶段笔记，可继续编辑。`);
       setStorageNoticeIsError(false);
     } catch (error) {
@@ -623,7 +652,7 @@ export function App() {
   function saveNewStageNote() {
     if (!currentStage) return;
     try {
-      updateState((current) => createStageNote(current, currentStage.id, noteDraft));
+      if (!updateState((current) => createStageNote(current, currentStage.id, noteDraft))) return;
       setCreatingStageNote(false);
       setStorageNotice("阶段笔记已新建；后续可按需追加学习证据。");
       setStorageNoticeIsError(false);
@@ -635,7 +664,7 @@ export function App() {
 
   function appendNewEvidence(note: StageLearningNote) {
     try {
-      updateState((current) => appendStageNoteEvidence(current, note.id));
+      if (!updateState((current) => appendStageNoteEvidence(current, note.id))) return;
       setStorageNotice("已追加新学习证据，原有笔记内容保持不变。");
       setStorageNoticeIsError(false);
     } catch (error) {
@@ -646,7 +675,7 @@ export function App() {
 
   function saveNoteDraft() {
     try {
-      updateState((current) => updateStageNote(current, editingNoteId, noteDraft));
+      if (!updateState((current) => updateStageNote(current, editingNoteId, noteDraft))) return;
       setEditingNoteId("");
       setStorageNotice("阶段笔记已保存。");
       setStorageNoticeIsError(false);
@@ -675,7 +704,7 @@ export function App() {
   function confirmDeleteStageNote() {
     if (!pendingDeleteNote) return;
     const title = pendingDeleteNote.title;
-    updateState((current) => deleteStageNote(current, pendingDeleteNote.id));
+    if (!updateState((current) => deleteStageNote(current, pendingDeleteNote.id))) return;
     if (editingNoteId === pendingDeleteNote.id) setEditingNoteId("");
     setPendingDeleteNote(null);
     setStorageNotice(`已删除“${title}”阶段笔记。`);
@@ -684,7 +713,7 @@ export function App() {
 
   function createRetrospective(stageId: string) {
     try {
-      updateState((current) => generateStageRetrospective(current, stageId));
+      if (!updateState((current) => generateStageRetrospective(current, stageId))) return;
       setStorageNotice("阶段结束回顾已生成；请检查并补充你真正想迁移到下一阶段的能力。");
       setStorageNoticeIsError(false);
     } catch (error) {
@@ -705,7 +734,7 @@ export function App() {
 
   function saveRetrospectiveDraft() {
     try {
-      updateState((current) => updateStageRetrospective(current, editingRetrospectiveId, retrospectiveDraft));
+      if (!updateState((current) => updateStageRetrospective(current, editingRetrospectiveId, retrospectiveDraft))) return;
       setEditingRetrospectiveId("");
       setStorageNotice("阶段回顾已保存。");
       setStorageNoticeIsError(false);

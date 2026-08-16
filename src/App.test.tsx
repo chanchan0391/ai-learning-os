@@ -55,6 +55,27 @@ describe("learning data controls", () => {
     expect(result.violations).toEqual([]);
   });
 
+  it("keeps the visible task state unchanged when browser persistence is unavailable", async () => {
+    const user = userEvent.setup();
+    const state = initializeLearningState(generateLearningPlan(goal, new Date("2026-07-31T10:00:00.000Z")));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    render(<App />);
+    const task = getCurrentRecord(state).tasks.find((item) => item.type === "reflect")!;
+    const before = localStorage.getItem(ACTIVE_STATES_KEY);
+    const setItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === ACTIVE_STATES_KEY) throw new DOMException("private quota detail", "QuotaExceededError");
+      return setItem.call(this, key, value);
+    });
+
+    await user.click(screen.getByRole("button", { name: new RegExp(task.title) }));
+
+    expect(screen.getByRole("alert").textContent).toContain("无法把更改保存到此浏览器；更改未应用");
+    expect(screen.getByText("0/4 完成")).toBeTruthy();
+    expect(localStorage.getItem(ACTIVE_STATES_KEY)).toBe(before);
+    expect(screen.queryByText("private quota detail")).toBeNull();
+  });
+
   it("switches between parallel active goals without losing either plan", async () => {
     const user = userEvent.setup();
     const first = initializeLearningState(generateLearningPlan(goal, new Date("2026-07-31T10:00:00.000Z")));
