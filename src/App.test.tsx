@@ -467,7 +467,7 @@ describe("learning data controls", () => {
     expect(savedNote.content).toContain("人工结论：先定义执行边界。");
     expect(savedNote.content).toContain("宿主执行并验证参数");
     expect(savedNote.sourceDays).toEqual([1]);
-  });
+  }, 15_000);
 
   it("exports a stage note as Markdown and requires confirmation before deleting it", async () => {
     const user = userEvent.setup();

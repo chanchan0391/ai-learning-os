@@ -119,6 +119,7 @@ export class AutoSyncQueue {
   private retryIndex = 0;
   private started = false;
   private volatileMetadata = false;
+  private clearGeneration = 0;
   private persisted: PersistedAutoSyncStatus;
 
   constructor(
@@ -138,11 +139,21 @@ export class AutoSyncQueue {
     const fallback = storageLeaseRunner(storage, this.setTimer, this.clearTimer);
     this.runExclusive = options.runExclusive ?? (async (task) => {
       if (!navigator.locks) return fallback(task);
-      return navigator.locks.request(AUTO_SYNC_LOCK_NAME, { ifAvailable: true }, async (lock) => {
-        if (!lock) return false;
-        await task();
-        return true;
-      });
+      let taskStarted = false;
+      try {
+        return await navigator.locks.request(AUTO_SYNC_LOCK_NAME, { ifAvailable: true }, async (lock) => {
+          if (!lock) return false;
+          taskStarted = true;
+          await task();
+          return true;
+        });
+      } catch (error) {
+        // A denied or broken LockManager must not strand already-persisted work.
+        // Never repeat a task whose callback actually started, though: the
+        // reconciliation may already have produced remote side effects.
+        if (taskStarted) throw error;
+        return fallback(task);
+      }
     });
     this.persisted = this.load();
   }
@@ -203,6 +214,7 @@ export class AutoSyncQueue {
 
   clear(): void {
     this.stop();
+    this.clearGeneration += 1;
     try {
       this.storage.removeItem(AUTO_SYNC_STATUS_KEY);
       this.volatileMetadata = false;
@@ -239,10 +251,12 @@ export class AutoSyncQueue {
         return;
       }
       const generation = this.generation;
+      const clearGeneration = this.clearGeneration;
       const changeId = this.persisted.changeId;
       this.emit("syncing");
       try {
         await this.synchronize();
+        if (clearGeneration !== this.clearGeneration) return;
         this.retryIndex = 0;
         const latest = this.volatileMetadata ? this.persisted : this.load();
         const moreWork = generation !== this.generation
@@ -251,6 +265,7 @@ export class AutoSyncQueue {
         this.emit(moreWork ? "pending" : "idle");
         if (moreWork) this.schedule(this.debounceMs);
       } catch (error: unknown) {
+        if (clearGeneration !== this.clearGeneration) return;
         if (!this.volatileMetadata) this.persisted = this.load();
         if (!this.persisted.pending) this.setPending(true, undefined, changeId ?? uniqueId());
         if (!this.shouldRetry(error)) {
@@ -271,6 +286,23 @@ export class AutoSyncQueue {
       this.persisted = this.load();
       this.emit(this.persisted.pending ? "pending" : "idle");
       if (this.persisted.pending) this.schedule(Math.min(this.debounceMs, 500));
+    }).catch((error: unknown) => {
+      // Coordination itself can fail before the task callback runs. Preserve
+      // the pending generation and use the same bounded retry policy as a
+      // transient synchronization failure.
+      if (!this.persisted.pending) this.setPending(true, undefined, uniqueId());
+      if (!this.shouldRetry(error)) {
+        this.emit("blocked");
+        return;
+      }
+      if (!this.isOnline()) {
+        this.emit("offline");
+        return;
+      }
+      this.emit("error");
+      const delay = this.retryDelaysMs[Math.min(this.retryIndex, this.retryDelaysMs.length - 1)] ?? 30_000;
+      this.retryIndex += 1;
+      this.schedule(delay);
     }).finally(() => {
       this.running = null;
     });

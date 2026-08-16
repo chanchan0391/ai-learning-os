@@ -220,4 +220,68 @@ describe("automatic sync queue", () => {
     expect(queue.getStatus().phase).toBe("idle");
     queue.stop();
   });
+
+  it("falls back to the storage lease when Web Locks fails before granting a lock", async () => {
+    const originalLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request: vi.fn().mockRejectedValue(new DOMException("blocked", "SecurityError")) },
+    });
+    const synchronize = vi.fn(async () => undefined);
+    const queue = new AutoSyncQueue(localStorage, synchronize, () => undefined, { debounceMs: 10 });
+    queue.start();
+    queue.enqueue();
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    expect(queue.getStatus().phase).toBe("idle");
+    queue.stop();
+    if (originalLocks) Object.defineProperty(navigator, "locks", originalLocks);
+    else Reflect.deleteProperty(navigator, "locks");
+  });
+
+  it("preserves and retries work when exclusive coordination rejects", async () => {
+    const runExclusive = vi.fn()
+      .mockRejectedValueOnce(new Error("coordination unavailable"))
+      .mockImplementationOnce(async (task: () => Promise<void>) => { await task(); return true; });
+    const synchronize = vi.fn(async () => undefined);
+    const statuses: AutoSyncStatus[] = [];
+    const queue = new AutoSyncQueue(localStorage, synchronize, (status) => statuses.push(status), {
+      debounceMs: 10,
+      retryDelaysMs: [25],
+      runExclusive,
+    });
+    queue.start();
+    queue.enqueue();
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(statuses.at(-1)?.phase).toBe("error");
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!).pending).toBe(true);
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    expect(queue.getStatus().phase).toBe("idle");
+    queue.stop();
+  });
+
+  it("does not recreate cleared metadata when an in-flight sync settles", async () => {
+    let release!: () => void;
+    const synchronize = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    const statuses: AutoSyncStatus[] = [];
+    const queue = new AutoSyncQueue(localStorage, synchronize, (status) => statuses.push(status), {
+      debounceMs: 10,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+    queue.enqueue();
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.clear();
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(localStorage.getItem(AUTO_SYNC_STATUS_KEY)).toBeNull();
+    expect(statuses.at(-1)?.phase).toBe("idle");
+  });
 });
