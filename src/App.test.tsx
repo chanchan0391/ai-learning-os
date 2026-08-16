@@ -1016,9 +1016,11 @@ describe("learning data controls", () => {
     expect(sessionAttempts).toBe(1);
     await act(async () => vi.advanceTimersByTimeAsync(3_749));
     expect(sessionAttempts).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(sessionAttempts).toBe(2);
     unmount();
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
-    expect(sessionAttempts).toBe(1);
+    expect(sessionAttempts).toBe(2);
     vi.useRealTimers();
   });
 
