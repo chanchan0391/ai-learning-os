@@ -4,10 +4,83 @@ set -eu
 base_dir=${AI_LEARNING_DEPLOY_DIR:-"$HOME/services/ai-learning-os"}
 backup_dir=${AI_LEARNING_BACKUP_DIR:-"$HOME/backups/ai-learning-os"}
 df_bin=${AI_LEARNING_DF_BIN:-df}
+stat_bin=/usr/bin/stat
+id_bin=/usr/bin/id
+awk_bin=/usr/bin/awk
 min_free_bytes=${AI_LEARNING_MIN_FREE_BYTES:-5368709120}
 max_used_percent=${AI_LEARNING_MAX_DISK_USED_PERCENT:-90}
 min_free_inodes=${AI_LEARNING_MIN_FREE_INODES:-100000}
 max_inode_used_percent=${AI_LEARNING_MAX_INODE_USED_PERCENT:-90}
+
+read_stat_value() {
+  bsd_format=$1
+  gnu_format=$2
+  target=$3
+  value=$($stat_bin -f "$bsd_format" "$target" 2>/dev/null || true)
+  case "$value" in ''|*[!0-9]*) value=$($stat_bin -c "$gnu_format" "$target" 2>/dev/null || true) ;; esac
+  case "$value" in ''|*[!0-9]*) echo "Could not verify capacity monitor executable metadata" >&2; exit 1 ;; esac
+  printf '%s\n' "$value"
+}
+
+is_systemd_mapped_df() {
+  [ "$1" = 65534 ] && [ "$2" = 65534 ] && [ -n "${INVOCATION_ID:-}" ] \
+    && [ "$3" = /usr/bin/df ] && [ "$4" = /usr/bin ]
+}
+
+resolve_trusted_df() {
+  candidate=$1
+  require_root=false
+  case "$candidate" in
+    /*) resolved=$candidate ;;
+    */*) echo "df executable path must be absolute" >&2; return 2 ;;
+    *)
+      require_root=true
+      resolved=$(command -v "$candidate" 2>/dev/null || true)
+      case "$resolved" in /*) ;; *) echo "Could not resolve df executable to an absolute path" >&2; return 2 ;; esac
+      ;;
+  esac
+  executable_dir=${resolved%/*}
+  if [ -L "$executable_dir" ] || [ ! -d "$executable_dir" ] || [ -L "$resolved" ] || [ ! -f "$resolved" ] || [ ! -x "$resolved" ]; then
+    echo "df executable is missing or unsafe" >&2
+    return 2
+  fi
+  current_uid=$($id_bin -u)
+  executable_owner=$(read_stat_value '%u' '%u' "$resolved")
+  directory_owner=$(read_stat_value '%u' '%u' "$executable_dir")
+  if is_systemd_mapped_df "$executable_owner" "$directory_owner" "$resolved" "$executable_dir"; then
+    :
+  elif [ "$require_root" = true ]; then
+    [ "$executable_owner" = 0 ] && [ "$directory_owner" = 0 ] || {
+      echo "df resolved from PATH must be owned by root" >&2; return 2;
+    }
+  else
+    case "$executable_owner" in 0|"$current_uid") ;; *) echo "df executable has an unsafe owner" >&2; return 2 ;; esac
+    case "$directory_owner" in 0|"$current_uid") ;; *) echo "df executable directory has an unsafe owner" >&2; return 2 ;; esac
+  fi
+  executable_mode=$(read_stat_value '%Lp' '%a' "$resolved")
+  directory_mode=$(read_stat_value '%Lp' '%a' "$executable_dir")
+  if [ $((0$executable_mode & 022)) -ne 0 ] || [ $((0$directory_mode & 022)) -ne 0 ]; then
+    echo "df executable and directory must not be group or other writable" >&2
+    return 2
+  fi
+  if [ "$(read_stat_value '%l' '%h' "$resolved")" != 1 ]; then
+    echo "df executable must not be hard-linked" >&2
+    return 2
+  fi
+  printf '%s\n' "$resolved"
+}
+
+for trusted_system_tool in "$stat_bin" "$id_bin"; do
+  if [ -L "$trusted_system_tool" ] || [ ! -f "$trusted_system_tool" ] || [ ! -x "$trusted_system_tool" ]; then
+    echo "Required trusted system executable is unavailable" >&2
+    exit 2
+  fi
+done
+if [ ! -x "$awk_bin" ]; then
+  echo "Required trusted system executable is unavailable" >&2
+  exit 2
+fi
+df_bin=$(resolve_trusted_df "$df_bin")
 
 validate_unsigned_integer() {
   value=$1
@@ -47,7 +120,7 @@ read_capacity() {
     "$df_bin" -Pk "$directory"
   else
     "$df_bin" -Pi "$directory"
-  fi | awk 'NR > 1 { available = $(NF - 2); used = $(NF - 1) } END {
+  fi | "$awk_bin" 'NR > 1 { available = $(NF - 2); used = $(NF - 1) } END {
     sub(/%$/, "", used)
     if (available !~ /^[0-9]+$/ || used !~ /^[0-9]+$/) exit 1
     print available, used
@@ -94,11 +167,6 @@ if [ "$min_free_bytes" -lt 1 ] || [ "$min_free_inodes" -lt 1 ]; then
   echo "Minimum free capacity boundaries must be positive" >&2
   exit 2
 fi
-if ! command -v "$df_bin" >/dev/null 2>&1; then
-  echo "df is required for host capacity monitoring" >&2
-  exit 2
-fi
-
 validate_directory "$base_dir" "Deployment"
 validate_directory "$backup_dir" "Backup"
 check_directory "$base_dir" "Deployment"

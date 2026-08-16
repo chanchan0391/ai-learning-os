@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
@@ -107,5 +107,34 @@ describe("dev host capacity monitoring", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Deployment directory must be a real directory, not a symlink");
+  });
+
+  it("rejects a symlinked df before reading capacity", () => {
+    const fixture = makeFixture();
+    const marker = join(dirname(fixture.df), "df-called");
+    const realDf = join(dirname(fixture.df), "real-df");
+    writeFileSync(realDf, `#!/bin/sh\ntouch "${marker}"\n`);
+    chmodSync(realDf, 0o755);
+    const linkedDf = join(dirname(fixture.df), "linked-df");
+    symlinkSync(realDf, linkedDf);
+
+    const result = runCapacity(fixture, { AI_LEARNING_DF_BIN: linkedDf });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("df executable is missing or unsafe");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("rejects a group-writable df before reading capacity", () => {
+    const fixture = makeFixture();
+    const marker = join(dirname(fixture.df), "df-called");
+    writeFileSync(fixture.df, `#!/bin/sh\ntouch "${marker}"\n`);
+    chmodSync(fixture.df, 0o775);
+
+    const result = runCapacity(fixture);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("must not be group or other writable");
+    expect(existsSync(marker)).toBe(false);
   });
 });

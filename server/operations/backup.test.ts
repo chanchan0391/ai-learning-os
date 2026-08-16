@@ -354,6 +354,33 @@ describe("dev database backup monitoring", () => {
     expect(result.stderr).toContain("Latest database backup job did not succeed: exit-code");
   });
 
+  it("rejects a symlinked systemctl before querying backup state", () => {
+    const fixture = makeHealthFixture();
+    const marker = join(dirname(fixture.systemctl), "systemctl-called");
+    const realSystemctl = executable(join(dirname(fixture.systemctl), "real-systemctl"), `#!/bin/sh\ntouch "${marker}"\n`);
+    const linkedSystemctl = join(dirname(fixture.systemctl), "linked-systemctl");
+    symlinkSync(realSystemctl, linkedSystemctl);
+
+    const result = runBackupHealth(fixture, { AI_LEARNING_SYSTEMCTL_BIN: linkedSystemctl });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("systemctl executable is missing or unsafe");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("rejects a group-writable systemctl before querying backup state", () => {
+    const fixture = makeHealthFixture();
+    const marker = join(dirname(fixture.systemctl), "systemctl-called");
+    executable(fixture.systemctl, `#!/bin/sh\ntouch "${marker}"\n`);
+    chmodSync(fixture.systemctl, 0o775);
+
+    const result = runBackupHealth(fixture);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("must not be group or other writable");
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("reports a stale backup even when the last job result was successful", () => {
     const fixture = makeHealthFixture();
     const staleTime = new Date(Date.now() - 3_600_000);
