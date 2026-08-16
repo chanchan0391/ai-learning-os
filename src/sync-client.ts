@@ -108,6 +108,28 @@ export class AuthSessionExpiredError extends Error {
   }
 }
 
+export class PermanentSyncError extends Error {
+  constructor(message = "同步请求无法完成，请手动重试；如持续失败，请导出备份并联系支持。") {
+    super(message);
+    this.name = "PermanentSyncError";
+  }
+}
+
+function throwForSyncResponse(response: Response, body: unknown, fallback: string): void {
+  if (response.status === 401) throw new AuthSessionExpiredError();
+  if (response.ok) return;
+  if (response.status === 409 && responseError(body, "") === "revision-conflict") {
+    throw new SyncConflictError();
+  }
+  if (response.status === 507) {
+    throw new PermanentSyncError("云端同步空间已满，请先导出备份并联系支持。");
+  }
+  if (response.status >= 400 && response.status < 500 && ![408, 425, 429].includes(response.status)) {
+    throw new PermanentSyncError();
+  }
+  throw new Error(fallback);
+}
+
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === "object") {
@@ -530,8 +552,8 @@ export class BrowserSyncClient {
       const body = await readBoundedJson<{ changes?: SyncEntity[]; cursor?: string; hasMore?: boolean; error?: string }>(
         response, MAX_SYNC_RESPONSE_BYTES, "云端同步响应超过安全上限，请稍后重试",
       );
-      if (response.status === 401) throw new AuthSessionExpiredError();
-      if (!response.ok || !Array.isArray(body.changes)) throw new Error(responseError(body, fallbackError));
+      throwForSyncResponse(response, body, fallbackError);
+      if (!Array.isArray(body.changes)) throw new Error("云端同步响应格式无效，请稍后重试");
       if (body.changes.length > MAX_SYNC_PAGE_ENTITIES) {
         throw new Error("云端同步分页超过安全上限，请稍后重试");
       }
@@ -589,9 +611,7 @@ export class BrowserSyncClient {
     const body = await readBoundedJson<unknown>(
       response, MAX_SYNC_RESPONSE_BYTES, "云端同步响应超过安全上限，请稍后重试",
     );
-    if (response.status === 401) throw new AuthSessionExpiredError();
-    if (response.status === 409) throw new SyncConflictError();
-    if (!response.ok) throw new Error(responseError(body, "云端写入失败"));
+    throwForSyncResponse(response, body, "云端写入暂时失败，请稍后重试");
     if (!isSyncEntity(body)
       || body.entityType !== local.entityType
       || body.entityId !== local.entityId) {

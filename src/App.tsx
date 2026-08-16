@@ -58,7 +58,7 @@ import {
 } from "./learning-state";
 import { BrowserLearningStateRepository, previewPortfolioMerge, type ArchivedLearningState } from "./learning-storage";
 import { completionRate, LEARNING_GOAL_LIMITS, validateGoal } from "./planner";
-import { AuthSessionExpiredError, BrowserSyncClient, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
+import { AuthSessionExpiredError, BrowserSyncClient, PermanentSyncError, SyncConflictError, type ActiveDevice, type AuthState, type SyncConflictPreview } from "./sync-client";
 import { AutoSyncQueue, type AutoSyncStatus } from "./sync-queue";
 import { readBoundedJson } from "./bounded-json-response";
 import { agentResponseError, validateEvaluationResponse, validateLearningPlanResponse, validateRecoveryPlanResponse, validateReviewAssessmentResponse, validateTeachingSessionResponse } from "./agent-response-validation";
@@ -90,7 +90,7 @@ function formatSyncStatus(status: AutoSyncStatus): string {
   if (status.phase === "pending") return "等待自动同步";
   if (status.phase === "syncing") return "正在同步";
   if (status.phase === "error") return "同步失败 · 将自动重试";
-  if (status.phase === "blocked") return "同步冲突 · 需要选择";
+  if (status.phase === "blocked") return "同步已暂停 · 需要处理";
   if (status.lastSyncedAt) {
     return `上次同步 ${new Date(status.lastSyncedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
   }
@@ -202,7 +202,7 @@ export function App() {
       setAutoSyncStatus(status);
       setIsSyncing(status.phase === "syncing");
     },
-    { shouldRetry: (error) => !(error instanceof SyncConflictError || error instanceof AuthSessionExpiredError) },
+    { shouldRetry: (error) => !(error instanceof SyncConflictError || error instanceof AuthSessionExpiredError || error instanceof PermanentSyncError) },
   ));
   const plan = learningState?.plan ?? null;
   const activePortfolio = useMemo(() => activeGoalPortfolioOverview(activeGoals), [activeGoals]);

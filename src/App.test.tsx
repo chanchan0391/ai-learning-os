@@ -1053,6 +1053,35 @@ describe("learning data controls", () => {
     vi.useRealTimers();
   });
 
+  it("pauses automatic retries after a permanent sync request failure", async () => {
+    vi.useFakeTimers();
+    let syncAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") {
+        return Response.json({ authenticated: true, principal: { userId: "user-1", deviceId: "device-1" } });
+      }
+      if (url.pathname === "/api/sync/changes") {
+        syncAttempts += 1;
+        return Response.json({ error: "private-database-detail" }, { status: 400 });
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+    await act(async () => undefined);
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(screen.getByText("同步已暂停 · 需要处理")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("同步请求无法完成");
+    expect(screen.getByRole("alert").textContent).not.toContain("private-database-detail");
+    expect(syncAttempts).toBe(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(syncAttempts).toBe(1);
+    vi.useRealTimers();
+  });
+
   it("confirms account deletion before clearing cloud and local learning data", async () => {
     const user = userEvent.setup();
     const requests: Array<{ path: string; method: string }> = [];

@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeLearningState, toggleCurrentTask } from "./learning-state";
 import { generateLearningPlan } from "./planner";
-import { BrowserSyncClient, SYNC_METADATA_KEY, SyncConflictError } from "./sync-client";
+import { BrowserSyncClient, PermanentSyncError, SYNC_METADATA_KEY, SyncConflictError } from "./sync-client";
 
 interface RemoteEntity {
   entityType: "learning-plan" | "daily-record";
@@ -284,6 +284,45 @@ describe("browser sync client", () => {
     await expect(new BrowserSyncClient(localStorage, request).sync(null))
       .rejects.toThrow("云端同步响应超过安全上限，请稍后重试");
     expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies permanent client failures without exposing server details", async () => {
+    const request = vi.fn(async () => Response.json({
+      error: "database-column-and-private-request-detail",
+      message: "sensitive server detail",
+    }, { status: 400 })) as typeof fetch;
+
+    const promise = new BrowserSyncClient(localStorage, request).sync(null);
+
+    await expect(promise).rejects.toBeInstanceOf(PermanentSyncError);
+    await expect(promise).rejects.not.toThrow(/database|sensitive/);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps service outages retriable with a stable client message", async () => {
+    const request = vi.fn(async () => Response.json({ error: "private-upstream-name" }, { status: 503 })) as typeof fetch;
+
+    await expect(new BrowserSyncClient(localStorage, request).sync(null))
+      .rejects.toThrow("无法读取云端进度");
+  });
+
+  it("distinguishes revision conflicts from permanent idempotency failures", async () => {
+    const state = learningState();
+    for (const [code, errorType] of [
+      ["revision-conflict", SyncConflictError],
+      ["idempotency-mismatch", PermanentSyncError],
+    ] as const) {
+      let reads = 0;
+      const request = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        if (!init?.method) {
+          reads += 1;
+          return Response.json({ changes: [], cursor: `cursor-${reads}` });
+        }
+        return Response.json({ error: code }, { status: 409 });
+      }) as typeof fetch;
+
+      await expect(new BrowserSyncClient(localStorage, request).sync(state)).rejects.toBeInstanceOf(errorType);
+    }
   });
 
   it("stops a snapshot after the total distinct entity limit", async () => {
