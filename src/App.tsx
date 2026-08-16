@@ -237,17 +237,32 @@ export function App() {
 
   useEffect(() => {
     let active = true;
-    void syncClient.getAuthState().then((state) => {
-      if (!active) return;
-      authStateRef.current = state;
-      setAuthState(state);
-      if (state.status === "signed-in") {
-        autoSyncQueue.start();
-        autoSyncQueue.enqueue();
-      }
-    });
+    let refreshInFlight: Promise<void> | null = null;
+    const refreshAuthState = () => {
+      if (refreshInFlight) return refreshInFlight;
+      refreshInFlight = syncClient.getAuthState().then((state) => {
+        if (!active) return;
+        authStateRef.current = state;
+        setAuthState(state);
+        if (state.status === "signed-in") {
+          autoSyncQueue.start();
+          autoSyncQueue.enqueue();
+        } else {
+          autoSyncQueue.stop();
+        }
+      }).finally(() => {
+        refreshInFlight = null;
+      });
+      return refreshInFlight;
+    };
+    const handleOnline = () => {
+      if (authStateRef.current.status === "local-only") void refreshAuthState();
+    };
+    void refreshAuthState();
+    window.addEventListener("online", handleOnline);
     return () => {
       active = false;
+      window.removeEventListener("online", handleOnline);
       autoSyncQueue.stop();
     };
   }, [autoSyncQueue]);
@@ -1142,7 +1157,7 @@ export function App() {
   const accountControls = authState.status === "signed-in" ? (
     <div className="account-controls" aria-label="账号与同步">
       <span className="sync-status">已登录</span>
-      <span className={`sync-detail sync-${autoSyncStatus.phase}`}>{formatSyncStatus(autoSyncStatus)}</span>
+      <span className={`sync-detail sync-${autoSyncStatus.phase}`} aria-live="polite" aria-atomic="true">{formatSyncStatus(autoSyncStatus)}</span>
       <button className="text-button sync-button" disabled={isSyncing} onClick={syncLearningData}>{isSyncing ? "正在同步…" : "立即同步"}</button>
       <button className="text-button" disabled={isSyncing} onClick={openDeviceManager}>管理设备</button>
       <button className="text-button" onClick={logout}>退出</button>
@@ -1152,7 +1167,7 @@ export function App() {
   ) : authState.status === "signed-out" ? (
     <a className="text-button account-link" href={`/api/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`}>登录并同步</a>
   ) : authState.status === "local-only" ? (
-    <span className="sync-status">仅本地</span>
+    <span className="sync-status" aria-live="polite">仅本地 · 恢复联网后自动重试</span>
   ) : null;
 
   const importDialog = pendingImport && (
