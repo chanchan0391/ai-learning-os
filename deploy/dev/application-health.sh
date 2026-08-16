@@ -5,7 +5,9 @@ base_dir=${AI_LEARNING_DEPLOY_DIR:-"$HOME/services/ai-learning-os"}
 systemctl_bin=${AI_LEARNING_SYSTEMCTL_BIN:-systemctl}
 curl_bin=${AI_LEARNING_CURL_BIN:-curl}
 node_bin=${AI_LEARNING_NODE_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/node"}
-stat_bin=${AI_LEARNING_STAT_BIN:-stat}
+# The system image is read-only in the monitor unit, so use its absolute stat
+# binary to bootstrap ownership and permission checks without trusting PATH.
+stat_bin=/usr/bin/stat
 web_url=${AI_LEARNING_WEB_HEALTH_URL:-http://127.0.0.1:8088/}
 api_url=${AI_LEARNING_API_HEALTH_URL:-http://127.0.0.1:8787/api/health}
 
@@ -19,6 +21,62 @@ read_stat_value() {
   printf '%s\n' "$value"
 }
 
+resolve_trusted_executable() {
+  candidate=$1
+  label=$2
+  case "$candidate" in
+    /*) resolved=$candidate ;;
+    */*) echo "$label executable path must be absolute" >&2; return 2 ;;
+    *)
+      resolved=$(command -v "$candidate" 2>/dev/null || true)
+      case "$resolved" in
+        /*) ;;
+        *) echo "Could not resolve $label executable to an absolute path" >&2; return 2 ;;
+      esac
+      ;;
+  esac
+
+  executable_dir=${resolved%/*}
+  if [ -L "$executable_dir" ] || [ ! -d "$executable_dir" ]; then
+    echo "$label executable directory must be a real directory, not a symlink" >&2
+    return 2
+  fi
+  if [ -L "$resolved" ] || [ ! -f "$resolved" ] || [ ! -x "$resolved" ]; then
+    echo "$label executable is missing or unsafe" >&2
+    return 2
+  fi
+
+  current_uid=$(id -u)
+  executable_owner=$(read_stat_value '%u' '%u' "$resolved")
+  directory_owner=$(read_stat_value '%u' '%u' "$executable_dir")
+  case "$executable_owner" in 0|"$current_uid") ;; *) echo "$label executable must be owned by root or the current user" >&2; return 2 ;; esac
+  case "$directory_owner" in 0|"$current_uid") ;; *) echo "$label executable directory must be owned by root or the current user" >&2; return 2 ;; esac
+
+  executable_mode=$(read_stat_value '%Lp' '%a' "$resolved")
+  directory_mode=$(read_stat_value '%Lp' '%a' "$executable_dir")
+  if [ $((0$executable_mode & 022)) -ne 0 ]; then
+    echo "$label executable must not be group or other writable" >&2
+    return 2
+  fi
+  if [ $((0$directory_mode & 022)) -ne 0 ]; then
+    echo "$label executable directory must not be group or other writable" >&2
+    return 2
+  fi
+  if [ "$(read_stat_value '%l' '%h' "$resolved")" != 1 ]; then
+    echo "$label executable must not be hard-linked" >&2
+    return 2
+  fi
+  printf '%s\n' "$resolved"
+}
+
+if [ -L "$stat_bin" ] || [ ! -f "$stat_bin" ] || [ ! -x "$stat_bin" ]; then
+  echo "Trusted system stat executable is unavailable" >&2
+  exit 2
+fi
+systemctl_bin=$(resolve_trusted_executable "$systemctl_bin" "systemctl")
+curl_bin=$(resolve_trusted_executable "$curl_bin" "curl")
+node_bin=$(resolve_trusted_executable "$node_bin" "Node")
+
 case "$base_dir" in
   /*) ;;
   *) echo "Deployment directory path must be absolute" >&2; exit 2 ;;
@@ -27,11 +85,6 @@ if [ -L "$base_dir" ] || [ ! -d "$base_dir" ]; then
   echo "Deployment directory must be a real directory, not a symlink" >&2
   exit 1
 fi
-if [ ! -x "$node_bin" ]; then
-  echo "Selected Node binary is not executable" >&2
-  exit 2
-fi
-
 current_link="$base_dir/current"
 if [ ! -L "$current_link" ]; then
   echo "Current release must be a deployment-managed symlink" >&2

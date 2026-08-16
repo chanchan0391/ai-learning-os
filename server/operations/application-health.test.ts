@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
@@ -21,6 +21,7 @@ function makeFixture() {
   const baseDir = join(root, "service");
   const release = join(baseDir, "releases", revision);
   const current = join(baseDir, "current");
+  const curlMarker = join(root, "curl-called");
   const systemctl = executable(join(root, "systemctl"), `#!/bin/sh
 set -eu
 case "$*" in
@@ -33,6 +34,7 @@ esac
 `);
   const curl = executable(join(root, "curl"), `#!/bin/sh
 set -eu
+touch "$FAKE_CURL_MARKER"
 case "$*" in
   *"--output /dev/null"*) [ "${"${FAKE_WEB_HEALTHY:-true}"}" = true ] && printf '%s' "$*" | grep -Fq 'http://127.0.0.1:8088/' ;;
   *"/api/health"*) printf '%s\n' "${"${FAKE_HEALTH_BODY}"}" ;;
@@ -42,7 +44,7 @@ esac
   mkdirSync(release, { recursive: true });
   writeFileSync(join(release, "DEPLOYED_COMMIT"), `${revision}\n`);
   symlinkSync(release, current);
-  return { baseDir, curl, systemctl };
+  return { baseDir, curl, curlMarker, systemctl };
 }
 
 function runHealth(fixture: ReturnType<typeof makeFixture>, extraEnv: NodeJS.ProcessEnv = {}) {
@@ -54,6 +56,7 @@ function runHealth(fixture: ReturnType<typeof makeFixture>, extraEnv: NodeJS.Pro
       AI_LEARNING_SYSTEMCTL_BIN: fixture.systemctl,
       AI_LEARNING_CURL_BIN: fixture.curl,
       AI_LEARNING_NODE_BIN: process.execPath,
+      FAKE_CURL_MARKER: fixture.curlMarker,
       FAKE_HEALTH_BODY: JSON.stringify({
         status: "ok",
         releaseRevision: revision,
@@ -90,6 +93,50 @@ describe("dev application health monitoring", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("ai-learning-os-application-monitor.timer is not enabled");
+  });
+
+  it("rejects a relative systemctl path before any network probe", () => {
+    const fixture = makeFixture();
+
+    const result = runHealth(fixture, { AI_LEARNING_SYSTEMCTL_BIN: "./systemctl" });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("systemctl executable path must be absolute");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("rejects a symlinked systemctl executable before any network probe", () => {
+    const fixture = makeFixture();
+    const systemctlLink = join(dirname(fixture.systemctl), "systemctl-link");
+    symlinkSync(fixture.systemctl, systemctlLink);
+
+    const result = runHealth(fixture, { AI_LEARNING_SYSTEMCTL_BIN: systemctlLink });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("systemctl executable is missing or unsafe");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("rejects a hard-linked curl executable before any network probe", () => {
+    const fixture = makeFixture();
+    linkSync(fixture.curl, join(dirname(fixture.curl), "curl-shared"));
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("curl executable must not be hard-linked");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("rejects a group-writable curl executable before any network probe", () => {
+    const fixture = makeFixture();
+    chmodSync(fixture.curl, 0o775);
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("curl executable must not be group or other writable");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
   });
 
   it("aggregates failed timer-triggered operational services before network probes", () => {
