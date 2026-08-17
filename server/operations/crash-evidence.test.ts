@@ -89,7 +89,8 @@ describe("durable dev crash evidence", () => {
   it("rejects a non-private or oversized counter", () => {
     const fixture = makeFixture();
     const counter = join(fixture.stateDir, "ai-learning-os-api.service.crash-count");
-    writeFileSync(counter, "1\n", { mode: 0o644 });
+    writeFileSync(counter, "1\n");
+    chmodSync(counter, 0o644);
     expect(runRecorder(fixture.baseDir, "ai-learning-os-api.service", "signal").status).toBe(1);
 
     chmodSync(counter, 0o600);
