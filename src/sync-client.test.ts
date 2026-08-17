@@ -184,6 +184,37 @@ describe("browser sync client", () => {
     await expect(client.deleteAccount()).rejects.toThrow("账号数据删除失败，请稍后重试");
   });
 
+  it("cancels unused account action response bodies after headers settle", async () => {
+    let cancelled = 0;
+    const request = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled += 1;
+      },
+    }), { headers: { "Content-Type": "application/json" } })) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request);
+
+    await client.logout();
+    await client.logoutAll();
+    await client.revokeDevice("device-2");
+    await client.deleteAccount();
+
+    expect(request).toHaveBeenCalledTimes(4);
+    expect(cancelled).toBe(4);
+  });
+
+  it("cancels unused account error bodies before returning a safe failure", async () => {
+    let cancelled = false;
+    const request = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    }), { status: 503, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request);
+
+    await expect(client.logoutAll()).rejects.toThrow("退出所有设备失败，请稍后重试");
+    expect(cancelled).toBe(true);
+  });
+
   it("bounds stalled session discovery and account controls", async () => {
     vi.useFakeTimers();
     const signals: AbortSignal[] = [];

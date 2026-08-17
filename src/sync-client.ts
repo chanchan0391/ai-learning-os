@@ -231,7 +231,8 @@ function responseError(body: unknown, fallback: string): string {
   return body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : fallback;
 }
 
-function throwForAccountResponse(response: Response, fallback: string): void {
+async function throwForAccountResponse(response: Response, fallback: string, discardBody = false): Promise<void> {
+  if (!response.ok || discardBody) await response.body?.cancel().catch(() => undefined);
   if (response.status === 401) throw new AuthSessionExpiredError();
   if (!response.ok) throw new Error(fallback);
 }
@@ -299,7 +300,7 @@ export class BrowserSyncClient {
       "/api/auth/logout",
       { method: "POST", credentials: "same-origin" },
       fallback,
-      (response) => throwForAccountResponse(response, fallback),
+      (response) => throwForAccountResponse(response, fallback, true),
     );
   }
 
@@ -309,7 +310,7 @@ export class BrowserSyncClient {
       "/api/auth/logout-all",
       { method: "POST", credentials: "same-origin" },
       fallback,
-      (response) => throwForAccountResponse(response, fallback),
+      (response) => throwForAccountResponse(response, fallback, true),
     );
   }
 
@@ -320,7 +321,7 @@ export class BrowserSyncClient {
       { credentials: "same-origin" },
       fallback,
       async (response) => {
-        throwForAccountResponse(response, fallback);
+        await throwForAccountResponse(response, fallback);
         const body = await readBoundedJson<{ devices?: ActiveDevice[]; error?: string }>(
           response, MAX_AUTH_RESPONSE_BYTES, "账号响应超过安全上限，请稍后重试",
         );
@@ -347,7 +348,7 @@ export class BrowserSyncClient {
       `/api/auth/devices/${encodeURIComponent(deviceId)}`,
       { method: "DELETE", credentials: "same-origin" },
       fallback,
-      (response) => throwForAccountResponse(response, fallback),
+      (response) => throwForAccountResponse(response, fallback, true),
     );
   }
 
@@ -357,7 +358,7 @@ export class BrowserSyncClient {
       "/api/auth/account",
       { method: "DELETE", credentials: "same-origin" },
       fallback,
-      (response) => throwForAccountResponse(response, fallback),
+      (response) => throwForAccountResponse(response, fallback, true),
     );
   }
 
