@@ -209,6 +209,34 @@ describe("browser sync client", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the account timeout active while reading a stalled response body", async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    const request = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (signal) signals.push(signal);
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          signal?.addEventListener("abort", () => controller.error(new DOMException("private body detail", "AbortError")), { once: true });
+        },
+      });
+      return new Response(stream, { headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request, { accountRequestTimeoutMs: 50 });
+
+    const auth = client.getAuthState();
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(auth).resolves.toEqual({ status: "local-only" });
+
+    const devices = client.getActiveDevices();
+    const deviceExpectation = expect(devices).rejects.toThrow("无法读取登录设备，请稍后重试");
+    await vi.advanceTimersByTimeAsync(50);
+    await deviceExpectation;
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    vi.useRealTimers();
+  });
+
   it("rejects invalid account timeout configuration", () => {
     expect(() => new BrowserSyncClient(localStorage, undefined, { accountRequestTimeoutMs: 0 }))
       .toThrow("Account request timeout must be a positive finite number");
