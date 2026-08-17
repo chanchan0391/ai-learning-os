@@ -13,6 +13,7 @@ mktemp_bin=/usr/bin/mktemp
 chmod_bin=/bin/chmod
 mv_bin=/bin/mv
 rm_bin=/bin/rm
+flock_bin=${AI_LEARNING_FLOCK_BIN:-/usr/bin/flock}
 
 case "$service" in
   ai-learning-os-api.service|ai-learning-os-web.service) ;;
@@ -44,6 +45,27 @@ fi
 state_mode=$(read_stat_value '%Lp' '%a' "$state_dir")
 if [ $((0$state_mode & 077)) -ne 0 ]; then
   echo "Crash evidence directory must be private" >&2
+  exit 1
+fi
+
+if [ -L "$flock_bin" ] || [ ! -f "$flock_bin" ] || [ ! -x "$flock_bin" ]; then
+  echo "Crash evidence lock helper is unavailable" >&2
+  exit 2
+fi
+lock_file="$state_dir/crash-evidence.lock"
+if [ -L "$lock_file" ] || [ ! -f "$lock_file" ]; then
+  echo "Crash evidence lock must be a regular file" >&2
+  exit 1
+fi
+if [ "$(read_stat_value '%u' '%u' "$lock_file")" != "$($id_bin -u)" ] \
+  || [ "$(read_stat_value '%l' '%h' "$lock_file")" != 1 ] \
+  || [ $((0$(read_stat_value '%Lp' '%a' "$lock_file") & 077)) -ne 0 ]; then
+  echo "Crash evidence lock ownership is unsafe" >&2
+  exit 1
+fi
+exec 8>>"$lock_file"
+if ! "$flock_bin" -w 5 8; then
+  echo "Crash evidence lock timed out" >&2
   exit 1
 fi
 

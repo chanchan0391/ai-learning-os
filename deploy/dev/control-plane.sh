@@ -29,6 +29,7 @@ monitor_services="$backup_monitor_service $application_monitor_service $capacity
 timer_units="$backup_timer $backup_monitor_timer $application_monitor_timer $restore_drill_timer $capacity_monitor_timer"
 units="$application_units $backup_service $backup_timer $backup_monitor_service $backup_monitor_timer $application_monitor_service $application_monitor_timer $restore_drill_service $restore_drill_timer $capacity_monitor_service $capacity_monitor_timer"
 lock_file="$base_dir/control-plane.lock"
+crash_lock_file="$base_dir/operations-state/crash-evidence.lock"
 backup_retention_count=5
 staged_unit=
 required_sandbox_directives='UMask=0077
@@ -331,6 +332,22 @@ service_uses_selected_node() {
 
 status_control_plane() {
   result=0
+  if [ ! -f "$crash_lock_file" ]; then
+    echo "crash evidence lock: missing"
+    result=1
+  elif ! validate_owned_regular_file "$crash_lock_file" "Crash evidence lock"; then
+    echo "crash evidence lock: unsafe"
+    result=1
+  else
+    crash_lock_mode=$($stat_bin -f '%Lp' "$crash_lock_file" 2>/dev/null || true)
+    case "$crash_lock_mode" in ''|*[!0-9]*) crash_lock_mode=$($stat_bin -c '%a' "$crash_lock_file" 2>/dev/null || true) ;; esac
+    if [ -z "$crash_lock_mode" ] || [ $((0$crash_lock_mode & 077)) -ne 0 ]; then
+      echo "crash evidence lock: not private"
+      result=1
+    else
+      echo "crash evidence lock: current"
+    fi
+  fi
   for unit in $units; do
     source_unit="$source_dir/$unit"
     installed_unit="$unit_dir/$unit"
@@ -478,6 +495,13 @@ install_control_plane() {
   mkdir -p "$operations_state_dir"
   validate_owned_directory "$operations_state_dir" "Operations state directory"
   chmod 700 "$operations_state_dir"
+  if [ -e "$crash_lock_file" ] || [ -L "$crash_lock_file" ]; then
+    validate_owned_regular_file "$crash_lock_file" "Crash evidence lock" || exit 1
+  else
+    : >>"$crash_lock_file"
+  fi
+  validate_owned_regular_file "$crash_lock_file" "Crash evidence lock" || exit 1
+  chmod 600 "$crash_lock_file"
 
   if [ -L "$unit_dir" ]; then
     echo "Systemd user unit directory must be a real directory, not a symlink" >&2

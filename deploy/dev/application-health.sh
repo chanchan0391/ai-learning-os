@@ -14,6 +14,7 @@ mktemp_bin=/usr/bin/mktemp
 chmod_bin=/bin/chmod
 mv_bin=/bin/mv
 rm_bin=/bin/rm
+flock_bin=${AI_LEARNING_FLOCK_BIN:-/usr/bin/flock}
 web_url=${AI_LEARNING_WEB_HEALTH_URL:-http://127.0.0.1:8088/}
 api_url=${AI_LEARNING_API_HEALTH_URL:-http://127.0.0.1:8787/api/health}
 
@@ -98,7 +99,7 @@ resolve_trusted_executable() {
   printf '%s\n' "$resolved"
 }
 
-for trusted_system_tool in "$stat_bin" "$id_bin" "$cat_bin" "$mktemp_bin" "$chmod_bin" "$mv_bin" "$rm_bin"; do
+for trusted_system_tool in "$stat_bin" "$id_bin" "$cat_bin" "$mktemp_bin" "$chmod_bin" "$mv_bin" "$rm_bin" "$flock_bin"; do
   if [ -L "$trusted_system_tool" ] || [ ! -f "$trusted_system_tool" ] || [ ! -x "$trusted_system_tool" ]; then
     echo "Required trusted system executable is unavailable" >&2
     exit 2
@@ -267,6 +268,23 @@ read_private_counter() {
   printf '%s\n' "$counter_value"
 }
 
+crash_lock="$operations_state_directory/crash-evidence.lock"
+if [ -L "$crash_lock" ] || [ ! -f "$crash_lock" ]; then
+  echo "Crash evidence lock must be a regular file, not a symlink" >&2
+  exit 1
+fi
+if [ "$(read_stat_value '%u' '%u' "$crash_lock")" != "$current_uid" ] \
+  || [ "$(read_stat_value '%l' '%h' "$crash_lock")" != 1 ] \
+  || [ $((0$(read_stat_value '%Lp' '%a' "$crash_lock") & 077)) -ne 0 ]; then
+  echo "Crash evidence lock ownership is unsafe" >&2
+  exit 1
+fi
+exec 8>>"$crash_lock"
+if ! "$flock_bin" -w 5 8; then
+  echo "Crash evidence lock timed out" >&2
+  exit 1
+fi
+
 recorded_crash=false
 for service in ai-learning-os-api.service ai-learning-os-web.service; do
   crash_counter="$operations_state_directory/$service.crash-count"
@@ -290,6 +308,8 @@ for service in ai-learning-os-api.service ai-learning-os-web.service; do
     recorded_crash=true
   fi
 done
+"$flock_bin" -u 8
+exec 8>&-
 if [ "$recorded_crash" = true ]; then
   exit 1
 fi

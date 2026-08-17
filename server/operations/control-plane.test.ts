@@ -197,6 +197,7 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     expect(readFileSync(join(backupRoot, backups[0], "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
     expect(result.stdout).toContain("ai-learning-os-backup.timer: current, enabled, active");
     expect(result.stdout).toContain("ai-learning-os-host-capacity-monitor.timer: current, enabled, active");
+    expect(statSync(join(fixture.baseDir, "operations-state", "crash-evidence.lock")).mode & 0o777).toBe(0o600);
     expect(readFileSync(fixture.env.FAKE_SYSTEMCTL_LOG!, "utf8")).toContain(
       "enable --now ai-learning-os-backup.timer ai-learning-os-backup-monitor.timer ai-learning-os-application-monitor.timer ai-learning-os-restore-drill.timer ai-learning-os-host-capacity-monitor.timer",
     );
@@ -244,6 +245,22 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("lock must be a regular file, not a symlink");
+    expect(readFileSync(target, "utf8")).toBe("preserve me");
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
+  });
+
+  it("rejects a symlinked crash evidence lock without changing its target", () => {
+    const fixture = makeFixture();
+    const stateDir = join(fixture.baseDir, "operations-state");
+    const target = join(dirname(fixture.baseDir), "operator-crash-lock-target");
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(target, "preserve me");
+    symlinkSync(target, join(stateDir, "crash-evidence.lock"));
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Crash evidence lock must be a regular file, not a symlink");
     expect(readFileSync(target, "utf8")).toBe("preserve me");
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
   });
@@ -406,6 +423,8 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     writeFileSync(join(fixture.unitDir, "ai-learning-os-restore-drill.timer"), restoreDrillTimerContents());
     writeFileSync(join(fixture.unitDir, "ai-learning-os-host-capacity-monitor.service"), capacityMonitorServiceContents());
     writeFileSync(join(fixture.unitDir, "ai-learning-os-host-capacity-monitor.timer"), capacityMonitorTimerContents());
+    mkdirSync(join(fixture.baseDir, "operations-state"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(fixture.baseDir, "operations-state", "crash-evidence.lock"), "", { mode: 0o600 });
 
     const result = runControlPlane(fixture, "status", { HOME: fakeHome });
 

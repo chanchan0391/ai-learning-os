@@ -27,6 +27,7 @@ function makeFixture() {
   const current = join(baseDir, "current");
   const operationsState = join(baseDir, "operations-state");
   const curlMarker = join(root, "curl-called");
+  const flock = executable(join(root, "flock"), "#!/bin/sh\nexit 0\n");
   const node = executable(join(root, "node"), `#!/bin/sh
 exec ${shellSingleQuote(process.execPath)} "$@"
 `);
@@ -52,9 +53,10 @@ esac
 `);
   mkdirSync(release, { recursive: true });
   mkdirSync(operationsState, { mode: 0o700 });
+  writeFileSync(join(operationsState, "crash-evidence.lock"), "", { mode: 0o600 });
   writeFileSync(join(release, "DEPLOYED_COMMIT"), `${revision}\n`);
   symlinkSync(release, current);
-  return { baseDir, curl, curlMarker, node, operationsState, systemctl };
+  return { baseDir, curl, curlMarker, flock, node, operationsState, systemctl };
 }
 
 function runHealth(fixture: ReturnType<typeof makeFixture>, extraEnv: NodeJS.ProcessEnv = {}) {
@@ -66,6 +68,7 @@ function runHealth(fixture: ReturnType<typeof makeFixture>, extraEnv: NodeJS.Pro
       AI_LEARNING_SYSTEMCTL_BIN: fixture.systemctl,
       AI_LEARNING_CURL_BIN: fixture.curl,
       AI_LEARNING_NODE_BIN: fixture.node,
+      AI_LEARNING_FLOCK_BIN: fixture.flock,
       FAKE_CURL_MARKER: fixture.curlMarker,
       FAKE_HEALTH_BODY: JSON.stringify({
         status: "ok",
@@ -250,6 +253,36 @@ describe("dev application health monitoring", { timeout: 15_000 }, () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("crash counter must be a regular file, not a symlink");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("fails closed on a symlinked crash evidence lock before network probes", () => {
+    const fixture = makeFixture();
+    const lock = join(fixture.operationsState, "crash-evidence.lock");
+    const outside = join(dirname(fixture.baseDir), "outside-lock");
+    unlinkSync(lock);
+    writeFileSync(outside, "preserve me");
+    symlinkSync(outside, lock);
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Crash evidence lock must be a regular file");
+    expect(readFileSync(outside, "utf8")).toBe("preserve me");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("does not advance an observation cursor when the crash evidence lock times out", () => {
+    const fixture = makeFixture();
+    writeFileSync(join(fixture.operationsState, "ai-learning-os-api.service.crash-count"), "2\n", { mode: 0o600 });
+    writeFileSync(fixture.flock, "#!/bin/sh\nexit 1\n");
+    chmodSync(fixture.flock, 0o755);
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("lock timed out");
+    expect(existsSync(join(fixture.operationsState, "ai-learning-os-api.service.observed-crash-count"))).toBe(false);
     expect(() => statSync(fixture.curlMarker)).toThrow();
   });
 

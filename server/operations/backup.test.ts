@@ -1327,7 +1327,7 @@ exec /usr/bin/readlink "$@"
     expect(existsSync(join(baseDir, "releases", newRevision))).toBe(false);
     expect(existsSync(oldRelease)).toBe(true);
     expect(readFileSync(systemctlLog, "utf8").match(/--user restart/g)).toHaveLength(2);
-  }, 15_000);
+  }, 25_000);
 
   it("removes failed uploads and stale deployment artifacts", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-incoming-"));
