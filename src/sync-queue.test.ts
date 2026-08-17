@@ -396,6 +396,47 @@ describe("automatic sync queue", () => {
     expect(statuses.at(-1)?.phase).toBe("pending");
   });
 
+  it("times out a stalled synchronization and retries its pending generation", async () => {
+    let firstSignal!: AbortSignal;
+    const synchronize = vi.fn()
+      .mockImplementationOnce((signal: AbortSignal) => {
+        firstSignal = signal;
+        return new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      })
+      .mockResolvedValueOnce(undefined);
+    const statuses: AutoSyncStatus[] = [];
+    const queue = new AutoSyncQueue(localStorage, synchronize, (status) => statuses.push(status), {
+      debounceMs: 10,
+      retryDelaysMs: [25],
+      syncTimeoutMs: 50,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+    queue.enqueue();
+
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(firstSignal.aborted).toBe(true);
+    expect(firstSignal.reason).toMatchObject({ name: "TimeoutError" });
+    expect(statuses.at(-1)?.phase).toBe("error");
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!).pending).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(synchronize).toHaveBeenCalledTimes(2);
+    expect(queue.getStatus().phase).toBe("idle");
+    queue.stop();
+  });
+
+  it("rejects an invalid automatic synchronization timeout", () => {
+    expect(() => new AutoSyncQueue(localStorage, async () => undefined, () => undefined, {
+      syncTimeoutMs: 0,
+    })).toThrow(/timeout must be positive/);
+  });
+
   it("does not start work after stopping while exclusive coordination is pending", async () => {
     let grant!: () => void;
     const runExclusive = vi.fn(async (task: () => Promise<void>) => {

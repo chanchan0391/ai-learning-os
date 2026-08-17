@@ -22,6 +22,7 @@ type Synchronize = (signal: AbortSignal) => Promise<void>;
 interface AutoSyncQueueOptions {
   debounceMs?: number;
   retryDelaysMs?: number[];
+  syncTimeoutMs?: number;
   eventTarget?: Pick<Window, "addEventListener" | "removeEventListener">;
   isOnline?: () => boolean;
   now?: () => Date;
@@ -107,6 +108,7 @@ function storageLeaseRunner(
 export class AutoSyncQueue {
   private readonly debounceMs: number;
   private readonly retryDelaysMs: number[];
+  private readonly syncTimeoutMs: number;
   private readonly eventTarget: AutoSyncQueueOptions["eventTarget"];
   private readonly isOnline: () => boolean;
   private readonly now: () => Date;
@@ -133,6 +135,10 @@ export class AutoSyncQueue {
   ) {
     this.debounceMs = options.debounceMs ?? 1_500;
     this.retryDelaysMs = options.retryDelaysMs ?? [2_000, 5_000, 15_000, 30_000];
+    this.syncTimeoutMs = options.syncTimeoutMs ?? 120_000;
+    if (!Number.isFinite(this.syncTimeoutMs) || this.syncTimeoutMs <= 0) {
+      throw new RangeError("Automatic sync timeout must be positive");
+    }
     this.eventTarget = options.eventTarget ?? window;
     this.isOnline = options.isOnline ?? (() => navigator.onLine);
     this.now = options.now ?? (() => new Date());
@@ -288,6 +294,9 @@ export class AutoSyncQueue {
       this.emit("syncing");
       const controller = new AbortController();
       this.activeSyncController = controller;
+      const timeout = this.setTimer(() => {
+        controller.abort(new DOMException("Automatic synchronization timed out", "TimeoutError"));
+      }, this.syncTimeoutMs);
       try {
         await this.synchronize(controller.signal);
         if (lifecycleGeneration !== this.lifecycleGeneration) return;
@@ -317,6 +326,7 @@ export class AutoSyncQueue {
         this.retryIndex += 1;
         this.schedule(delay);
       } finally {
+        this.clearTimer(timeout);
         if (this.activeSyncController === controller) this.activeSyncController = null;
       }
     }).then((acquired) => {
