@@ -77,6 +77,9 @@ import type { DailyTask, LearningGoal, LearningState, RecoveryPlan, StageLearnin
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const MAX_AGENT_RESPONSE_BYTES = 1024 * 1024;
 const AGENT_RESPONSE_TOO_LARGE = "Agent 响应超过安全上限，请稍后重试";
+const AGENT_REQUEST_TIMEOUT_MS = 75_000;
+const AGENT_REQUEST_TIMEOUT_REASON = "agent-request-timeout";
+const AGENT_REQUEST_TIMEOUT_MESSAGE = "Agent 请求超时，未保存任何结果，请稍后重试。";
 const AUTH_RECOVERY_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
 const AUTH_RECOVERY_MIN_JITTER_RATIO = 0.75;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
@@ -211,6 +214,7 @@ export function App() {
   const retryAuthRef = useRef<() => void>(() => undefined);
   const performSyncRef = useRef<(signal: AbortSignal) => Promise<void>>(async () => undefined);
   const agentRequestRef = useRef<AbortController | null>(null);
+  const agentRequestTimeoutRef = useRef<number | undefined>(undefined);
   const [autoSyncQueue] = useState(() => new AutoSyncQueue(
     localStorage,
     (signal) => performSyncRef.current(signal),
@@ -317,6 +321,7 @@ export function App() {
   }, [autoSyncQueue]);
 
   useEffect(() => () => {
+    if (agentRequestTimeoutRef.current !== undefined) window.clearTimeout(agentRequestTimeoutRef.current);
     agentRequestRef.current?.abort();
     agentRequestRef.current = null;
   }, []);
@@ -394,6 +399,8 @@ export function App() {
   }
 
   function resetGoalWorkspace(next: LearningState | null) {
+    if (agentRequestTimeoutRef.current !== undefined) window.clearTimeout(agentRequestTimeoutRef.current);
+    agentRequestTimeoutRef.current = undefined;
     agentRequestRef.current?.abort();
     agentRequestRef.current = null;
     setAgentRequestActive(false);
@@ -414,14 +421,27 @@ export function App() {
     if (agentRequestRef.current) return null;
     const controller = new AbortController();
     agentRequestRef.current = controller;
+    agentRequestTimeoutRef.current = window.setTimeout(() => {
+      if (agentRequestRef.current === controller) controller.abort(AGENT_REQUEST_TIMEOUT_REASON);
+    }, AGENT_REQUEST_TIMEOUT_MS);
     setAgentRequestActive(true);
     return controller;
   }
 
   function finishAgentRequest(controller: AbortController) {
     if (agentRequestRef.current !== controller) return;
+    if (agentRequestTimeoutRef.current !== undefined) window.clearTimeout(agentRequestTimeoutRef.current);
+    agentRequestTimeoutRef.current = undefined;
     agentRequestRef.current = null;
     setAgentRequestActive(false);
+  }
+
+  function agentRequestErrorMessage(controller: AbortController, error: unknown, fallback: string): string | null {
+    if (controller.signal.aborted) {
+      return controller.signal.reason === AGENT_REQUEST_TIMEOUT_REASON ? AGENT_REQUEST_TIMEOUT_MESSAGE : null;
+    }
+    settleExpiredSession(error);
+    return error instanceof Error ? error.message : fallback;
   }
 
   function switchActiveGoal(planId: string) {
@@ -502,9 +522,8 @@ export function App() {
       saveState(initializeLearningState(validateLearningPlanResponse(body)));
       setStorageNotice("");
     } catch (error) {
-      if (controller.signal.aborted) return;
-      settleExpiredSession(error);
-      setErrors([error instanceof Error ? error.message : "学习计划生成失败"]);
+      const message = agentRequestErrorMessage(controller, error, "学习计划生成失败");
+      if (message) setErrors([message]);
     } finally {
       finishAgentRequest(controller);
       setIsGenerating(false);
@@ -540,9 +559,8 @@ export function App() {
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
       updateState((current) => saveTeachingSession(current, task.id, validateTeachingSessionResponse(body)));
     } catch (error) {
-      if (controller.signal.aborted) return;
-      settleExpiredSession(error);
-      setAgentError(error instanceof Error ? error.message : "教学会话生成失败");
+      const message = agentRequestErrorMessage(controller, error, "教学会话生成失败");
+      if (message) setAgentError(message);
     } finally {
       finishAgentRequest(controller);
       setBusyTaskId("");
@@ -587,9 +605,8 @@ export function App() {
         ? saveCrossStageReviewAssessment(learningState, task.id, linkedInsight.misconception, assessment)
         : saveReviewAssessment(learningState, task.id, assessment));
     } catch (error) {
-      if (controller.signal.aborted) return;
-      settleExpiredSession(error);
-      setAgentError(error instanceof Error ? error.message : "主动回忆判分失败");
+      const message = agentRequestErrorMessage(controller, error, "主动回忆判分失败");
+      if (message) setAgentError(message);
     } finally {
       finishAgentRequest(controller);
       setBusyTaskId("");
@@ -615,9 +632,8 @@ export function App() {
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
       updateState((current) => saveEvaluation(current, task.id, submission, validateEvaluationResponse(body)));
     } catch (error) {
-      if (controller.signal.aborted) return;
-      settleExpiredSession(error);
-      setAgentError(error instanceof Error ? error.message : "学习成果评估失败");
+      const message = agentRequestErrorMessage(controller, error, "学习成果评估失败");
+      if (message) setAgentError(message);
     } finally {
       finishAgentRequest(controller);
       setBusyTaskId("");
@@ -642,9 +658,8 @@ export function App() {
       const body = await readBoundedJson<unknown>(response, MAX_AGENT_RESPONSE_BYTES, AGENT_RESPONSE_TOO_LARGE);
       setRecoveryPlan(validateRecoveryPlanResponse(body, learningState.plan.goal.dailyMinutes));
     } catch (error) {
-      if (controller.signal.aborted) return;
-      settleExpiredSession(error);
-      setAgentError(error instanceof Error ? error.message : "恢复计划生成失败");
+      const message = agentRequestErrorMessage(controller, error, "恢复计划生成失败");
+      if (message) setAgentError(message);
     } finally {
       finishAgentRequest(controller);
       setIsGeneratingRecovery(false);

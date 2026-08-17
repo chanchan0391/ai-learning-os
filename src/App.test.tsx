@@ -1170,6 +1170,39 @@ describe("learning data controls", () => {
     expect(evaluationAttempts).toBe(0);
   });
 
+  it("times out a stalled Agent request and restores the task controls", async () => {
+    vi.useFakeTimers();
+    let agentSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") return Response.json({ authenticated: false });
+      if (url.pathname === "/api/teaching-sessions") {
+        agentSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          agentSignal?.addEventListener("abort", () => reject(new DOMException("private timeout detail", "AbortError")), { once: true });
+        });
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "开始短教学会话" }));
+    expect(agentSignal?.aborted).toBe(false);
+    expect((screen.getByRole("button", { name: "Teacher Agent 正在准备…" }) as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(75_000);
+      await Promise.resolve();
+    });
+    vi.useRealTimers();
+
+    expect(agentSignal?.aborted).toBe(true);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Agent 请求超时，未保存任何结果，请稍后重试。"));
+    expect(screen.getByRole("button", { name: "开始短教学会话" })).toBeTruthy();
+    expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
+  });
+
   it("pauses automatic retries after a permanent sync request failure", async () => {
     vi.useFakeTimers();
     let syncAttempts = 0;

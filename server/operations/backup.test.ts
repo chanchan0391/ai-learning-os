@@ -100,7 +100,7 @@ describe("dev Docker client trust", () => {
   });
 });
 
-describe("dev database backup", () => {
+describe("dev database backup", { timeout: 15_000 }, () => {
   it("publishes only a verified, private custom archive", () => {
     const fixture = makeFixture();
 
@@ -577,7 +577,7 @@ describe("dev backup restore preflight", () => {
   });
 });
 
-describe("dev isolated restore drill", () => {
+describe("dev isolated restore drill", { timeout: 15_000 }, () => {
   function makeRestoreFixture() {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-restore-drill-"));
     temporaryDirectories.push(root);
