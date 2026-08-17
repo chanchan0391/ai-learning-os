@@ -246,6 +246,16 @@ export class AutoSyncQueue {
 
   completeExternalSync(): void {
     this.retryIndex = 0;
+    if (this.volatileMetadata && this.persisted.pending) {
+      // The conflict resolution only proves that its captured snapshot was
+      // reconciled. When queue metadata could not be persisted, a later local
+      // edit has no durable change ID to compare with that snapshot. Preserve
+      // the in-memory generation and run one conservative reconciliation so a
+      // successful conflict choice cannot silently discard that newer edit.
+      this.emit(this.isOnline() ? "pending" : "offline");
+      if (this.isOnline()) this.schedule(this.debounceMs);
+      return;
+    }
     const latest = this.load();
     if (latest.pending && latest.changeId !== this.persisted.changeId) {
       this.persisted = latest;

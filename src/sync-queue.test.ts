@@ -261,6 +261,41 @@ describe("automatic sync queue", () => {
     queue.stop();
   });
 
+  it("does not clear volatile pending work after external conflict resolution", async () => {
+    let rejectQueueWrites = true;
+    const storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key: string) => localStorage.getItem(key),
+      key: (index: number) => localStorage.key(index),
+      removeItem: (key: string) => localStorage.removeItem(key),
+      setItem: (key: string, value: string) => {
+        if (rejectQueueWrites && key === AUTO_SYNC_STATUS_KEY) throw new DOMException("blocked", "QuotaExceededError");
+        localStorage.setItem(key, value);
+      },
+    } satisfies Storage;
+    const synchronize = vi.fn(async () => undefined);
+    const statuses: AutoSyncStatus[] = [];
+    const queue = new AutoSyncQueue(storage, synchronize, (status) => statuses.push(status), {
+      debounceMs: 100,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+    queue.enqueue();
+
+    queue.completeExternalSync();
+
+    expect(queue.getStatus().phase).toBe("pending");
+    expect(statuses.at(-1)?.phase).toBe("pending");
+    rejectQueueWrites = false;
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    expect(queue.getStatus().phase).toBe("idle");
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!)).toMatchObject({ pending: false });
+    queue.stop();
+  });
+
   it("continues synchronization in memory when queue metadata cannot be written", async () => {
     const storage = {
       get length() { return localStorage.length; },
