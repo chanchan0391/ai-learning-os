@@ -263,6 +263,85 @@ describe("automatic sync queue", () => {
     queue.stop();
   });
 
+  it("does not let a cross-tab idle event erase volatile pending work", async () => {
+    let rejectWrites = true;
+    const storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key: string) => localStorage.getItem(key),
+      key: (index: number) => localStorage.key(index),
+      removeItem: (key: string) => localStorage.removeItem(key),
+      setItem: (key: string, value: string) => {
+        if (rejectWrites && key === AUTO_SYNC_STATUS_KEY) throw new DOMException("blocked", "QuotaExceededError");
+        localStorage.setItem(key, value);
+      },
+    } satisfies Storage;
+    const synchronize = vi.fn(async () => undefined);
+    const queue = new AutoSyncQueue(storage, synchronize, () => undefined, {
+      debounceMs: 100,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+    queue.enqueue();
+
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({ version: 2, pending: false }));
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: AUTO_SYNC_STATUS_KEY,
+      storageArea: null,
+    }));
+    rejectWrites = false;
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    expect(queue.getStatus().phase).toBe("idle");
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!)).toMatchObject({ pending: false });
+    queue.stop();
+  });
+
+  it("reconciles again when another tab changes the queue during volatile synchronization", async () => {
+    let rejectWrites = true;
+    const storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key: string) => localStorage.getItem(key),
+      key: (index: number) => localStorage.key(index),
+      removeItem: (key: string) => localStorage.removeItem(key),
+      setItem: (key: string, value: string) => {
+        if (rejectWrites && key === AUTO_SYNC_STATUS_KEY) throw new DOMException("blocked", "QuotaExceededError");
+        localStorage.setItem(key, value);
+      },
+    } satisfies Storage;
+    let release!: () => void;
+    const synchronize = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }))
+      .mockResolvedValueOnce(undefined);
+    const queue = new AutoSyncQueue(storage, synchronize, () => undefined, {
+      debounceMs: 100,
+      runExclusive: async (task) => { await task(); return true; },
+    });
+    queue.start();
+    queue.enqueue();
+    await vi.advanceTimersByTimeAsync(100);
+
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({
+      version: 2,
+      pending: true,
+      changeId: "other-tab-change",
+    }));
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: AUTO_SYNC_STATUS_KEY,
+      storageArea: null,
+    }));
+    rejectWrites = false;
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(synchronize).toHaveBeenCalledTimes(2);
+    expect(queue.getStatus().phase).toBe("idle");
+    queue.stop();
+  });
+
   it("falls back to an idempotent sync when lease storage is unavailable", async () => {
     const storage = {
       get length() { return localStorage.length; },

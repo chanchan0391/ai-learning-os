@@ -252,6 +252,17 @@ export class AutoSyncQueue {
     if (storageEvent.key !== AUTO_SYNC_STATUS_KEY
       || (storageEvent.storageArea !== null && storageEvent.storageArea !== this.storage)) return;
     const latest = this.load();
+    if (this.volatileMetadata && this.persisted.pending) {
+      // A failed metadata write makes the in-memory pending generation the only
+      // evidence for this tab's already-committed learning change. Never let an
+      // older idle value from another tab erase it. A distinct external pending
+      // generation still schedules an additional reconciliation in case it was
+      // written while the current synchronization was taking its snapshot.
+      if (latest.pending && latest.changeId !== this.persisted.changeId) this.generation += 1;
+      this.emit(this.isOnline() ? "pending" : "offline");
+      if (this.isOnline()) this.schedule(0);
+      return;
+    }
     this.persisted = latest;
     if (!latest.pending) {
       if (!this.running) this.emit("idle");
