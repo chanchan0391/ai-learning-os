@@ -215,6 +215,22 @@ describe("browser sync client", () => {
     expect(cancelled).toBe(true);
   });
 
+  it("cancels unused session discovery error bodies before settling auth state", async () => {
+    const statuses = [401, 503, 500];
+    let cancelled = 0;
+    const request = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled += 1;
+      },
+    }), { status: statuses.shift(), headers: { "Content-Type": "application/json" } })) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request);
+
+    await expect(client.getAuthState()).resolves.toEqual({ status: "signed-out" });
+    await expect(client.getAuthState()).resolves.toEqual({ status: "local-only" });
+    await expect(client.getAuthState()).resolves.toEqual({ status: "local-only" });
+    expect(cancelled).toBe(3);
+  });
+
   it("bounds stalled session discovery and account controls", async () => {
     vi.useFakeTimers();
     const signals: AbortSignal[] = [];

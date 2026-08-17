@@ -231,8 +231,12 @@ function responseError(body: unknown, fallback: string): string {
   return body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : fallback;
 }
 
+async function discardResponseBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
 async function throwForAccountResponse(response: Response, fallback: string, discardBody = false): Promise<void> {
-  if (!response.ok || discardBody) await response.body?.cancel().catch(() => undefined);
+  if (!response.ok || discardBody) await discardResponseBody(response);
   if (response.status === 401) throw new AuthSessionExpiredError();
   if (!response.ok) throw new Error(fallback);
 }
@@ -277,9 +281,10 @@ export class BrowserSyncClient {
         { credentials: "same-origin" },
         "账号状态读取超时，请稍后重试",
         async (response) => {
-          if (response.status === 401) return { status: "signed-out" };
-          if (response.status === 503) return { status: "local-only" };
-          if (!response.ok) return { status: "local-only" };
+          if (!response.ok) {
+            await discardResponseBody(response);
+            return response.status === 401 ? { status: "signed-out" } : { status: "local-only" };
+          }
           const body = await readBoundedJson<{ authenticated?: boolean; principal?: { userId?: string; deviceId?: string } }>(
             response, MAX_AUTH_RESPONSE_BYTES, "账号响应超过安全上限，请稍后重试",
           );
