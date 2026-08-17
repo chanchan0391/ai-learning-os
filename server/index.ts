@@ -1,6 +1,11 @@
 import { createApp } from "./app";
 import { createModelProvider } from "./ai/provider-factory";
-import { configureHttpServer, createShutdownHandler, createStartupFailureHandler } from "./http-server-lifecycle";
+import {
+  configureHttpServer,
+  createShutdownHandler,
+  createStartupFailureHandler,
+  lifecycleErrorType,
+} from "./http-server-lifecycle";
 import {
   assertModelUsageSafety,
   createSyncRuntime,
@@ -57,6 +62,12 @@ server.listen(port, host, () => {
 const shutdown = createShutdownHandler(server, closeRuntime, (code) => process.exit(code), {
   onForcedShutdown: () => console.error("API shutdown deadline exceeded; closing active connections"),
 });
+const fatalShutdown = (category: "uncaught-exception" | "unhandled-rejection") => (error: unknown) => {
+  reportLifecycleError(category, lifecycleErrorType(error));
+  shutdown(1);
+};
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+process.on("uncaughtException", fatalShutdown("uncaught-exception"));
+process.on("unhandledRejection", fatalShutdown("unhandled-rejection"));

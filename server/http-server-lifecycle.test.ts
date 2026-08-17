@@ -4,6 +4,7 @@ import {
   createShutdownHandler,
   createStartupFailureHandler,
   HTTP_SERVER_LIMITS,
+  lifecycleErrorType,
 } from "./http-server-lifecycle";
 
 describe("HTTP server lifecycle", () => {
@@ -211,5 +212,34 @@ describe("HTTP server lifecycle", () => {
 
     finishClose?.();
     await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(1));
+  });
+
+  it("keeps fatal error classification low-cardinality and excludes error messages", () => {
+    const privateError = Object.assign(new Error("postgres://user:secret@private.example failed"), {
+      code: "ECONNRESET",
+    });
+
+    expect(lifecycleErrorType(privateError)).toBe("ECONNRESET");
+    expect(lifecycleErrorType(Object.assign(new Error("private learning content"), { name: "Unsafe name" })))
+      .toBe("UnknownError");
+    expect(lifecycleErrorType("private rejection value")).toBe("UnknownError");
+  });
+
+  it("escalates an in-progress graceful shutdown to a failing exit after a fatal event", async () => {
+    let finishClose: ((error?: Error) => void) | undefined;
+    const server = {
+      close: vi.fn((callback: (error?: Error) => void) => { finishClose = callback; }),
+      closeIdleConnections: vi.fn(),
+      closeAllConnections: vi.fn(),
+    };
+    const exit = vi.fn();
+    const shutdown = createShutdownHandler(server, async () => undefined, exit, { timeoutMs: 60_000 });
+
+    shutdown();
+    shutdown(1);
+    finishClose?.();
+
+    await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(1));
+    expect(server.close).toHaveBeenCalledOnce();
   });
 });

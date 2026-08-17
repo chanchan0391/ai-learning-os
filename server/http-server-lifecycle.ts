@@ -38,7 +38,7 @@ interface StartupFailureOptions {
   onForcedCleanup?: () => void;
 }
 
-function stableErrorType(error: unknown): string {
+export function lifecycleErrorType(error: unknown): string {
   if (!(error instanceof Error)) return "UnknownError";
   const code = "code" in error && typeof error.code === "string" ? error.code : "";
   if (/^[A-Z][A-Z0-9_]{0,63}$/.test(code)) return code;
@@ -59,7 +59,7 @@ export function createStartupFailureHandler(
   return (error) => {
     if (handling) return;
     handling = true;
-    options.onStartupFailure?.(stableErrorType(error));
+    options.onStartupFailure?.(lifecycleErrorType(error));
 
     const finish = () => {
       if (finished) return;
@@ -78,7 +78,7 @@ export function createStartupFailureHandler(
       .then(closeDependencies)
       .then(finish)
       .catch((cleanupError) => {
-        options.onCleanupFailure?.(stableErrorType(cleanupError));
+        options.onCleanupFailure?.(lifecycleErrorType(cleanupError));
         finish();
       });
   };
@@ -90,14 +90,16 @@ export function createShutdownHandler(
   closeDependencies: () => Promise<void>,
   exit: (code: number) => void,
   options: ShutdownOptions = {},
-): () => void {
+): (exitCode?: 0 | 1) => void {
   let shuttingDown = false;
   let finished = false;
   let closingDependencies = false;
+  let requestedExitCode: 0 | 1 = 0;
   const timeoutMs = options.timeoutMs ?? HTTP_SERVER_LIMITS.shutdownTimeoutMs;
   const setTimer = options.setTimer ?? setTimeout;
 
-  return () => {
+  return (exitCode = 0) => {
+    if (exitCode === 1) requestedExitCode = 1;
     if (shuttingDown) return;
     shuttingDown = true;
 
@@ -119,7 +121,7 @@ export function createShutdownHandler(
           if (finished) return;
           finished = true;
           clearTimeout(deadline);
-          exit(error ? 1 : 0);
+          exit(error ? 1 : requestedExitCode);
         })
         .catch(() => {
           if (finished) return;
