@@ -81,11 +81,11 @@ cleanup() {
 }
 
 update_operational_runners() {
-  for runner in deploy-main.sh backup.sh backup-health.sh application-health.sh host-capacity.sh verify-backup.sh restore-drill.sh resolve-docker-bin.sh; do
+  for runner in deploy-main.sh backup.sh backup-health.sh application-health.sh crash-evidence.sh host-capacity.sh verify-backup.sh restore-drill.sh resolve-docker-bin.sh; do
     candidate=$current_link/deploy/dev/$runner
     validate_owned_regular_file "$candidate" "Active release $runner" || return 1
   done
-  for runner in deploy-main.sh backup.sh backup-health.sh application-health.sh host-capacity.sh verify-backup.sh restore-drill.sh resolve-docker-bin.sh; do
+  for runner in deploy-main.sh backup.sh backup-health.sh application-health.sh crash-evidence.sh host-capacity.sh verify-backup.sh restore-drill.sh resolve-docker-bin.sh; do
     candidate=$current_link/deploy/dev/$runner
     installed_runner=$base_dir/$runner
     if [ -e "$installed_runner" ] || [ -L "$installed_runner" ]; then
@@ -190,7 +190,7 @@ fi
 mkdir -p "$base_dir"
 validate_owned_directory "$base_dir" "Deployment directory"
 chmod 700 "$base_dir"
-for managed_directory in releases deploy-logs incoming; do
+for managed_directory in releases deploy-logs incoming operations-state; do
   managed_path="$base_dir/$managed_directory"
   if [ -L "$managed_path" ]; then
     echo "Managed deployment directory must be a real directory, not a symlink: $managed_path" >&2

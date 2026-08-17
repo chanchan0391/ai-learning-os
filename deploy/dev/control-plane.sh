@@ -140,10 +140,12 @@ validate_sources() {
       return 1
     fi
     for directive in \
+      'ExecStopPost=%h/services/ai-learning-os/crash-evidence.sh %n' \
       'Restart=on-failure' \
       'RestartSec=3' \
       'StartLimitIntervalSec=5min' \
-      'StartLimitBurst=5'; do
+      'StartLimitBurst=5' \
+      'ReadWritePaths=%h/services/ai-learning-os/operations-state'; do
       if ! grep -Fxq "$directive" "$source_unit"; then
         echo "$unit is missing required restart directive: $directive" >&2
         return 1
@@ -225,6 +227,7 @@ validate_sources() {
   for directive in \
     'Type=oneshot' \
     'ExecStart=%h/services/ai-learning-os/application-health.sh' \
+    'ReadWritePaths=%h/services/ai-learning-os/operations-state' \
     'After=ai-learning-os-api.service ai-learning-os-web.service'; do
     if ! grep -Fxq "$directive" "$application_monitor_source"; then
       echo "$application_monitor_service is missing required monitor directive: $directive" >&2
@@ -466,6 +469,15 @@ install_control_plane() {
   fi
   mkdir -p "$base_dir"
   validate_owned_directory "$base_dir" "Deployment directory"
+
+  operations_state_dir="$base_dir/operations-state"
+  if [ -L "$operations_state_dir" ]; then
+    echo "Operations state directory must be a real directory, not a symlink" >&2
+    exit 1
+  fi
+  mkdir -p "$operations_state_dir"
+  validate_owned_directory "$operations_state_dir" "Operations state directory"
+  chmod 700 "$operations_state_dir"
 
   if [ -L "$unit_dir" ]; then
     echo "Systemd user unit directory must be a real directory, not a symlink" >&2

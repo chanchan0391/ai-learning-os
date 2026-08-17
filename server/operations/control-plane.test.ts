@@ -33,7 +33,7 @@ const restartDirectives = [
 ];
 
 function unitContents(execStart: string) {
-  return `[Unit]\n${restartDirectives.slice(2).join("\n")}\n[Service]\nExecStart=${execStart} app.js\n${restartDirectives.slice(0, 2).join("\n")}\n${sandboxDirectives.join("\n")}\n`;
+  return `[Unit]\n${restartDirectives.slice(2).join("\n")}\n[Service]\nExecStart=${execStart} app.js\nExecStopPost=%h/services/ai-learning-os/crash-evidence.sh %n\n${restartDirectives.slice(0, 2).join("\n")}\nReadWritePaths=%h/services/ai-learning-os/operations-state\n${sandboxDirectives.join("\n")}\n`;
 }
 
 function backupServiceContents() {
@@ -53,7 +53,7 @@ function backupMonitorTimerContents() {
 }
 
 function applicationMonitorServiceContents() {
-  return `[Unit]\nAfter=ai-learning-os-api.service ai-learning-os-web.service\n[Service]\nType=oneshot\nExecStart=%h/services/ai-learning-os/application-health.sh\n${sandboxDirectives.join("\n")}\n`;
+  return `[Unit]\nAfter=ai-learning-os-api.service ai-learning-os-web.service\n[Service]\nType=oneshot\nExecStart=%h/services/ai-learning-os/application-health.sh\nReadWritePaths=%h/services/ai-learning-os/operations-state\n${sandboxDirectives.join("\n")}\n`;
 }
 
 function applicationMonitorTimerContents() {
@@ -439,6 +439,19 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
       "ai-learning-os-api.service is missing required restart directive: StartLimitBurst=5",
     );
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
+  });
+
+  it("rejects source application units without durable crash evidence", () => {
+    const fixture = makeFixture();
+    const apiUnit = join(fixture.sourceDir, "ai-learning-os-api.service");
+    writeFileSync(apiUnit, readFileSync(apiUnit, "utf8").replace("ExecStopPost=%h/services/ai-learning-os/crash-evidence.sh %n\n", ""));
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "ai-learning-os-api.service is missing required restart directive: ExecStopPost=%h/services/ai-learning-os/crash-evidence.sh %n",
+    );
   });
 
   it("rejects a backup timer missing its persistent daily schedule", () => {

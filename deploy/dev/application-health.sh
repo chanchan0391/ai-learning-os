@@ -10,6 +10,10 @@ node_bin=${AI_LEARNING_NODE_BIN:-"$HOME/.nvm/versions/node/v22.23.1/bin/node"}
 stat_bin=/usr/bin/stat
 id_bin=/usr/bin/id
 cat_bin=/bin/cat
+mktemp_bin=/usr/bin/mktemp
+chmod_bin=/bin/chmod
+mv_bin=/bin/mv
+rm_bin=/bin/rm
 web_url=${AI_LEARNING_WEB_HEALTH_URL:-http://127.0.0.1:8088/}
 api_url=${AI_LEARNING_API_HEALTH_URL:-http://127.0.0.1:8787/api/health}
 
@@ -94,7 +98,7 @@ resolve_trusted_executable() {
   printf '%s\n' "$resolved"
 }
 
-for trusted_system_tool in "$stat_bin" "$id_bin" "$cat_bin"; do
+for trusted_system_tool in "$stat_bin" "$id_bin" "$cat_bin" "$mktemp_bin" "$chmod_bin" "$mv_bin" "$rm_bin"; do
   if [ -L "$trusted_system_tool" ] || [ ! -f "$trusted_system_tool" ] || [ ! -x "$trusted_system_tool" ]; then
     echo "Required trusted system executable is unavailable" >&2
     exit 2
@@ -195,6 +199,17 @@ if [ "$base_physical" != "$base_dir" ]; then
   exit 1
 fi
 validate_private_managed_directory "$base_physical" "Deployment directory"
+operations_state_directory="$base_physical/operations-state"
+if [ -L "$operations_state_directory" ] || [ ! -d "$operations_state_directory" ]; then
+  echo "Operations state directory must be a real directory, not a symlink" >&2
+  exit 1
+fi
+validate_private_managed_directory "$operations_state_directory" "Operations state directory"
+operations_state_mode=$(read_stat_value '%Lp' '%a' "$operations_state_directory")
+if [ $((0$operations_state_mode & 077)) -ne 0 ]; then
+  echo "Operations state directory must be private" >&2
+  exit 1
+fi
 releases_directory="$base_physical/releases"
 if [ -L "$releases_directory" ] || [ ! -d "$releases_directory" ]; then
   echo "Release root must be a real directory, not a symlink" >&2
@@ -220,6 +235,64 @@ if [ "$active_release" != "$expected_release" ]; then
   exit 1
 fi
 validate_private_managed_directory "$expected_release" "Active release directory"
+
+read_private_counter() {
+  counter_path=$1
+  counter_label=$2
+  counter_default=$3
+  if [ ! -e "$counter_path" ] && [ ! -L "$counter_path" ]; then
+    printf '%s\n' "$counter_default"
+    return
+  fi
+  if [ -L "$counter_path" ] || [ ! -f "$counter_path" ]; then
+    echo "$counter_label must be a regular file, not a symlink" >&2
+    exit 1
+  fi
+  if [ "$(read_stat_value '%u' '%u' "$counter_path")" != "$current_uid" ] \
+    || [ "$(read_stat_value '%l' '%h' "$counter_path")" != 1 ] \
+    || [ $((0$(read_stat_value '%Lp' '%a' "$counter_path") & 077)) -ne 0 ]; then
+    echo "$counter_label ownership is unsafe" >&2
+    exit 1
+  fi
+  if [ "$(read_stat_value '%z' '%s' "$counter_path")" -gt 17 ]; then
+    echo "$counter_label is invalid" >&2
+    exit 1
+  fi
+  counter_value=$($cat_bin "$counter_path")
+  case "$counter_value" in ''|*[!0-9]*) echo "$counter_label is invalid" >&2; exit 1 ;; esac
+  if [ "$counter_value" -gt 9007199254740991 ]; then
+    echo "$counter_label is invalid" >&2
+    exit 1
+  fi
+  printf '%s\n' "$counter_value"
+}
+
+recorded_crash=false
+for service in ai-learning-os-api.service ai-learning-os-web.service; do
+  crash_counter="$operations_state_directory/$service.crash-count"
+  observed_counter="$operations_state_directory/$service.observed-crash-count"
+  crash_count=$(read_private_counter "$crash_counter" "$service crash counter" 0)
+  observed_count=$(read_private_counter "$observed_counter" "$service observed crash counter" 0)
+  if [ "$observed_count" -gt "$crash_count" ]; then
+    echo "$service observed crash counter exceeds recorded evidence" >&2
+    exit 1
+  fi
+  if [ "$crash_count" -gt "$observed_count" ]; then
+    new_crashes=$((crash_count - observed_count))
+    echo "$service recorded $new_crashes unexpected process exit(s) since the last observation" >&2
+    next_observed=$($mktemp_bin "$operations_state_directory/.$service.observed-crash-count.next.XXXXXX")
+    trap '$rm_bin -f "$next_observed"' EXIT HUP INT TERM
+    printf '%s\n' "$crash_count" > "$next_observed"
+    $chmod_bin 600 "$next_observed"
+    $mv_bin -f "$next_observed" "$observed_counter"
+    next_observed=
+    trap - EXIT HUP INT TERM
+    recorded_crash=true
+  fi
+done
+if [ "$recorded_crash" = true ]; then
+  exit 1
+fi
 
 for service in ai-learning-os-api.service ai-learning-os-web.service; do
   if ! "$systemctl_bin" --user is-active --quiet "$service"; then

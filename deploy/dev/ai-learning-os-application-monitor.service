@@ -5,6 +5,7 @@ After=ai-learning-os-api.service ai-learning-os-web.service
 [Service]
 Type=oneshot
 ExecStart=%h/services/ai-learning-os/application-health.sh
+ReadWritePaths=%h/services/ai-learning-os/operations-state
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

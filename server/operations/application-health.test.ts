@@ -25,6 +25,7 @@ function makeFixture() {
   const baseDir = join(root, "managed", "service");
   const release = join(baseDir, "releases", revision);
   const current = join(baseDir, "current");
+  const operationsState = join(baseDir, "operations-state");
   const curlMarker = join(root, "curl-called");
   const node = executable(join(root, "node"), `#!/bin/sh
 exec ${shellSingleQuote(process.execPath)} "$@"
@@ -50,9 +51,10 @@ case "$*" in
 esac
 `);
   mkdirSync(release, { recursive: true });
+  mkdirSync(operationsState, { mode: 0o700 });
   writeFileSync(join(release, "DEPLOYED_COMMIT"), `${revision}\n`);
   symlinkSync(release, current);
-  return { baseDir, curl, curlMarker, node, systemctl };
+  return { baseDir, curl, curlMarker, node, operationsState, systemctl };
 }
 
 function runHealth(fixture: ReturnType<typeof makeFixture>, extraEnv: NodeJS.ProcessEnv = {}) {
@@ -220,6 +222,34 @@ describe("dev application health monitoring", { timeout: 15_000 }, () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("ai-learning-os-api.service restarted unexpectedly since activation");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("reports each durable crash counter advance once across service activations", () => {
+    const fixture = makeFixture();
+    writeFileSync(join(fixture.operationsState, "ai-learning-os-api.service.crash-count"), "2\n", { mode: 0o600 });
+
+    const firstResult = runHealth(fixture);
+
+    expect(firstResult.status).toBe(1);
+    expect(firstResult.stderr).toContain("ai-learning-os-api.service recorded 2 unexpected process exit(s)");
+    expect(readFileSync(join(fixture.operationsState, "ai-learning-os-api.service.observed-crash-count"), "utf8")).toBe("2\n");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+
+    const secondResult = runHealth(fixture);
+    expect(secondResult.status, secondResult.stderr).toBe(0);
+  });
+
+  it("fails closed on a symlinked durable crash counter before network probes", () => {
+    const fixture = makeFixture();
+    const outside = join(dirname(fixture.baseDir), "outside-counter");
+    writeFileSync(outside, "1\n");
+    symlinkSync(outside, join(fixture.operationsState, "ai-learning-os-api.service.crash-count"));
+
+    const result = runHealth(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("crash counter must be a regular file, not a symlink");
     expect(() => statSync(fixture.curlMarker)).toThrow();
   });
 
