@@ -1,6 +1,8 @@
 export const AUTO_SYNC_STATUS_KEY = "ai-learning-os-auto-sync-v1";
 const AUTO_SYNC_LOCK_NAME = "ai-learning-os-auto-sync-v1";
 const AUTO_SYNC_LEASE_KEY = "ai-learning-os-auto-sync-lease-v1";
+const MAX_SYNC_COORDINATION_METADATA_CHARS = 1_024;
+const RECOVERY_CHANGE_ID = "metadata-recovery";
 
 export type AutoSyncPhase = "idle" | "pending" | "syncing" | "offline" | "error" | "blocked";
 
@@ -36,6 +38,19 @@ function uniqueId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function hasOnlyKeys(value: unknown, allowed: readonly string[]): value is Record<string, unknown> {
+  return value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function isCanonicalTimestamp(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const timestamp = Date.parse(value);
+  return !Number.isNaN(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
 function storageLeaseRunner(
   storage: Storage,
   setTimer: typeof window.setTimeout,
@@ -47,14 +62,26 @@ function storageLeaseRunner(
   return async (task) => {
     let storageAvailable = true;
     const readLease = (): { ownerId: string; expiresAt: number } | null => {
+      let raw: string | null;
       try {
-        const parsed = JSON.parse(storage.getItem(AUTO_SYNC_LEASE_KEY) ?? "null") as { ownerId?: unknown; expiresAt?: unknown } | null;
-        if (parsed && typeof parsed.ownerId === "string" && typeof parsed.expiresAt === "number") {
+        raw = storage.getItem(AUTO_SYNC_LEASE_KEY);
+      } catch {
+        storageAvailable = false;
+        return null;
+      }
+      if (raw === null || raw.length > MAX_SYNC_COORDINATION_METADATA_CHARS) return null;
+      try {
+        const parsed = JSON.parse(raw) as { ownerId?: unknown; expiresAt?: unknown } | null;
+        if (hasOnlyKeys(parsed, ["ownerId", "expiresAt"])
+          && typeof parsed.ownerId === "string"
+          && parsed.ownerId.length > 0
+          && parsed.ownerId.length <= 128
+          && typeof parsed.expiresAt === "number"
+          && Number.isSafeInteger(parsed.expiresAt)) {
           return { ownerId: parsed.ownerId, expiresAt: parsed.expiresAt };
         }
         return null;
       } catch {
-        storageAvailable = false;
         return null;
       }
     };
@@ -394,13 +421,27 @@ export class AutoSyncQueue {
 
   private load(): PersistedAutoSyncStatus {
     try {
-      const parsed = JSON.parse(this.storage.getItem(AUTO_SYNC_STATUS_KEY) ?? "null") as {
+      const raw = this.storage.getItem(AUTO_SYNC_STATUS_KEY);
+      if (raw === null) return { version: 2, pending: false };
+      if (raw.length > MAX_SYNC_COORDINATION_METADATA_CHARS) {
+        return { version: 2, pending: true, changeId: RECOVERY_CHANGE_ID };
+      }
+      const parsed = JSON.parse(raw) as {
         version?: unknown;
         pending?: unknown;
         changeId?: unknown;
         lastSyncedAt?: unknown;
       } | null;
-      if ((parsed?.version === 1 || parsed?.version === 2) && typeof parsed.pending === "boolean") {
+      if (hasOnlyKeys(parsed, ["version", "pending", "changeId", "lastSyncedAt"])
+        && (parsed.version === 1 || parsed.version === 2)
+        && typeof parsed.pending === "boolean") {
+        const validChangeId = parsed.changeId === undefined
+          || (typeof parsed.changeId === "string" && parsed.changeId.length > 0 && parsed.changeId.length <= 128);
+        const validLastSyncedAt = parsed.lastSyncedAt === undefined
+          || isCanonicalTimestamp(parsed.lastSyncedAt);
+        if (!validChangeId || !validLastSyncedAt) {
+          return { version: 2, pending: true, changeId: RECOVERY_CHANGE_ID };
+        }
         return {
           version: 2,
           pending: parsed.pending,
@@ -410,7 +451,10 @@ export class AutoSyncQueue {
       }
     } catch {
       // Queue metadata can be recreated without touching learning data.
+      return { version: 2, pending: true, changeId: RECOVERY_CHANGE_ID };
     }
-    return { version: 2, pending: false };
+    // Unknown metadata may have replaced a pending marker. A single full,
+    // idempotent reconciliation is safer than silently discarding that work.
+    return { version: 2, pending: true, changeId: RECOVERY_CHANGE_ID };
   }
 }

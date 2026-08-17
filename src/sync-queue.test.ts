@@ -221,6 +221,29 @@ describe("automatic sync queue", () => {
     expect(queue.getStatus()).toEqual({ phase: "pending", lastSyncedAt: "2026-08-01T10:00:00.000Z" });
   });
 
+  it.each([
+    ["oversized", JSON.stringify({ version: 2, pending: false, padding: "x".repeat(1_024) })],
+    ["malformed", "{not-json"],
+    ["invalid fields", JSON.stringify({ version: 2, pending: false, lastSyncedAt: "not-a-date" })],
+    ["unknown fields", JSON.stringify({ version: 2, pending: false, unexpected: true })],
+  ])("reconciles once and repairs %s queue metadata", async (_label, metadata) => {
+    localStorage.setItem(AUTO_SYNC_STATUS_KEY, metadata);
+    const synchronize = vi.fn(async () => undefined);
+    const queue = new AutoSyncQueue(localStorage, synchronize, () => undefined, {
+      runExclusive: async (task) => { await task(); return true; },
+    });
+
+    queue.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(localStorage.getItem(AUTO_SYNC_STATUS_KEY)!)).toMatchObject({
+      version: 2,
+      pending: false,
+    });
+    queue.stop();
+  });
+
   it("does not clear another tab's newer generation after external conflict resolution", async () => {
     localStorage.setItem(AUTO_SYNC_STATUS_KEY, JSON.stringify({ version: 2, pending: true, changeId: "conflict" }));
     const synchronize = vi.fn(async () => undefined);
@@ -353,6 +376,62 @@ describe("automatic sync queue", () => {
       key: (index: number) => localStorage.key(index),
       removeItem: (key: string) => localStorage.removeItem(key),
       setItem: (key: string, value: string) => localStorage.setItem(key, value),
+    } satisfies Storage;
+    const synchronize = vi.fn(async () => undefined);
+    const queue = new AutoSyncQueue(storage, synchronize, () => undefined, { debounceMs: 10 });
+    queue.start();
+    queue.enqueue();
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    expect(queue.getStatus().phase).toBe("idle");
+    queue.stop();
+  });
+
+  it("replaces oversized fallback lease metadata before synchronizing", async () => {
+    let leaseMetadata: string | null = JSON.stringify({ ownerId: "x".repeat(1_024), expiresAt: Date.now() + 60_000 });
+    const storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key: string) => key.includes("lease") ? leaseMetadata : localStorage.getItem(key),
+      key: (index: number) => localStorage.key(index),
+      removeItem: (key: string) => {
+        if (key.includes("lease")) leaseMetadata = null;
+        else localStorage.removeItem(key);
+      },
+      setItem: (key: string, value: string) => {
+        if (key.includes("lease")) leaseMetadata = value;
+        else localStorage.setItem(key, value);
+      },
+    } satisfies Storage;
+    const synchronize = vi.fn(async () => undefined);
+    const queue = new AutoSyncQueue(storage, synchronize, () => undefined, { debounceMs: 10 });
+    queue.start();
+    queue.enqueue();
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    expect(queue.getStatus().phase).toBe("idle");
+    queue.stop();
+  });
+
+  it("replaces malformed fallback lease metadata before synchronizing", async () => {
+    let leaseMetadata: string | null = "{not-json";
+    const storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key: string) => key.includes("lease") ? leaseMetadata : localStorage.getItem(key),
+      key: (index: number) => localStorage.key(index),
+      removeItem: (key: string) => {
+        if (key.includes("lease")) leaseMetadata = null;
+        else localStorage.removeItem(key);
+      },
+      setItem: (key: string, value: string) => {
+        if (key.includes("lease")) leaseMetadata = value;
+        else localStorage.setItem(key, value);
+      },
     } satisfies Storage;
     const synchronize = vi.fn(async () => undefined);
     const queue = new AutoSyncQueue(storage, synchronize, () => undefined, { debounceMs: 10 });
