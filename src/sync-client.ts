@@ -517,18 +517,27 @@ export class BrowserSyncClient {
     return { entries, downloaded };
   }
 
-  async resolveConflict(preview: SyncConflictPreview, choice: "local" | "remote"): Promise<SyncResult> {
+  async resolveConflict(preview: SyncConflictPreview, choice: "local" | "remote", signal?: AbortSignal): Promise<SyncResult> {
     if (choice === "remote") {
       if (preview.kind === "different-plan") {
-        const remoteEntities = await this.readAllChanges("无法读取云端进度");
+        const remoteEntities = await this.readAllChanges("无法读取云端进度", signal);
         return this.restoreFromRemote(remoteEntities, preview.remoteState.plan.id);
       }
       const nextState = this.applyRemoteEntity(preview.localState, preview);
+      const previousMetadata = this.loadMetadata(nextState.plan.id);
       this.rememberResolvedEntity(nextState.plan.id, preview, "remote");
-      return this.sync(nextState);
+      try {
+        return await this.sync(nextState, signal);
+      } catch (error) {
+        // The learning repository is only updated after the full resolution
+        // succeeds. Roll back the temporary sync base as well so a later auto
+        // sync cannot reinterpret the still-local version as a new edit.
+        this.saveMetadata(previousMetadata);
+        throw error;
+      }
     }
 
-    if (preview.kind === "different-plan") return this.uploadLocalPlan(preview.localState);
+    if (preview.kind === "different-plan") return this.uploadLocalPlan(preview.localState, signal);
     if (!preview.entityType || !preview.entityId || preview.remoteRevision === undefined) {
       throw new Error("冲突信息不完整，请重新同步。");
     }
@@ -536,9 +545,9 @@ export class BrowserSyncClient {
       entityType: preview.entityType,
       entityId: preview.entityId,
       value: preview.localValue,
-    }, preview.remoteRevision);
+    }, preview.remoteRevision, signal);
     this.rememberResolvedEntity(preview.localState.plan.id, { ...preview, remoteRevision: entity.revision }, "local");
-    const result = await this.sync(preview.localState);
+    const result = await this.sync(preview.localState, signal);
     return { ...result, uploaded: result.uploaded + 1 };
   }
 
@@ -600,16 +609,17 @@ export class BrowserSyncClient {
     this.saveMetadata(metadata);
   }
 
-  private async uploadLocalPlan(state: LearningState): Promise<SyncResult> {
-    const remoteEntities = await this.readAllChanges("无法读取云端进度");
+  private async uploadLocalPlan(state: LearningState, signal?: AbortSignal): Promise<SyncResult> {
+    const remoteEntities = await this.readAllChanges("无法读取云端进度", signal);
     const metadata: PlanSyncMetadata = { planId: state.plan.id, entities: {} };
     let uploaded = 0;
     for (const local of this.localEntities(state)) {
       const remote = remoteEntities.find((entity) => entity.entityType === local.entityType && entity.entityId === local.entityId);
-      const entity = await this.write(local, remote?.revision ?? null);
+      const entity = await this.write(local, remote?.revision ?? null, signal);
       metadata.entities[metadataKey(entity)] = { revision: entity.revision, fingerprint: fingerprint(entity.value) };
       uploaded += 1;
     }
+    signal?.throwIfAborted();
     this.saveMetadata(metadata);
     return { state, uploaded, downloaded: 0 };
   }

@@ -80,6 +80,9 @@ const AGENT_RESPONSE_TOO_LARGE = "Agent 响应超过安全上限，请稍后重�
 const AGENT_REQUEST_TIMEOUT_MS = 75_000;
 const AGENT_REQUEST_TIMEOUT_REASON = "agent-request-timeout";
 const AGENT_REQUEST_TIMEOUT_MESSAGE = "Agent 请求超时，未保存任何结果，请稍后重试。";
+const SYNC_CONFLICT_TIMEOUT_MS = 120_000;
+const SYNC_CONFLICT_TIMEOUT_REASON = "sync-conflict-timeout";
+const SYNC_CONFLICT_TIMEOUT_MESSAGE = "冲突处理超时，未应用未完成的结果，请重新选择。";
 const AUTH_RECOVERY_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
 const AUTH_RECOVERY_MIN_JITTER_RATIO = 0.75;
 const learningStateRepository = new BrowserLearningStateRepository(localStorage);
@@ -215,6 +218,8 @@ export function App() {
   const performSyncRef = useRef<(signal: AbortSignal) => Promise<void>>(async () => undefined);
   const agentRequestRef = useRef<AbortController | null>(null);
   const agentRequestTimeoutRef = useRef<number | undefined>(undefined);
+  const conflictRequestRef = useRef<AbortController | null>(null);
+  const conflictRequestTimeoutRef = useRef<number | undefined>(undefined);
   const [autoSyncQueue] = useState(() => new AutoSyncQueue(
     localStorage,
     (signal) => performSyncRef.current(signal),
@@ -324,6 +329,9 @@ export function App() {
     if (agentRequestTimeoutRef.current !== undefined) window.clearTimeout(agentRequestTimeoutRef.current);
     agentRequestRef.current?.abort();
     agentRequestRef.current = null;
+    if (conflictRequestTimeoutRef.current !== undefined) window.clearTimeout(conflictRequestTimeoutRef.current);
+    conflictRequestRef.current?.abort();
+    conflictRequestRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -1160,11 +1168,17 @@ export function App() {
   }
 
   async function resolveSyncConflict(choice: "local" | "remote") {
-    if (!pendingSyncConflict) return;
+    if (!pendingSyncConflict || conflictRequestRef.current) return;
+    const controller = new AbortController();
+    conflictRequestRef.current = controller;
+    conflictRequestTimeoutRef.current = window.setTimeout(
+      () => controller.abort(SYNC_CONFLICT_TIMEOUT_REASON),
+      SYNC_CONFLICT_TIMEOUT_MS,
+    );
     setIsSyncing(true);
     setStorageNotice("");
     try {
-      const result = await syncClient.resolveConflict(pendingSyncConflict, choice);
+      const result = await syncClient.resolveConflict(pendingSyncConflict, choice, controller.signal);
       if (result.state) {
         const currentPlanId = learningStateRef.current?.plan.id;
         const states = learningStateRepository.loadActive();
@@ -1183,9 +1197,14 @@ export function App() {
       setStorageNoticeIsError(false);
     } catch (error) {
       if (error instanceof SyncConflictError && error.preview) setPendingSyncConflict(error.preview);
-      setStorageNotice(error instanceof Error ? error.message : "冲突处理失败，请重新同步。");
+      setStorageNotice(controller.signal.reason === SYNC_CONFLICT_TIMEOUT_REASON
+        ? SYNC_CONFLICT_TIMEOUT_MESSAGE
+        : error instanceof Error ? error.message : "冲突处理失败，请重新同步。");
       setStorageNoticeIsError(true);
     } finally {
+      if (conflictRequestTimeoutRef.current !== undefined) window.clearTimeout(conflictRequestTimeoutRef.current);
+      conflictRequestTimeoutRef.current = undefined;
+      if (conflictRequestRef.current === controller) conflictRequestRef.current = null;
       setIsSyncing(false);
     }
   }

@@ -719,6 +719,43 @@ describe("browser sync client", () => {
     expect(server.entities.get(key)?.revision).toBe(2);
   });
 
+  it("propagates cancellation through conflict resolution without committing a result", async () => {
+    const server = fakeServer();
+    let stall = false;
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | null | undefined;
+    const request = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      if (!stall) return server.request(input, init);
+      observedSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      });
+    }) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request);
+    const state = learningState();
+    await client.sync(state);
+    const local = toggleCurrentTask(state, state.days[0].tasks[0].id);
+    const key = `daily-record:${state.plan.id}:day-1`;
+    const remote = server.entities.get(key)!;
+    const remoteValue = structuredClone(remote.value) as { planId: string; record: typeof state.days[0] };
+    remoteValue.record.tasks[1].description = "云端设备补充的学习说明";
+    server.entities.set(key, { ...remote, revision: 2, value: remoteValue });
+    const conflict = await client.sync(local).then(
+      () => { throw new Error("expected sync conflict"); },
+      (error: unknown) => error as SyncConflictError,
+    );
+    const metadataBeforeResolution = localStorage.getItem(SYNC_METADATA_KEY);
+    stall = true;
+    const pending = client.resolveConflict(conflict.preview!, "remote", controller.signal);
+
+    controller.abort(new DOMException("Conflict resolution timed out", "TimeoutError"));
+
+    await expect(pending).rejects.toBeDefined();
+    expect(observedSignal).toBe(controller.signal);
+    expect(localStorage.getItem(SYNC_METADATA_KEY)).toBe(metadataBeforeResolution);
+    expect(server.entities.get(key)?.revision).toBe(2);
+  });
+
   it("restores the newest cloud plan into an empty browser", async () => {
     const state = learningState();
     const planEntity: RemoteEntity = {
