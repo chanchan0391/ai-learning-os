@@ -611,6 +611,101 @@ describe("browser sync client", () => {
     expect(server.entities.get(`daily-record:${state.plan.id}:day-1`)?.revision).toBe(2);
   });
 
+  it("keeps a volatile sync base when browser metadata writes are denied", async () => {
+    const server = fakeServer();
+    const storage: Storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key) => localStorage.getItem(key),
+      key: (index) => localStorage.key(index),
+      removeItem: (key) => localStorage.removeItem(key),
+      setItem: (key, value) => {
+        if (key === SYNC_METADATA_KEY) throw new DOMException("private quota detail", "QuotaExceededError");
+        localStorage.setItem(key, value);
+      },
+    };
+    const client = new BrowserSyncClient(storage, server.request);
+    const state = learningState();
+
+    await expect(client.sync(state)).resolves.toMatchObject({ uploaded: 2 });
+    expect(localStorage.getItem(SYNC_METADATA_KEY)).toBeNull();
+
+    const changed = toggleCurrentTask(state, state.days[0].tasks[0].id);
+    await expect(client.sync(changed)).resolves.toMatchObject({ uploaded: 1 });
+    expect(server.entities.get(`daily-record:${state.plan.id}:day-1`)?.revision).toBe(2);
+  });
+
+  it("preserves archive restore intent when auxiliary browser storage is unavailable", async () => {
+    const state = learningState();
+    const archivedAt = "2026-08-02T12:00:00.000Z";
+    const server = fakeServer([
+      {
+        entityType: "learning-plan", entityId: state.plan.id, revision: 2, updatedAt: archivedAt,
+        value: { ...state.plan, archivedAt },
+      },
+      {
+        entityType: "daily-record", entityId: `${state.plan.id}:day-1`, revision: 1, updatedAt: archivedAt,
+        value: { planId: state.plan.id, record: state.days[0] },
+      },
+    ]);
+    const restoredMarkerKey = "ai-learning-os-restored-archive-v1";
+    const storage: Storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key) => {
+        if (key === restoredMarkerKey) throw new DOMException("denied", "SecurityError");
+        return localStorage.getItem(key);
+      },
+      key: (index) => localStorage.key(index),
+      removeItem: (key) => {
+        if (key === restoredMarkerKey) throw new DOMException("denied", "SecurityError");
+        localStorage.removeItem(key);
+      },
+      setItem: (key, value) => {
+        if (key === restoredMarkerKey) throw new DOMException("denied", "SecurityError");
+        localStorage.setItem(key, value);
+      },
+    };
+    const client = new BrowserSyncClient(storage, server.request);
+
+    expect(() => client.markArchiveRestored(state.plan.id)).not.toThrow();
+    await expect(client.sync(state)).resolves.toMatchObject({ uploaded: 1 });
+    expect((server.entities.get(`learning-plan:${state.plan.id}`)?.value as { archivedAt?: string }).archivedAt).toBeUndefined();
+    expect(() => client.clearMetadata()).not.toThrow();
+  });
+
+  it("ignores stale persisted sync bases when logout metadata deletion is denied", async () => {
+    const server = fakeServer();
+    const state = learningState();
+    const initialClient = new BrowserSyncClient(localStorage, server.request);
+    await initialClient.sync(state);
+    const staleMetadata = localStorage.getItem(SYNC_METADATA_KEY);
+    expect(staleMetadata).not.toBeNull();
+
+    const storage: Storage = {
+      get length() { return localStorage.length; },
+      clear: () => localStorage.clear(),
+      getItem: (key) => localStorage.getItem(key),
+      key: (index) => localStorage.key(index),
+      removeItem: (key) => {
+        if (key === SYNC_METADATA_KEY) throw new DOMException("denied", "SecurityError");
+        localStorage.removeItem(key);
+      },
+      setItem: (key, value) => localStorage.setItem(key, value),
+    };
+    const client = new BrowserSyncClient(storage, server.request);
+    expect(() => client.clearMetadata()).not.toThrow();
+    expect(localStorage.getItem(SYNC_METADATA_KEY)).toBe(staleMetadata);
+
+    const remoteKey = `daily-record:${state.plan.id}:day-1`;
+    const remote = server.entities.get(remoteKey)!;
+    const remoteValue = structuredClone(remote.value) as { planId: string; record: typeof state.days[0] };
+    remoteValue.record.tasks[1].description = "另一个账号的不同证据";
+    server.entities.set(remoteKey, { ...remote, revision: 2, value: remoteValue });
+
+    await expect(client.sync(state)).rejects.toBeInstanceOf(SyncConflictError);
+  });
+
   it("upgrades legacy single-plan metadata without losing its sync base", async () => {
     const server = fakeServer();
     const client = new BrowserSyncClient(localStorage, server.request);

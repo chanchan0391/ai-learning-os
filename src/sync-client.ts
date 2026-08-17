@@ -243,6 +243,9 @@ async function throwForAccountResponse(response: Response, fallback: string, dis
 
 export class BrowserSyncClient {
   private readonly accountRequestTimeoutMs: number;
+  private readonly volatileMetadata = new Map<string, PlanSyncMetadata>();
+  private volatileRestoredArchivePlanId: string | null | undefined;
+  private ignorePersistedMetadata = false;
 
   constructor(
     private readonly storage: Storage,
@@ -368,12 +371,30 @@ export class BrowserSyncClient {
   }
 
   clearMetadata(): void {
-    this.storage.removeItem(SYNC_METADATA_KEY);
-    this.storage.removeItem(RESTORED_ARCHIVE_PLAN_KEY);
+    this.volatileMetadata.clear();
+    this.volatileRestoredArchivePlanId = null;
+    this.ignorePersistedMetadata = true;
+    try {
+      this.storage.removeItem(SYNC_METADATA_KEY);
+    } catch {
+      // Sync metadata is auxiliary. An unavailable browser store must not keep
+      // an already-revoked account session alive in the interface.
+    }
+    try {
+      this.storage.removeItem(RESTORED_ARCHIVE_PLAN_KEY);
+    } catch {
+      // The in-memory marker is already cleared for this client lifecycle.
+    }
   }
 
   markArchiveRestored(planId: string): void {
-    this.storage.setItem(RESTORED_ARCHIVE_PLAN_KEY, planId);
+    this.volatileRestoredArchivePlanId = planId;
+    try {
+      this.storage.setItem(RESTORED_ARCHIVE_PLAN_KEY, planId);
+    } catch {
+      // Keep the explicit restore intent in memory. The following sync can
+      // still safely reactivate the archived cloud plan in this page.
+    }
   }
 
   async sync(localState: LearningState | null, signal?: AbortSignal): Promise<SyncResult> {
@@ -388,7 +409,7 @@ export class BrowserSyncClient {
     const matchingRemotePlan = remoteEntities.find((entity) => entity.entityType === "learning-plan" && entity.entityId === localState.plan.id);
 
     const previous = this.loadMetadata(localState.plan.id);
-    const restoringArchived = this.storage.getItem(RESTORED_ARCHIVE_PLAN_KEY) === localState.plan.id
+    const restoringArchived = this.loadRestoredArchivePlanId() === localState.plan.id
       && Boolean((matchingRemotePlan?.value as LearningPlan | undefined)?.archivedAt)
       && !localState.plan.archivedAt;
     this.assertNoDivergedEntities(localState, remoteEntities, previous, restoringArchived);
@@ -451,9 +472,7 @@ export class BrowserSyncClient {
     nextState = this.validateState(nextState);
     signal?.throwIfAborted();
     this.saveMetadata(nextMetadata);
-    if (this.storage.getItem(RESTORED_ARCHIVE_PLAN_KEY) === localState.plan.id) {
-      this.storage.removeItem(RESTORED_ARCHIVE_PLAN_KEY);
-    }
+    if (this.loadRestoredArchivePlanId() === localState.plan.id) this.clearRestoredArchivePlanId();
     return { state: nextState, uploaded, downloaded };
   }
 
@@ -740,6 +759,9 @@ export class BrowserSyncClient {
   }
 
   private loadMetadata(planId: string): PlanSyncMetadata {
+    const volatile = this.volatileMetadata.get(planId);
+    if (volatile) return structuredClone(volatile);
+    if (this.ignorePersistedMetadata) return { planId, entities: {} };
     try {
       const parsed = JSON.parse(this.storage.getItem(SYNC_METADATA_KEY) ?? "null") as Partial<SyncMetadata> | Partial<LegacySyncMetadata> | null;
       if (parsed?.version === 2 && parsed.plans && typeof parsed.plans === "object") {
@@ -756,19 +778,48 @@ export class BrowserSyncClient {
 
   private saveMetadata(metadata: PlanSyncMetadata): void {
     let plans: SyncMetadata["plans"] = {};
-    try {
-      const parsed = JSON.parse(this.storage.getItem(SYNC_METADATA_KEY) ?? "null") as Partial<SyncMetadata> | Partial<LegacySyncMetadata> | null;
-      if (parsed?.version === 2 && parsed.plans && typeof parsed.plans === "object") plans = parsed.plans;
-      if (parsed?.version === 1 && typeof parsed.planId === "string" && parsed.entities && typeof parsed.entities === "object") {
-        plans = { [parsed.planId]: parsed.entities };
+    if (!this.ignorePersistedMetadata) {
+      try {
+        const parsed = JSON.parse(this.storage.getItem(SYNC_METADATA_KEY) ?? "null") as Partial<SyncMetadata> | Partial<LegacySyncMetadata> | null;
+        if (parsed?.version === 2 && parsed.plans && typeof parsed.plans === "object") plans = parsed.plans;
+        if (parsed?.version === 1 && typeof parsed.planId === "string" && parsed.entities && typeof parsed.entities === "object") {
+          plans = { [parsed.planId]: parsed.entities };
+        }
+      } catch {
+        // Corrupt metadata is replaced; learning data remains untouched.
       }
-    } catch {
-      // Corrupt metadata is replaced; learning data remains untouched.
     }
-    this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify({
-      version: 2,
-      plans: { ...plans, [metadata.planId]: metadata.entities },
-    } satisfies SyncMetadata));
+    try {
+      this.storage.setItem(SYNC_METADATA_KEY, JSON.stringify({
+        version: 2,
+        plans: { ...plans, [metadata.planId]: metadata.entities },
+      } satisfies SyncMetadata));
+      this.volatileMetadata.delete(metadata.planId);
+      this.ignorePersistedMetadata = false;
+    } catch {
+      // Remote reconciliation may already have completed. Preserve its base in
+      // memory so a quota or privacy-mode failure cannot turn success into an
+      // endless retry loop or cause this page to manufacture a false conflict.
+      this.volatileMetadata.set(metadata.planId, structuredClone(metadata));
+    }
+  }
+
+  private loadRestoredArchivePlanId(): string | null {
+    if (this.volatileRestoredArchivePlanId !== undefined) return this.volatileRestoredArchivePlanId;
+    try {
+      return this.storage.getItem(RESTORED_ARCHIVE_PLAN_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  private clearRestoredArchivePlanId(): void {
+    this.volatileRestoredArchivePlanId = null;
+    try {
+      this.storage.removeItem(RESTORED_ARCHIVE_PLAN_KEY);
+    } catch {
+      // The marker is auxiliary and cleared for the current client lifecycle.
+    }
   }
 
   private validateState(state: LearningState): LearningState {
