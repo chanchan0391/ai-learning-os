@@ -32,6 +32,7 @@ exec ${shellSingleQuote(process.execPath)} "$@"
   const systemctl = executable(join(root, "systemctl"), `#!/bin/sh
 set -eu
 case "$*" in
+  *"show --property NRestarts"*) printf '%s\n' "${"${FAKE_RESTART_COUNT:-0}"}" ;;
   *"is-enabled"*"${"${FAKE_DISABLED_TIMER:-none}"}"*) exit 1 ;;
   *"is-failed"*"${"${FAKE_FAILED_OPERATIONAL_SERVICE:-none}"}"*) exit 0 ;;
   *"is-failed"*) exit 1 ;;
@@ -210,6 +211,27 @@ describe("dev application health monitoring", { timeout: 15_000 }, () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("ai-learning-os-api.service is not active");
+  });
+
+  it("preserves unexpected restart evidence after the service recovers", () => {
+    const fixture = makeFixture();
+
+    const result = runHealth(fixture, { FAKE_RESTART_COUNT: "1" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("ai-learning-os-api.service restarted unexpectedly since activation");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
+  });
+
+  it("fails closed when systemd returns an invalid restart count", () => {
+    const fixture = makeFixture();
+
+    const result = runHealth(fixture, { FAKE_RESTART_COUNT: "unknown private detail" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("ai-learning-os-api.service restart count is unavailable");
+    expect(result.stderr).not.toContain("private detail");
+    expect(() => statSync(fixture.curlMarker)).toThrow();
   });
 
   it("rejects an oversized deployed revision before reading it", () => {

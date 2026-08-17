@@ -25,9 +25,15 @@ const sandboxDirectives = [
 const monitorSandboxDirectives = sandboxDirectives.map((directive) =>
   directive.startsWith("RestrictAddressFamilies=") ? "RestrictAddressFamilies=AF_UNIX" : directive,
 );
+const restartDirectives = [
+  "Restart=on-failure",
+  "RestartSec=3",
+  "StartLimitIntervalSec=5min",
+  "StartLimitBurst=5",
+];
 
 function unitContents(execStart: string) {
-  return `[Service]\nExecStart=${execStart} app.js\n${sandboxDirectives.join("\n")}\n`;
+  return `[Unit]\n${restartDirectives.slice(2).join("\n")}\n[Service]\nExecStart=${execStart} app.js\n${restartDirectives.slice(0, 2).join("\n")}\n${sandboxDirectives.join("\n")}\n`;
 }
 
 function backupServiceContents() {
@@ -417,6 +423,20 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
       "ai-learning-os-api.service is missing required sandbox directive: NoNewPrivileges=true",
+    );
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
+  });
+
+  it("rejects source application units without bounded restart policy", () => {
+    const fixture = makeFixture();
+    const apiUnit = join(fixture.sourceDir, "ai-learning-os-api.service");
+    writeFileSync(apiUnit, readFileSync(apiUnit, "utf8").replace("StartLimitBurst=5\n", ""));
+
+    const result = runControlPlane(fixture, "install");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "ai-learning-os-api.service is missing required restart directive: StartLimitBurst=5",
     );
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toContain("/old/node");
   });

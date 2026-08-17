@@ -226,6 +226,14 @@ for service in ai-learning-os-api.service ai-learning-os-web.service; do
     echo "$service is not active" >&2
     exit 1
   fi
+  restart_count=$("$systemctl_bin" --user show --property NRestarts --value "$service")
+  case "$restart_count" in
+    ''|*[!0-9]*) echo "$service restart count is unavailable" >&2; exit 1 ;;
+  esac
+  if [ "$restart_count" -ne 0 ]; then
+    echo "$service restarted unexpectedly since activation" >&2
+    exit 1
+  fi
 done
 
 for service in \

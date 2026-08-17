@@ -2,6 +2,8 @@
 Description=AI Learning OS Web Preview
 After=ai-learning-os-api.service
 Requires=ai-learning-os-api.service
+StartLimitIntervalSec=5min
+StartLimitBurst=5
 
 [Service]
 Type=simple

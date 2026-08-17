@@ -139,6 +139,16 @@ validate_sources() {
       echo "$unit does not use the selected Node binary" >&2
       return 1
     fi
+    for directive in \
+      'Restart=on-failure' \
+      'RestartSec=3' \
+      'StartLimitIntervalSec=5min' \
+      'StartLimitBurst=5'; do
+      if ! grep -Fxq "$directive" "$source_unit"; then
+        echo "$unit is missing required restart directive: $directive" >&2
+        return 1
+      fi
+    done
     echo "$required_sandbox_directives" | while IFS= read -r directive; do
       if ! grep -Fxq "$directive" "$source_unit"; then
         echo "$unit is missing required sandbox directive: $directive" >&2
