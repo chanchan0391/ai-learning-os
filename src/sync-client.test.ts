@@ -184,6 +184,36 @@ describe("browser sync client", () => {
     await expect(client.deleteAccount()).rejects.toThrow("账号数据删除失败，请稍后重试");
   });
 
+  it("bounds stalled session discovery and account controls", async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    const request = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (signal) signals.push(signal);
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("private network detail", "AbortError")), { once: true });
+      });
+    }) as typeof fetch;
+    const client = new BrowserSyncClient(localStorage, request, { accountRequestTimeoutMs: 50 });
+
+    const auth = client.getAuthState();
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(auth).resolves.toEqual({ status: "local-only" });
+
+    const devices = client.getActiveDevices();
+    const deviceExpectation = expect(devices).rejects.toThrow("无法读取登录设备，请稍后重试");
+    await vi.advanceTimersByTimeAsync(50);
+    await deviceExpectation;
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("rejects invalid account timeout configuration", () => {
+    expect(() => new BrowserSyncClient(localStorage, undefined, { accountRequestTimeoutMs: 0 }))
+      .toThrow("Account request timeout must be a positive finite number");
+  });
+
   it("uploads a new local plan and its daily record with revision metadata", async () => {
     const server = fakeServer();
     const state = learningState();

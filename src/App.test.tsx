@@ -1358,6 +1358,46 @@ describe("learning data controls", () => {
     expect(screen.getByRole("status").textContent).toContain("已退出设备");
   });
 
+  it("recovers the device manager after an account request times out", async () => {
+    vi.useFakeTimers();
+    let deviceSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      if (url.pathname === "/api/auth/session") {
+        return Response.json({ authenticated: true, principal: { userId: "user-1", deviceId: "device-1" } });
+      }
+      if (url.pathname === "/api/auth/devices") {
+        deviceSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          deviceSignal?.addEventListener("abort", () => reject(new DOMException("private network detail", "AbortError")), { once: true });
+        });
+      }
+      if (url.pathname === "/api/sync/changes") return Response.json({ changes: [], cursor: "cursor-1" });
+      if (init?.method === "PUT") {
+        const value = JSON.parse(String(init.body));
+        const daily = url.pathname.includes("/daily-records/");
+        return Response.json({ entityType: daily ? "daily-record" : "learning-plan", entityId: decodeURIComponent(url.pathname.split("/").at(-1)!), revision: 1, updatedAt: "2026-08-01T10:00:00.000Z", value });
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    render(<App />);
+    await act(async () => undefined);
+
+    fireEvent.click(screen.getByRole("button", { name: "管理设备" }));
+    expect(screen.getByRole("status").textContent).toContain("正在读取设备");
+    expect(deviceSignal?.aborted).toBe(false);
+
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    vi.useRealTimers();
+
+    expect(deviceSignal?.aborted).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "管理登录设备" })).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("无法读取登录设备，请稍后重试");
+    expect(screen.getByRole("button", { name: "管理设备" })).toBeTruthy();
+    expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
+  });
+
   it("previews diverged local and cloud progress and applies the selected cloud version", async () => {
     const user = userEvent.setup();
     const entities = new Map<string, { entityType: "learning-plan" | "daily-record"; entityId: string; revision: number; updatedAt: string; value: unknown }>();

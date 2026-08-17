@@ -14,6 +14,11 @@ const MAX_SYNC_IDENTIFIER_CHARACTERS = 256;
 const MAX_SYNC_TIMESTAMP_CHARACTERS = 64;
 const MAX_ACTIVE_DEVICES = 1_000;
 const MAX_DEVICE_LABEL_CHARACTERS = 100;
+const ACCOUNT_REQUEST_TIMEOUT_MS = 15_000;
+
+interface BrowserSyncClientOptions {
+  accountRequestTimeoutMs?: number;
+}
 
 interface SyncEntity<T = unknown> {
   entityType: "learning-plan" | "daily-record";
@@ -232,14 +237,39 @@ function throwForAccountResponse(response: Response, fallback: string): void {
 }
 
 export class BrowserSyncClient {
+  private readonly accountRequestTimeoutMs: number;
+
   constructor(
     private readonly storage: Storage,
     private readonly request: typeof fetch = (input, init) => fetch(input, init),
-  ) {}
+    options: BrowserSyncClientOptions = {},
+  ) {
+    this.accountRequestTimeoutMs = options.accountRequestTimeoutMs ?? ACCOUNT_REQUEST_TIMEOUT_MS;
+    if (!Number.isFinite(this.accountRequestTimeoutMs) || this.accountRequestTimeoutMs <= 0) {
+      throw new TypeError("Account request timeout must be a positive finite number");
+    }
+  }
+
+  private async accountRequest(input: RequestInfo | URL, init: RequestInit = {}, timeoutMessage: string): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = globalThis.setTimeout(() => controller.abort(), this.accountRequestTimeoutMs);
+    try {
+      return await this.request(input, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error(timeoutMessage);
+      throw error;
+    } finally {
+      globalThis.clearTimeout(timeout);
+    }
+  }
 
   async getAuthState(): Promise<AuthState> {
     try {
-      const response = await this.request("/api/auth/session", { credentials: "same-origin" });
+      const response = await this.accountRequest(
+        "/api/auth/session",
+        { credentials: "same-origin" },
+        "账号状态读取超时，请稍后重试",
+      );
       if (response.status === 401) return { status: "signed-out" };
       if (response.status === 503) return { status: "local-only" };
       if (!response.ok) return { status: "local-only" };
@@ -256,18 +286,33 @@ export class BrowserSyncClient {
   }
 
   async logout(): Promise<void> {
-    const response = await this.request("/api/auth/logout", { method: "POST", credentials: "same-origin" });
-    if (!response.ok) throw new Error("退出登录失败");
+    const fallback = "退出登录失败，请稍后重试";
+    const response = await this.accountRequest(
+      "/api/auth/logout",
+      { method: "POST", credentials: "same-origin" },
+      fallback,
+    );
+    throwForAccountResponse(response, fallback);
   }
 
   async logoutAll(): Promise<void> {
-    const response = await this.request("/api/auth/logout-all", { method: "POST", credentials: "same-origin" });
-    throwForAccountResponse(response, "退出所有设备失败，请稍后重试");
+    const fallback = "退出所有设备失败，请稍后重试";
+    const response = await this.accountRequest(
+      "/api/auth/logout-all",
+      { method: "POST", credentials: "same-origin" },
+      fallback,
+    );
+    throwForAccountResponse(response, fallback);
   }
 
   async getActiveDevices(): Promise<ActiveDevice[]> {
-    const response = await this.request("/api/auth/devices", { credentials: "same-origin" });
-    throwForAccountResponse(response, "无法读取登录设备，请稍后重试");
+    const fallback = "无法读取登录设备，请稍后重试";
+    const response = await this.accountRequest(
+      "/api/auth/devices",
+      { credentials: "same-origin" },
+      fallback,
+    );
+    throwForAccountResponse(response, fallback);
     const body = await readBoundedJson<{ devices?: ActiveDevice[]; error?: string }>(
       response, MAX_AUTH_RESPONSE_BYTES, "账号响应超过安全上限，请稍后重试",
     );
@@ -287,16 +332,23 @@ export class BrowserSyncClient {
   }
 
   async revokeDevice(deviceId: string): Promise<void> {
-    const response = await this.request(`/api/auth/devices/${encodeURIComponent(deviceId)}`, {
-      method: "DELETE",
-      credentials: "same-origin",
-    });
-    throwForAccountResponse(response, "设备退出失败，请稍后重试");
+    const fallback = "设备退出失败，请稍后重试";
+    const response = await this.accountRequest(
+      `/api/auth/devices/${encodeURIComponent(deviceId)}`,
+      { method: "DELETE", credentials: "same-origin" },
+      fallback,
+    );
+    throwForAccountResponse(response, fallback);
   }
 
   async deleteAccount(): Promise<void> {
-    const response = await this.request("/api/auth/account", { method: "DELETE", credentials: "same-origin" });
-    throwForAccountResponse(response, "账号数据删除失败，请稍后重试");
+    const fallback = "账号数据删除失败，请稍后重试";
+    const response = await this.accountRequest(
+      "/api/auth/account",
+      { method: "DELETE", credentials: "same-origin" },
+      fallback,
+    );
+    throwForAccountResponse(response, fallback);
   }
 
   clearMetadata(): void {
