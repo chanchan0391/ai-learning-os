@@ -127,3 +127,9 @@ fi
 ssh $ssh_options "$deploy_host" "mkdir -p '$remote_base/incoming'"
 scp -q $ssh_options "$temporary_archive" "$deploy_host:$remote_base/incoming/$revision.tar.gz.uploading"
 ssh $ssh_options "$deploy_host" "mv '$remote_base/incoming/$revision.tar.gz.uploading' '$remote_base/incoming/$revision.tar.gz' && '$remote_base/deploy-main.sh' '$revision' '$remote_base/incoming/$revision.tar.gz' '$archive_checksum'"
+# The process above may be an older installed runner whose static managed-runner
+# list does not know about a script introduced by this revision. It always
+# refreshes deploy-main.sh itself, so re-enter the installed runner once after a
+# successful activation. The same-revision path is read-only for application
+# data and verifies runner, control-plane, service, and release health.
+ssh $ssh_options "$deploy_host" "'$remote_base/deploy-main.sh' '$revision'"

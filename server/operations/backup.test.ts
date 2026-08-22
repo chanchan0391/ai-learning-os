@@ -1412,6 +1412,67 @@ exec /usr/bin/readlink "$@"
     expect(existsSync(join(root, "ai-learning-os-publish-main.lock"))).toBe(false);
   });
 
+  it("re-enters the refreshed deployment runner after activating a new revision", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-bootstrap-"));
+    temporaryDirectories.push(root);
+    const checkout = join(root, "checkout");
+    const fakeBin = join(root, "bin");
+    const sshLog = join(root, "ssh.log");
+    const revision = "b".repeat(40);
+    const previousRevision = "a".repeat(40);
+    mkdirSync(join(checkout, ".git"), { recursive: true, mode: 0o700 });
+    mkdirSync(fakeBin);
+    executable(join(fakeBin, "shlock"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$4\" > \"$2\"\n");
+    executable(join(fakeBin, "git"), `#!/bin/sh
+set -eu
+case "$1" in
+  remote) printf '%s\\n' 'https://github.com/chanchan0391/ai-learning-os.git' ;;
+  fetch) exit 0 ;;
+  rev-parse) printf '%s\\n' '${revision}' ;;
+  archive)
+    for argument in "$@"; do
+      case "$argument" in --output=*) archive_path=\${argument#--output=} ;; esac
+    done
+    printf 'archive' > "$archive_path"
+    ;;
+  *) exit 2 ;;
+esac
+`);
+    executable(join(fakeBin, "shasum"), `#!/bin/sh\nprintf '%s  %s\\n' '${"c".repeat(64)}' "$3"\n`);
+    executable(join(fakeBin, "scp"), "#!/bin/sh\nexit 0\n");
+    executable(join(fakeBin, "ssh"), `#!/bin/sh
+set -eu
+case "$*" in
+  *DEPLOYED_COMMIT*) printf '%s\\n' '${previousRevision}' ;;
+  *) printf '%s\\n' "$*" >> "$FAKE_SSH_LOG" ;;
+esac
+`);
+
+    const result = spawnSync("sh", [publishScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        TMPDIR: root,
+        AI_LEARNING_CHECKOUT_DIR: checkout,
+        AI_LEARNING_DEPLOY_HOST: "dev-host",
+        AI_LEARNING_REMOTE_BASE: "/srv/ai-learning-os",
+        AI_LEARNING_PUBLISH_LOG: join(root, "publisher.log"),
+        FAKE_SSH_LOG: sshLog,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const remoteCalls = readFileSync(sshLog, "utf8").trim().split("\n");
+    expect(remoteCalls).toHaveLength(3);
+    expect(remoteCalls[0]).toContain("mkdir -p '/srv/ai-learning-os/incoming'");
+    expect(remoteCalls[1]).toContain(
+      `'/srv/ai-learning-os/deploy-main.sh' '${revision}' '/srv/ai-learning-os/incoming/${revision}.tar.gz' '${"c".repeat(64)}'`,
+    );
+    expect(remoteCalls[2]).toContain(`'/srv/ai-learning-os/deploy-main.sh' '${revision}'`);
+    expect(remoteCalls[2]).not.toContain("tar.gz");
+  });
+
   it("stops before repository access when another publisher owns the lock", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-learning-publisher-locked-"));
     temporaryDirectories.push(root);
