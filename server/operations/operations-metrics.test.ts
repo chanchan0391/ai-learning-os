@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
@@ -102,5 +102,37 @@ describe("dev operations metrics export", () => {
     expect(result.stderr).toContain("Operations metrics lock timed out");
     expect(result.stdout).toBe("");
     expect(existsSync(join(fixture.stateDir, "ai-learning-os-api.service.observed-crash-count"))).toBe(false);
+  });
+
+  it("rejects a relative lock helper before emitting metrics", () => {
+    const fixture = makeFixture();
+
+    const result = runExporter({ ...fixture, flock: "./flock" });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Operations metrics lock helper path must be absolute");
+    expect(result.stdout).toBe("");
+  });
+
+  it("rejects a hard-linked lock helper before emitting metrics", () => {
+    const fixture = makeFixture();
+    linkSync(fixture.flock, join(dirname(fixture.flock), "shared-flock"));
+
+    const result = runExporter(fixture);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Operations metrics lock helper ownership is unsafe");
+    expect(result.stdout).toBe("");
+  });
+
+  it("rejects a lock helper in a shared writable directory before emitting metrics", () => {
+    const fixture = makeFixture();
+    chmodSync(dirname(fixture.flock), 0o770);
+
+    const result = runExporter(fixture);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Operations metrics lock helper directory ownership is unsafe");
+    expect(result.stdout).toBe("");
   });
 });

@@ -9,6 +9,11 @@ id_bin=/usr/bin/id
 cat_bin=/bin/cat
 flock_bin=${AI_LEARNING_FLOCK_BIN:-/usr/bin/flock}
 
+case "$flock_bin" in
+  /*) ;;
+  *) echo "Operations metrics lock helper path must be absolute" >&2; exit 2 ;;
+esac
+
 read_stat_value() {
   bsd_format=$1
   gnu_format=$2
@@ -69,8 +74,27 @@ if [ $((0$state_mode & 077)) -ne 0 ]; then
   exit 1
 fi
 
+flock_dir=${flock_bin%/*}
+if [ -L "$flock_dir" ] || [ ! -d "$flock_dir" ]; then
+  echo "Operations metrics lock helper directory is unsafe" >&2
+  exit 2
+fi
 if [ -L "$flock_bin" ] || [ ! -f "$flock_bin" ] || [ ! -x "$flock_bin" ]; then
   echo "Operations metrics lock helper is unavailable" >&2
+  exit 2
+fi
+current_uid=$($id_bin -u)
+flock_owner=$(read_stat_value '%u' '%u' "$flock_bin")
+flock_dir_owner=$(read_stat_value '%u' '%u' "$flock_dir")
+case "$flock_owner" in 0|"$current_uid") ;; *) echo "Operations metrics lock helper ownership is unsafe" >&2; exit 2 ;; esac
+case "$flock_dir_owner" in 0|"$current_uid") ;; *) echo "Operations metrics lock helper directory ownership is unsafe" >&2; exit 2 ;; esac
+if [ "$(read_stat_value '%l' '%h' "$flock_bin")" != 1 ] \
+  || [ $((0$(read_stat_value '%Lp' '%a' "$flock_bin") & 022)) -ne 0 ]; then
+  echo "Operations metrics lock helper ownership is unsafe" >&2
+  exit 2
+fi
+if [ $((0$(read_stat_value '%Lp' '%a' "$flock_dir") & 022)) -ne 0 ]; then
+  echo "Operations metrics lock helper directory ownership is unsafe" >&2
   exit 2
 fi
 lock_file="$state_dir/crash-evidence.lock"
