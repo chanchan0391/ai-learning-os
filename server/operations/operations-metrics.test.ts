@@ -53,7 +53,11 @@ describe("dev operations metrics export", () => {
       "# HELP ai_learning_os_service_unexpected_exits_total Unexpected process exits recorded for a managed service.\n"
       + "# TYPE ai_learning_os_service_unexpected_exits_total counter\n"
       + "ai_learning_os_service_unexpected_exits_total{service=\"api\"} 0\n"
-      + "ai_learning_os_service_unexpected_exits_total{service=\"web\"} 0\n",
+      + "ai_learning_os_service_unexpected_exits_total{service=\"web\"} 0\n"
+      + "# HELP ai_learning_os_service_unobserved_exits Unexpected process exits not yet observed by the application monitor.\n"
+      + "# TYPE ai_learning_os_service_unobserved_exits gauge\n"
+      + "ai_learning_os_service_unobserved_exits{service=\"api\"} 0\n"
+      + "ai_learning_os_service_unobserved_exits{service=\"web\"} 0\n",
     );
   });
 
@@ -71,9 +75,23 @@ describe("dev operations metrics export", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('{service="api"} 7');
     expect(result.stdout).toContain('{service="web"} 3');
+    expect(result.stdout).toContain('ai_learning_os_service_unobserved_exits{service="api"} 2');
+    expect(result.stdout).toContain('ai_learning_os_service_unobserved_exits{service="web"} 3');
     expect(readFileSync(apiCounter, "utf8")).toBe("7\n");
     expect(readFileSync(webCounter, "utf8")).toBe("3\n");
     expect(readFileSync(observed, "utf8")).toBe("5\n");
+  });
+
+  it("fails closed without partial metrics when an observation cursor exceeds recorded evidence", () => {
+    const fixture = makeFixture();
+    writeFileSync(join(fixture.stateDir, "ai-learning-os-api.service.crash-count"), "2\n", { mode: 0o600 });
+    writeFileSync(join(fixture.stateDir, "ai-learning-os-api.service.observed-crash-count"), "3\n", { mode: 0o600 });
+
+    const result = runExporter(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Observed crash counter exceeds recorded evidence");
+    expect(result.stdout).toBe("");
   });
 
   it("fails closed on redirected counters without disclosing their contents", () => {
