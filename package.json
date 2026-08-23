@@ -25,7 +25,7 @@
     "check": "npm run test && npm run build"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^6.0.5",
+    "@vitejs/plugin-react": "^6.1.0",
     "jose": "^6.2.8",
     "pg": "^8.23.0",
     "react": "^19.2.8",
