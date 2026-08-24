@@ -134,4 +134,4 @@ API 与 Web 服务的 `ExecStopPost` 只在 systemd 报告非成功结果时调�
 ~/services/ai-learning-os/operations-metrics.sh
 ```
 
-导出只含 `service="api"|"web"` 和累计整数，不推进观察游标。本地计数在该环境存续期内不自动删除或重置；集中采样应按 14 天基础设施日志窗口保留，并将环境重建后的值回退解释为 counter reset。
+导出只含 `service="api"|"web"`、累计整数和最近一次完整应用健康检查成功的 Unix 时间，不推进观察游标。成功时间在全部服务、timer、Web、API、revision 和数据库容量证明通过后才原子更新；首次成功前为 `0`，失败检查保留上一成功值，因此集中采样可用 `time() - ai_learning_os_application_monitor_last_success_unixtime` 检测本地监控停滞。本地计数在该环境存续期内不自动删除或重置；集中采样应按 14 天基础设施日志窗口保留，并将环境重建后的值回退解释为 counter reset。

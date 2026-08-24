@@ -14,6 +14,7 @@ mktemp_bin=/usr/bin/mktemp
 chmod_bin=/bin/chmod
 mv_bin=/bin/mv
 rm_bin=/bin/rm
+date_bin=/bin/date
 flock_bin=${AI_LEARNING_FLOCK_BIN:-/usr/bin/flock}
 web_url=${AI_LEARNING_WEB_HEALTH_URL:-http://127.0.0.1:8088/}
 api_url=${AI_LEARNING_API_HEALTH_URL:-http://127.0.0.1:8787/api/health}
@@ -99,7 +100,7 @@ resolve_trusted_executable() {
   printf '%s\n' "$resolved"
 }
 
-for trusted_system_tool in "$stat_bin" "$id_bin" "$cat_bin" "$mktemp_bin" "$chmod_bin" "$mv_bin" "$rm_bin" "$flock_bin"; do
+for trusted_system_tool in "$stat_bin" "$id_bin" "$cat_bin" "$mktemp_bin" "$chmod_bin" "$mv_bin" "$rm_bin" "$date_bin" "$flock_bin"; do
   if [ -L "$trusted_system_tool" ] || [ ! -f "$trusted_system_tool" ] || [ ! -x "$trusted_system_tool" ]; then
     echo "Required trusted system executable is unavailable" >&2
     exit 2
@@ -397,5 +398,22 @@ if ! printf '%s' "$health_body" | "$node_bin" -e '
   echo "API health response does not prove the active release is ready" >&2
   exit 1
 fi
+
+monitor_success=$($date_bin +%s)
+case "$monitor_success" in
+  ''|*[!0-9]*) echo "Application monitor success time is unavailable" >&2; exit 1 ;;
+esac
+if [ "$monitor_success" -gt 9007199254740991 ]; then
+  echo "Application monitor success time is invalid" >&2
+  exit 1
+fi
+success_file="$operations_state_directory/application-monitor-last-success-unixtime"
+success_stage=$($mktemp_bin "$operations_state_directory/.application-monitor-last-success-unixtime.next.XXXXXX")
+trap '$rm_bin -f "$success_stage"' EXIT HUP INT TERM
+printf '%s\n' "$monitor_success" > "$success_stage"
+$chmod_bin 600 "$success_stage"
+$mv_bin -f "$success_stage" "$success_file"
+success_stage=
+trap - EXIT HUP INT TERM
 
 printf 'Application healthy at revision %s\n' "$revision"

@@ -57,7 +57,10 @@ describe("dev operations metrics export", () => {
       + "# HELP ai_learning_os_service_unobserved_exits Unexpected process exits not yet observed by the application monitor.\n"
       + "# TYPE ai_learning_os_service_unobserved_exits gauge\n"
       + "ai_learning_os_service_unobserved_exits{service=\"api\"} 0\n"
-      + "ai_learning_os_service_unobserved_exits{service=\"web\"} 0\n",
+      + "ai_learning_os_service_unobserved_exits{service=\"web\"} 0\n"
+      + "# HELP ai_learning_os_application_monitor_last_success_unixtime Unix time of the last fully successful application health check.\n"
+      + "# TYPE ai_learning_os_application_monitor_last_success_unixtime gauge\n"
+      + "ai_learning_os_application_monitor_last_success_unixtime 0\n",
     );
   });
 
@@ -69,6 +72,7 @@ describe("dev operations metrics export", () => {
     writeFileSync(apiCounter, "7\n", { mode: 0o600 });
     writeFileSync(webCounter, "3\n", { mode: 0o600 });
     writeFileSync(observed, "5\n", { mode: 0o600 });
+    writeFileSync(join(fixture.stateDir, "application-monitor-last-success-unixtime"), "1787587200\n", { mode: 0o600 });
 
     const result = runExporter(fixture);
 
@@ -77,9 +81,23 @@ describe("dev operations metrics export", () => {
     expect(result.stdout).toContain('{service="web"} 3');
     expect(result.stdout).toContain('ai_learning_os_service_unobserved_exits{service="api"} 2');
     expect(result.stdout).toContain('ai_learning_os_service_unobserved_exits{service="web"} 3');
+    expect(result.stdout).toContain("ai_learning_os_application_monitor_last_success_unixtime 1787587200");
     expect(readFileSync(apiCounter, "utf8")).toBe("7\n");
     expect(readFileSync(webCounter, "utf8")).toBe("3\n");
     expect(readFileSync(observed, "utf8")).toBe("5\n");
+  });
+
+  it("fails closed on a redirected monitor success time without emitting partial metrics", () => {
+    const fixture = makeFixture();
+    const outside = join(fixture.baseDir, "outside-success-time");
+    writeFileSync(outside, "1787587200\n");
+    symlinkSync(outside, join(fixture.stateDir, "application-monitor-last-success-unixtime"));
+
+    const result = runExporter(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Application monitor last success time must be a regular file");
+    expect(result.stdout).toBe("");
   });
 
   it("fails closed without partial metrics when an observation cursor exceeds recorded evidence", () => {

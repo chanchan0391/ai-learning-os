@@ -109,6 +109,7 @@ api_count=$(read_counter "$state_dir/ai-learning-os-api.service.crash-count" "AP
 api_observed=$(read_counter "$state_dir/ai-learning-os-api.service.observed-crash-count" "API observed crash counter")
 web_count=$(read_counter "$state_dir/ai-learning-os-web.service.crash-count" "Web crash counter")
 web_observed=$(read_counter "$state_dir/ai-learning-os-web.service.observed-crash-count" "Web observed crash counter")
+monitor_last_success=$(read_counter "$state_dir/application-monitor-last-success-unixtime" "Application monitor last success time")
 
 if [ "$api_observed" -gt "$api_count" ] || [ "$web_observed" -gt "$web_count" ]; then
   echo "Observed crash counter exceeds recorded evidence" >&2
@@ -125,4 +126,7 @@ printf '%s\n' \
   '# HELP ai_learning_os_service_unobserved_exits Unexpected process exits not yet observed by the application monitor.' \
   '# TYPE ai_learning_os_service_unobserved_exits gauge' \
   "ai_learning_os_service_unobserved_exits{service=\"api\"} $api_unobserved" \
-  "ai_learning_os_service_unobserved_exits{service=\"web\"} $web_unobserved"
+  "ai_learning_os_service_unobserved_exits{service=\"web\"} $web_unobserved" \
+  '# HELP ai_learning_os_application_monitor_last_success_unixtime Unix time of the last fully successful application health check.' \
+  '# TYPE ai_learning_os_application_monitor_last_success_unixtime gauge' \
+  "ai_learning_os_application_monitor_last_success_unixtime $monitor_last_success"

@@ -104,6 +104,21 @@ describe("dev application health monitoring", { timeout: 15_000 }, () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain(`Application healthy at revision ${revision}`);
+    const successFile = join(fixture.operationsState, "application-monitor-last-success-unixtime");
+    expect(readFileSync(successFile, "utf8")).toMatch(/^\d+\n$/);
+    expect(statSync(successFile).mode & 0o777).toBe(0o600);
+  });
+
+  it("does not advance the last successful check when a health proof fails", () => {
+    const fixture = makeFixture();
+    const successFile = join(fixture.operationsState, "application-monitor-last-success-unixtime");
+    writeFileSync(successFile, "123\n", { mode: 0o600 });
+
+    const result = runHealth(fixture, { FAKE_HEALTH_BODY: JSON.stringify({ status: "failed" }) });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("API health response does not prove the active release is ready");
+    expect(readFileSync(successFile, "utf8")).toBe("123\n");
   });
 
   it("fails before network probes when a required operational timer is disabled", () => {
