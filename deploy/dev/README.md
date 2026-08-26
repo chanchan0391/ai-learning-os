@@ -135,3 +135,5 @@ API 与 Web 服务的 `ExecStopPost` 只在 systemd 报告非成功结果时调�
 ```
 
 导出只含固定服务标签、累计整数和成功 Unix 时间，不推进观察游标。应用成功时间在全部服务、timer、Web、API、revision 和数据库容量证明通过后才更新，其他三类时间只在各自完整检查通过后更新；首次成功前为 `0`，失败检查保留上一成功值。集中采样可用 `time() - <metric>` 分别检测应用、备份健康、恢复演练或容量监控停滞，并按 5 分钟、15 分钟、每周和 15 分钟调度设置独立阈值。本地计数在该环境存续期内不自动删除或重置；集中采样应按 14 天基础设施日志窗口保留，并将环境重建后的值回退解释为 counter reset。
+
+仓库已提供 [`prometheus-alert-rules.yml`](./prometheus-alert-rules.yml)，将上述信号收敛为指标缺失、新崩溃、未观察崩溃以及四类监控首次成功和新鲜度告警。阈值依据各 timer 调度并留有有界抖动空间；接入、通知责任、保留和安全验收要求见 [`../../docs/dev-operations-alerting.md`](../../docs/dev-operations-alerting.md)。规则进入任何集中采集环境前，须用该环境版本的 `promtool check rules` 验证。

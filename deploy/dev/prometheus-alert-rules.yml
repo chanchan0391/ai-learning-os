@@ -1,0 +1,112 @@
+groups:
+  - name: ai-learning-os-dev-operations
+    interval: 1m
+    rules:
+      - alert: AiLearningOsOperationsMetricsMissing
+        expr: absent(ai_learning_os_application_monitor_last_success_unixtime)
+        for: 15m
+        labels:
+          severity: critical
+          component: operations-collector
+        annotations:
+          summary: AI Learning OS operations metrics are missing
+          description: The collector has not received the dev operations metric family for 15 minutes.
+
+      - alert: AiLearningOsUnexpectedServiceExit
+        expr: increase(ai_learning_os_service_unexpected_exits_total[10m]) > 0
+        labels:
+          severity: critical
+          component: application-runtime
+        annotations:
+          summary: AI Learning OS service exited unexpectedly
+          description: A managed API or Web process recorded a new unexpected exit in the last 10 minutes.
+
+      - alert: AiLearningOsUnobservedServiceExit
+        expr: ai_learning_os_service_unobserved_exits > 0
+        for: 10m
+        labels:
+          severity: critical
+          component: application-monitor
+        annotations:
+          summary: AI Learning OS crash evidence remains unobserved
+          description: The application monitor has not consumed recorded crash evidence within 10 minutes.
+
+      - alert: AiLearningOsApplicationMonitorNeverSucceeded
+        expr: ai_learning_os_application_monitor_last_success_unixtime == 0
+        for: 15m
+        labels:
+          severity: critical
+          component: application-monitor
+        annotations:
+          summary: AI Learning OS application monitor has not succeeded
+          description: No complete application health proof was recorded during the 15-minute startup grace period.
+
+      - alert: AiLearningOsApplicationMonitorStale
+        expr: ai_learning_os_application_monitor_last_success_unixtime > 0 and (time() - ai_learning_os_application_monitor_last_success_unixtime) > 900
+        for: 5m
+        labels:
+          severity: critical
+          component: application-monitor
+        annotations:
+          summary: AI Learning OS application health proof is stale
+          description: The five-minute application monitor has not recorded success for more than 15 minutes.
+
+      - alert: AiLearningOsBackupMonitorNeverSucceeded
+        expr: ai_learning_os_backup_monitor_last_success_unixtime == 0
+        for: 45m
+        labels:
+          severity: critical
+          component: backup-monitor
+        annotations:
+          summary: AI Learning OS backup monitor has not succeeded
+          description: No complete backup health proof was recorded during the 45-minute startup grace period.
+
+      - alert: AiLearningOsBackupMonitorStale
+        expr: ai_learning_os_backup_monitor_last_success_unixtime > 0 and (time() - ai_learning_os_backup_monitor_last_success_unixtime) > 2700
+        for: 5m
+        labels:
+          severity: critical
+          component: backup-monitor
+        annotations:
+          summary: AI Learning OS backup health proof is stale
+          description: The 15-minute backup monitor has not recorded success for more than 45 minutes.
+
+      - alert: AiLearningOsHostCapacityMonitorNeverSucceeded
+        expr: ai_learning_os_host_capacity_monitor_last_success_unixtime == 0
+        for: 45m
+        labels:
+          severity: warning
+          component: host-capacity-monitor
+        annotations:
+          summary: AI Learning OS capacity monitor has not succeeded
+          description: No complete host capacity proof was recorded during the 45-minute startup grace period.
+
+      - alert: AiLearningOsHostCapacityMonitorStale
+        expr: ai_learning_os_host_capacity_monitor_last_success_unixtime > 0 and (time() - ai_learning_os_host_capacity_monitor_last_success_unixtime) > 2700
+        for: 5m
+        labels:
+          severity: warning
+          component: host-capacity-monitor
+        annotations:
+          summary: AI Learning OS host capacity proof is stale
+          description: The 15-minute capacity monitor has not recorded success for more than 45 minutes.
+
+      - alert: AiLearningOsRestoreDrillNeverSucceeded
+        expr: ai_learning_os_restore_drill_last_success_unixtime == 0
+        for: 9d
+        labels:
+          severity: critical
+          component: restore-drill
+        annotations:
+          summary: AI Learning OS restore drill has not succeeded
+          description: No isolated restore proof was recorded within one weekly schedule plus a two-day grace period.
+
+      - alert: AiLearningOsRestoreDrillStale
+        expr: ai_learning_os_restore_drill_last_success_unixtime > 0 and (time() - ai_learning_os_restore_drill_last_success_unixtime) > 777600
+        for: 1h
+        labels:
+          severity: critical
+          component: restore-drill
+        annotations:
+          summary: AI Learning OS restore proof is stale
+          description: The weekly isolated restore drill has not recorded success for more than nine days.
