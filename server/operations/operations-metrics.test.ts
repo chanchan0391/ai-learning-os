@@ -60,7 +60,16 @@ describe("dev operations metrics export", () => {
       + "ai_learning_os_service_unobserved_exits{service=\"web\"} 0\n"
       + "# HELP ai_learning_os_application_monitor_last_success_unixtime Unix time of the last fully successful application health check.\n"
       + "# TYPE ai_learning_os_application_monitor_last_success_unixtime gauge\n"
-      + "ai_learning_os_application_monitor_last_success_unixtime 0\n",
+      + "ai_learning_os_application_monitor_last_success_unixtime 0\n"
+      + "# HELP ai_learning_os_backup_monitor_last_success_unixtime Unix time of the last fully successful backup health check.\n"
+      + "# TYPE ai_learning_os_backup_monitor_last_success_unixtime gauge\n"
+      + "ai_learning_os_backup_monitor_last_success_unixtime 0\n"
+      + "# HELP ai_learning_os_restore_drill_last_success_unixtime Unix time of the last successful isolated restore drill.\n"
+      + "# TYPE ai_learning_os_restore_drill_last_success_unixtime gauge\n"
+      + "ai_learning_os_restore_drill_last_success_unixtime 0\n"
+      + "# HELP ai_learning_os_host_capacity_monitor_last_success_unixtime Unix time of the last successful host capacity check.\n"
+      + "# TYPE ai_learning_os_host_capacity_monitor_last_success_unixtime gauge\n"
+      + "ai_learning_os_host_capacity_monitor_last_success_unixtime 0\n",
     );
   });
 
@@ -73,6 +82,9 @@ describe("dev operations metrics export", () => {
     writeFileSync(webCounter, "3\n", { mode: 0o600 });
     writeFileSync(observed, "5\n", { mode: 0o600 });
     writeFileSync(join(fixture.stateDir, "application-monitor-last-success-unixtime"), "1787587200\n", { mode: 0o600 });
+    writeFileSync(join(fixture.stateDir, "backup-monitor-last-success-unixtime"), "1787587300\n", { mode: 0o600 });
+    writeFileSync(join(fixture.stateDir, "restore-drill-last-success-unixtime"), "1787587400\n", { mode: 0o600 });
+    writeFileSync(join(fixture.stateDir, "host-capacity-monitor-last-success-unixtime"), "1787587500\n", { mode: 0o600 });
 
     const result = runExporter(fixture);
 
@@ -82,6 +94,9 @@ describe("dev operations metrics export", () => {
     expect(result.stdout).toContain('ai_learning_os_service_unobserved_exits{service="api"} 2');
     expect(result.stdout).toContain('ai_learning_os_service_unobserved_exits{service="web"} 3');
     expect(result.stdout).toContain("ai_learning_os_application_monitor_last_success_unixtime 1787587200");
+    expect(result.stdout).toContain("ai_learning_os_backup_monitor_last_success_unixtime 1787587300");
+    expect(result.stdout).toContain("ai_learning_os_restore_drill_last_success_unixtime 1787587400");
+    expect(result.stdout).toContain("ai_learning_os_host_capacity_monitor_last_success_unixtime 1787587500");
     expect(readFileSync(apiCounter, "utf8")).toBe("7\n");
     expect(readFileSync(webCounter, "utf8")).toBe("3\n");
     expect(readFileSync(observed, "utf8")).toBe("5\n");
@@ -97,6 +112,19 @@ describe("dev operations metrics export", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Application monitor last success time must be a regular file");
+    expect(result.stdout).toBe("");
+  });
+
+  it("fails closed on a redirected auxiliary monitor success time without emitting partial metrics", () => {
+    const fixture = makeFixture();
+    const outside = join(fixture.baseDir, "outside-backup-success-time");
+    writeFileSync(outside, "1787587200\n");
+    symlinkSync(outside, join(fixture.stateDir, "backup-monitor-last-success-unixtime"));
+
+    const result = runExporter(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Backup monitor last success time must be a regular file");
     expect(result.stdout).toBe("");
   });
 

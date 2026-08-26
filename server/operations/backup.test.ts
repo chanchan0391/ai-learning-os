@@ -989,7 +989,7 @@ esac
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "application-health.sh", "crash-evidence.sh", "operations-metrics.sh", "host-capacity.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "application-health.sh", "crash-evidence.sh", "operations-metrics.sh", "record-monitor-success.sh", "host-capacity.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
     }
     writeFileSync(runnerTarget, "preserve me", { mode: 0o755 });
@@ -1026,7 +1026,7 @@ esac
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
     writeFileSync(runnerTarget, "preserve me", { mode: 0o755 });
     linkSync(runnerTarget, join(releaseOperations, "deploy-main.sh"));
-    for (const runner of ["backup.sh", "backup-health.sh", "application-health.sh", "crash-evidence.sh", "operations-metrics.sh", "host-capacity.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
+    for (const runner of ["backup.sh", "backup-health.sh", "application-health.sh", "crash-evidence.sh", "operations-metrics.sh", "record-monitor-success.sh", "host-capacity.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
     }
     executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
@@ -1099,6 +1099,7 @@ esac
     writeFileSync(join(releaseOperations, "application-health.sh"), "new application monitor\n");
     writeFileSync(join(releaseOperations, "crash-evidence.sh"), "new crash recorder\n");
     writeFileSync(join(releaseOperations, "operations-metrics.sh"), "new operations metrics exporter\n");
+    writeFileSync(join(releaseOperations, "record-monitor-success.sh"), "new monitor success recorder\n");
     writeFileSync(join(releaseOperations, "host-capacity.sh"), "new capacity monitor\n");
     writeFileSync(join(releaseOperations, "verify-backup.sh"), "new verify runner\n");
     writeFileSync(join(releaseOperations, "restore-drill.sh"), "new restore runner\n");
@@ -1110,6 +1111,7 @@ esac
     writeFileSync(join(baseDir, "application-health.sh"), "old application monitor\n");
     writeFileSync(join(baseDir, "crash-evidence.sh"), "old crash recorder\n");
     writeFileSync(join(baseDir, "operations-metrics.sh"), "old operations metrics exporter\n");
+    writeFileSync(join(baseDir, "record-monitor-success.sh"), "old monitor success recorder\n");
     writeFileSync(join(baseDir, "host-capacity.sh"), "old capacity monitor\n");
     writeFileSync(join(baseDir, "verify-backup.sh"), "old verify runner\n");
     writeFileSync(join(baseDir, "restore-drill.sh"), "old restore runner\n");
@@ -1138,6 +1140,7 @@ esac
     expect(readFileSync(join(baseDir, "application-health.sh"), "utf8")).toBe("new application monitor\n");
     expect(readFileSync(join(baseDir, "crash-evidence.sh"), "utf8")).toBe("new crash recorder\n");
     expect(readFileSync(join(baseDir, "operations-metrics.sh"), "utf8")).toBe("new operations metrics exporter\n");
+    expect(readFileSync(join(baseDir, "record-monitor-success.sh"), "utf8")).toBe("new monitor success recorder\n");
     expect(readFileSync(join(baseDir, "host-capacity.sh"), "utf8")).toBe("new capacity monitor\n");
     expect(readFileSync(join(baseDir, "verify-backup.sh"), "utf8")).toBe("new verify runner\n");
     expect(readFileSync(join(baseDir, "restore-drill.sh"), "utf8")).toBe("new restore runner\n");
@@ -1148,6 +1151,7 @@ esac
     expect(statSync(join(baseDir, "application-health.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "crash-evidence.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "operations-metrics.sh")).mode & 0o777).toBe(0o755);
+    expect(statSync(join(baseDir, "record-monitor-success.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "host-capacity.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "verify-backup.sh")).mode & 0o777).toBe(0o755);
     expect(statSync(join(baseDir, "restore-drill.sh")).mode & 0o777).toBe(0o755);
@@ -1167,7 +1171,7 @@ esac
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "application-health.sh", "crash-evidence.sh", "operations-metrics.sh", "host-capacity.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "application-health.sh", "crash-evidence.sh", "operations-metrics.sh", "record-monitor-success.sh", "host-capacity.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
       utimesSync(join(baseDir, runner), fixedTime, fixedTime);
@@ -1189,7 +1193,7 @@ esac
     });
 
     expect(result.status, result.stderr).toBe(0);
-    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "application-health.sh", "crash-evidence.sh", "operations-metrics.sh", "host-capacity.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "application-health.sh", "crash-evidence.sh", "operations-metrics.sh", "record-monitor-success.sh", "host-capacity.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       expect(statSync(join(baseDir, runner)).mtimeMs).toBe(fixedTime.getTime());
     }
   }, 15_000);
@@ -1207,7 +1211,7 @@ esac
     mkdirSync(releaseOperations, { recursive: true });
     mkdirSync(fakeBin);
     writeFileSync(join(current, "DEPLOYED_COMMIT"), `${revision}\n`);
-    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "application-health.sh", "crash-evidence.sh", "operations-metrics.sh", "host-capacity.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
+    for (const runner of ["deploy-main.sh", "backup.sh", "backup-health.sh", "application-health.sh", "crash-evidence.sh", "operations-metrics.sh", "record-monitor-success.sh", "host-capacity.sh", "verify-backup.sh", "restore-drill.sh", "resolve-docker-bin.sh"]) {
       writeFileSync(join(releaseOperations, runner), `${runner} current\n`);
       executable(join(baseDir, runner), `${runner} current\n`);
     }
@@ -1265,6 +1269,7 @@ esac
     writeFileSync(join(archiveRoot, "deploy/dev/application-health.sh"), "new application monitor\n");
     writeFileSync(join(archiveRoot, "deploy/dev/crash-evidence.sh"), "new crash recorder\n");
     writeFileSync(join(archiveRoot, "deploy/dev/operations-metrics.sh"), "new operations metrics exporter\n");
+    writeFileSync(join(archiveRoot, "deploy/dev/record-monitor-success.sh"), "new monitor success recorder\n");
     writeFileSync(join(archiveRoot, "deploy/dev/host-capacity.sh"), "new capacity monitor\n");
     writeFileSync(join(archiveRoot, "deploy/dev/verify-backup.sh"), "new verify runner\n");
     writeFileSync(join(archiveRoot, "deploy/dev/restore-drill.sh"), "new restore runner\n");

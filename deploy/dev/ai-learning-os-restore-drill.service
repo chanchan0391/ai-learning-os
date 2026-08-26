@@ -5,6 +5,8 @@ After=ai-learning-os-backup.service
 [Service]
 Type=oneshot
 ExecStart=%h/services/ai-learning-os/restore-drill.sh
+ExecStartPost=%h/services/ai-learning-os/record-monitor-success.sh restore-drill
+ReadWritePaths=%h/services/ai-learning-os/operations-state
 TimeoutStartSec=15m
 UMask=0077
 NoNewPrivileges=true

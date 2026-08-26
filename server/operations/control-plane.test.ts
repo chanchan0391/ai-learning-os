@@ -45,7 +45,7 @@ function backupTimerContents() {
 }
 
 function backupMonitorServiceContents() {
-  return `[Service]\nType=oneshot\nExecStart=%h/services/ai-learning-os/backup-health.sh\n${monitorSandboxDirectives.join("\n")}\n`;
+  return `[Service]\nType=oneshot\nExecStart=%h/services/ai-learning-os/backup-health.sh\nExecStartPost=%h/services/ai-learning-os/record-monitor-success.sh backup-monitor\nReadWritePaths=%h/services/ai-learning-os/operations-state\n${monitorSandboxDirectives.join("\n")}\n`;
 }
 
 function backupMonitorTimerContents() {
@@ -61,7 +61,7 @@ function applicationMonitorTimerContents() {
 }
 
 function restoreDrillServiceContents() {
-  return `[Unit]\nAfter=ai-learning-os-backup.service\n[Service]\nType=oneshot\nExecStart=%h/services/ai-learning-os/restore-drill.sh\nTimeoutStartSec=15m\n${monitorSandboxDirectives.join("\n")}\n`;
+  return `[Unit]\nAfter=ai-learning-os-backup.service\n[Service]\nType=oneshot\nExecStart=%h/services/ai-learning-os/restore-drill.sh\nExecStartPost=%h/services/ai-learning-os/record-monitor-success.sh restore-drill\nReadWritePaths=%h/services/ai-learning-os/operations-state\nTimeoutStartSec=15m\n${monitorSandboxDirectives.join("\n")}\n`;
 }
 
 function restoreDrillTimerContents() {
@@ -69,7 +69,7 @@ function restoreDrillTimerContents() {
 }
 
 function capacityMonitorServiceContents() {
-  return `[Service]\nType=oneshot\nExecStart=%h/services/ai-learning-os/host-capacity.sh\n${monitorSandboxDirectives.join("\n")}\n`;
+  return `[Service]\nType=oneshot\nExecStart=%h/services/ai-learning-os/host-capacity.sh\nExecStartPost=%h/services/ai-learning-os/record-monitor-success.sh host-capacity-monitor\nReadWritePaths=%h/services/ai-learning-os/operations-state\n${monitorSandboxDirectives.join("\n")}\n`;
 }
 
 function capacityMonitorTimerContents() {

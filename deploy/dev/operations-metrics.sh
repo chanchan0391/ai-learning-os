@@ -110,6 +110,9 @@ api_observed=$(read_counter "$state_dir/ai-learning-os-api.service.observed-cras
 web_count=$(read_counter "$state_dir/ai-learning-os-web.service.crash-count" "Web crash counter")
 web_observed=$(read_counter "$state_dir/ai-learning-os-web.service.observed-crash-count" "Web observed crash counter")
 monitor_last_success=$(read_counter "$state_dir/application-monitor-last-success-unixtime" "Application monitor last success time")
+backup_monitor_last_success=$(read_counter "$state_dir/backup-monitor-last-success-unixtime" "Backup monitor last success time")
+restore_drill_last_success=$(read_counter "$state_dir/restore-drill-last-success-unixtime" "Restore drill last success time")
+capacity_monitor_last_success=$(read_counter "$state_dir/host-capacity-monitor-last-success-unixtime" "Host capacity monitor last success time")
 
 if [ "$api_observed" -gt "$api_count" ] || [ "$web_observed" -gt "$web_count" ]; then
   echo "Observed crash counter exceeds recorded evidence" >&2
@@ -129,4 +132,13 @@ printf '%s\n' \
   "ai_learning_os_service_unobserved_exits{service=\"web\"} $web_unobserved" \
   '# HELP ai_learning_os_application_monitor_last_success_unixtime Unix time of the last fully successful application health check.' \
   '# TYPE ai_learning_os_application_monitor_last_success_unixtime gauge' \
-  "ai_learning_os_application_monitor_last_success_unixtime $monitor_last_success"
+  "ai_learning_os_application_monitor_last_success_unixtime $monitor_last_success" \
+  '# HELP ai_learning_os_backup_monitor_last_success_unixtime Unix time of the last fully successful backup health check.' \
+  '# TYPE ai_learning_os_backup_monitor_last_success_unixtime gauge' \
+  "ai_learning_os_backup_monitor_last_success_unixtime $backup_monitor_last_success" \
+  '# HELP ai_learning_os_restore_drill_last_success_unixtime Unix time of the last successful isolated restore drill.' \
+  '# TYPE ai_learning_os_restore_drill_last_success_unixtime gauge' \
+  "ai_learning_os_restore_drill_last_success_unixtime $restore_drill_last_success" \
+  '# HELP ai_learning_os_host_capacity_monitor_last_success_unixtime Unix time of the last successful host capacity check.' \
+  '# TYPE ai_learning_os_host_capacity_monitor_last_success_unixtime gauge' \
+  "ai_learning_os_host_capacity_monitor_last_success_unixtime $capacity_monitor_last_success"

@@ -178,7 +178,9 @@ validate_sources() {
   validate_owned_regular_file "$monitor_source" "Control-plane source $backup_monitor_service" || return 1
   for directive in \
     'Type=oneshot' \
-    'ExecStart=%h/services/ai-learning-os/backup-health.sh'; do
+    'ExecStart=%h/services/ai-learning-os/backup-health.sh' \
+    'ExecStartPost=%h/services/ai-learning-os/record-monitor-success.sh backup-monitor' \
+    'ReadWritePaths=%h/services/ai-learning-os/operations-state'; do
     if ! grep -Fxq "$directive" "$monitor_source"; then
       echo "$backup_monitor_service is missing required monitor directive: $directive" >&2
       return 1
@@ -260,6 +262,8 @@ validate_sources() {
   for directive in \
     'Type=oneshot' \
     'ExecStart=%h/services/ai-learning-os/restore-drill.sh' \
+    'ExecStartPost=%h/services/ai-learning-os/record-monitor-success.sh restore-drill' \
+    'ReadWritePaths=%h/services/ai-learning-os/operations-state' \
     'TimeoutStartSec=15m' \
     'After=ai-learning-os-backup.service'; do
     if ! grep -Fxq "$directive" "$restore_drill_source"; then
@@ -292,7 +296,9 @@ validate_sources() {
   validate_owned_regular_file "$capacity_monitor_source" "Control-plane source $capacity_monitor_service" || return 1
   for directive in \
     'Type=oneshot' \
-    'ExecStart=%h/services/ai-learning-os/host-capacity.sh'; do
+    'ExecStart=%h/services/ai-learning-os/host-capacity.sh' \
+    'ExecStartPost=%h/services/ai-learning-os/record-monitor-success.sh host-capacity-monitor' \
+    'ReadWritePaths=%h/services/ai-learning-os/operations-state'; do
     if ! grep -Fxq "$directive" "$capacity_monitor_source"; then
       echo "$capacity_monitor_service is missing required monitor directive: $directive" >&2
       return 1
