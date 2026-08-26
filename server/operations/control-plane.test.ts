@@ -203,7 +203,13 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
       "enable --now ai-learning-os-backup.timer ai-learning-os-backup-monitor.timer ai-learning-os-application-monitor.timer ai-learning-os-restore-drill.timer ai-learning-os-host-capacity-monitor.timer",
     );
     expect(readFileSync(fixture.env.FAKE_SYSTEMCTL_LOG!, "utf8")).toContain(
-      "reset-failed ai-learning-os-backup.service ai-learning-os-backup-monitor.service ai-learning-os-restore-drill.service",
+      "reset-failed ai-learning-os-api.service ai-learning-os-web.service ai-learning-os-backup.service ai-learning-os-backup-monitor.service ai-learning-os-restore-drill.service",
+    );
+    expect(readFileSync(fixture.env.FAKE_SYSTEMCTL_LOG!, "utf8")).toContain(
+      "start ai-learning-os-backup-monitor.service ai-learning-os-host-capacity-monitor.service",
+    );
+    expect(readFileSync(fixture.env.FAKE_SYSTEMCTL_LOG!, "utf8")).not.toContain(
+      "start ai-learning-os-backup-monitor.service ai-learning-os-application-monitor.service ai-learning-os-host-capacity-monitor.service",
     );
   });
 

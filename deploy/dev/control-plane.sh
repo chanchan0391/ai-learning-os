@@ -25,7 +25,6 @@ restore_drill_service="ai-learning-os-restore-drill.service"
 restore_drill_timer="ai-learning-os-restore-drill.timer"
 capacity_monitor_service="ai-learning-os-host-capacity-monitor.service"
 capacity_monitor_timer="ai-learning-os-host-capacity-monitor.timer"
-monitor_services="$backup_monitor_service $application_monitor_service $capacity_monitor_service"
 timer_units="$backup_timer $backup_monitor_timer $application_monitor_timer $restore_drill_timer $capacity_monitor_timer"
 units="$application_units $backup_service $backup_timer $backup_monitor_service $backup_monitor_timer $application_monitor_service $application_monitor_timer $restore_drill_service $restore_drill_timer $capacity_monitor_service $capacity_monitor_timer"
 lock_file="$base_dir/control-plane.lock"
@@ -456,10 +455,10 @@ apply_units() {
     install_unit_atomically "$source_dir/$unit" "$unit_dir/$unit" 0644 || return 1
   done
   $systemctl_bin --user daemon-reload \
+    && $systemctl_bin --user reset-failed $application_units "$backup_service" "$backup_monitor_service" "$restore_drill_service" \
     && $systemctl_bin --user restart $application_units \
-    && $systemctl_bin --user reset-failed "$backup_service" "$backup_monitor_service" "$restore_drill_service" \
     && $systemctl_bin --user enable --now $timer_units \
-    && $systemctl_bin --user start $monitor_services
+    && $systemctl_bin --user start "$backup_monitor_service" "$capacity_monitor_service"
 }
 
 cleanup_control_plane_artifacts() {
