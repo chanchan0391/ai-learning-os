@@ -32,8 +32,9 @@ const restartDirectives = [
   "StartLimitBurst=5",
 ];
 
-function unitContents(execStart: string) {
-  return `[Unit]\n${restartDirectives.slice(2).join("\n")}\n[Service]\nExecStart=${execStart} app.js\nExecStopPost=%h/services/ai-learning-os/crash-evidence.sh %n\n${restartDirectives.slice(0, 2).join("\n")}\nReadWritePaths=%h/services/ai-learning-os/operations-state\n${sandboxDirectives.join("\n")}\n`;
+function unitContents(execStart: string, plannedStopExit = false) {
+  const successExitStatus = plannedStopExit ? "SuccessExitStatus=143\n" : "";
+  return `[Unit]\n${restartDirectives.slice(2).join("\n")}\n[Service]\nExecStart=${execStart} app.js\nExecStopPost=%h/services/ai-learning-os/crash-evidence.sh %n\n${successExitStatus}${restartDirectives.slice(0, 2).join("\n")}\nReadWritePaths=%h/services/ai-learning-os/operations-state\n${sandboxDirectives.join("\n")}\n`;
 }
 
 function backupServiceContents() {
@@ -116,7 +117,7 @@ function makeFixture(): Fixture {
   symlinkSync(process.execPath, join(procRoot, pid, "exe"));
 
   for (const unit of ["ai-learning-os-api.service", "ai-learning-os-web.service"]) {
-    writeFileSync(join(sourceDir, unit), unitContents(process.execPath));
+    writeFileSync(join(sourceDir, unit), unitContents(process.execPath, unit === "ai-learning-os-web.service"));
     writeFileSync(join(unitDir, unit), `[Service]\nExecStart=/old/node app.js\n`);
   }
   writeFileSync(join(sourceDir, "ai-learning-os-backup.service"), backupServiceContents());
@@ -180,7 +181,7 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("selected runtime");
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-api.service"), "utf8")).toBe(unitContents(process.execPath));
-    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-web.service"), "utf8")).toBe(unitContents(process.execPath));
+    expect(readFileSync(join(fixture.unitDir, "ai-learning-os-web.service"), "utf8")).toBe(unitContents(process.execPath, true));
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-backup.service"), "utf8")).toBe(backupServiceContents());
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-backup.timer"), "utf8")).toBe(backupTimerContents());
     expect(readFileSync(join(fixture.unitDir, "ai-learning-os-backup-monitor.service"), "utf8")).toBe(backupMonitorServiceContents());
@@ -410,8 +411,9 @@ describe("dev control-plane management", { timeout: 15_000 }, () => {
     const fakeHome = dirname(process.execPath);
     const placeholderNode = `%h/${process.execPath.slice(fakeHome.length + 1)}`;
     for (const unit of ["ai-learning-os-api.service", "ai-learning-os-web.service"]) {
-      writeFileSync(join(fixture.sourceDir, unit), unitContents(placeholderNode));
-      writeFileSync(join(fixture.unitDir, unit), unitContents(placeholderNode));
+      const isWeb = unit === "ai-learning-os-web.service";
+      writeFileSync(join(fixture.sourceDir, unit), unitContents(placeholderNode, isWeb));
+      writeFileSync(join(fixture.unitDir, unit), unitContents(placeholderNode, isWeb));
     }
     writeFileSync(join(fixture.unitDir, "ai-learning-os-backup.service"), backupServiceContents());
     writeFileSync(join(fixture.unitDir, "ai-learning-os-backup.timer"), backupTimerContents());

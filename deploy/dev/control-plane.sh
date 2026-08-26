@@ -160,6 +160,12 @@ validate_sources() {
     done || return 1
   done
 
+  web_source="$source_dir/ai-learning-os-web.service"
+  if ! grep -Fxq 'SuccessExitStatus=143' "$web_source"; then
+    echo "ai-learning-os-web.service is missing its planned-stop exit classification" >&2
+    return 1
+  fi
+
   backup_source="$source_dir/$backup_service"
   validate_owned_regular_file "$backup_source" "Control-plane source $backup_service" || return 1
   for directive in \
