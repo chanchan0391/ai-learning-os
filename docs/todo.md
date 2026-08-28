@@ -393,8 +393,8 @@
 
 ### P64：GitHub 依赖图门禁恢复
 
-- [ ] 由仓库管理员在 Advanced Security 设置中启用 Dependency Graph，使依赖变更审查不再以“不支持此仓库”失败
-- [ ] 重新运行并通过 Dependabot PR #7 的 dependency-review job，再合并固定到不可变提交的 v5 Action 升级
+- [x] 由仓库管理员在 Advanced Security 设置中启用 Dependency Graph，使依赖变更审查不再以“不支持此仓库”失败
+- [x] 重新运行并通过 Dependabot PR #7 的 dependency-review job，再合并固定到不可变提交的 v5 Action 升级
 
 ### P65：模型用量缺失保护
 
