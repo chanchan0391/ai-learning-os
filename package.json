@@ -20,7 +20,7 @@
     "eval:agents": "tsx server/evals/run-agent-evaluation.ts",
     "acceptance:oidc-sync": "playwright test --config=playwright.acceptance.config.ts",
     "start": "concurrently -k -n web,api \"vite --host 127.0.0.1 --open\" \"tsx server/index.ts\"",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && tsx server/operations/check-frontend-build-budget.ts",
     "test": "vitest run",
     "check": "npm run test && npm run build"
   },
