@@ -28,6 +28,24 @@ jobs:
         run: npm audit --audit-level=high
       - name: Run tests and production build
         run: npm run check
+      - name: Create build provenance
+        run: |
+          mkdir build-provenance
+          npm sbom --omit=dev --sbom-format=cyclonedx > build-provenance/sbom.cdx.json
+          printf '%s\n' "$GITHUB_SHA" > build-provenance/SOURCE_COMMIT
+          find dist build-provenance -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 shasum -a 256 > build-provenance/SHA256SUMS
+          shasum -a 256 --check build-provenance/SHA256SUMS
+      - name: Retain build provenance
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ai-learning-os-build-${{ github.sha }}
+          path: |
+            dist/
+            build-provenance/
+          if-no-files-found: error
+          retention-days: 30
 
   dependency-review:
     if: github.event_name == 'pull_request'

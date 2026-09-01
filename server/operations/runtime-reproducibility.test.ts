@@ -37,4 +37,16 @@ describe("runtime reproducibility", () => {
     expect(baseImages[0]).toContain(`node:${read(".nvmrc").trim()}-alpine@sha256:`);
     expect(baseImages[1]).toContain(`node:${read(".nvmrc").trim()}-alpine@sha256:`);
   });
+
+  it("retains a runtime SBOM and checksummed build tied to the source commit", () => {
+    const workflow = read(".github/workflows/ci.yml");
+
+    expect(workflow).toContain("npm sbom --omit=dev --sbom-format=cyclonedx");
+    expect(workflow).toContain("printf '%s\\n' \"$GITHUB_SHA\" > build-provenance/SOURCE_COMMIT");
+    expect(workflow).toContain("shasum -a 256 --check build-provenance/SHA256SUMS");
+    expect(workflow).toMatch(/uses: actions\/upload-artifact@[0-9a-f]{40} # v6\.0\.0/);
+    expect(workflow).toContain("name: ai-learning-os-build-${{ github.sha }}");
+    expect(workflow).toContain("if-no-files-found: error");
+    expect(workflow).toContain("retention-days: 30");
+  });
 });
