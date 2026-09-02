@@ -49,4 +49,15 @@ describe("runtime reproducibility", () => {
     expect(workflow).toContain("if-no-files-found: error");
     expect(workflow).toContain("retention-days: 30");
   });
+
+  it("runs production browser performance acceptance in CI", () => {
+    const workflow = read(".github/workflows/ci.yml");
+    const packageManifest = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
+
+    expect(packageManifest.scripts?.["acceptance:performance"]).toBe(
+      "playwright test --config=playwright.performance.config.ts",
+    );
+    expect(workflow).toContain("npx playwright install --with-deps chromium");
+    expect(workflow).toContain("npm run acceptance:performance");
+  });
 });

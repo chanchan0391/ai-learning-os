@@ -1019,3 +1019,8 @@
 
 - [x] 为每次 CI 生成只包含运行时依赖的 CycloneDX SBOM，并把前端生产制品与来源提交标识一并保留 30 天
 - [x] 对制品、SBOM 和来源提交标识生成并立即复核 SHA-256 清单，上传失败或文件缺失时让 CI 安全失败
+
+### P190：浏览器首屏性能验收
+
+- [x] 使用真实 Chromium 加载生产预览，验证首屏可渲染并采集 DOMContentLoaded、load、FCP、LCP、CLS、最长任务与资源数量
+- [x] 在 CI 安装固定 Playwright 版本对应的 Chromium，并以 Core Web Vitals 级 LCP/CLS 预算和有界导航、绘制、长任务预算阻止明显回退
