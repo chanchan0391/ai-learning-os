@@ -32,6 +32,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run browser performance acceptance
         run: npm run acceptance:performance
+      - name: Run browser accessibility acceptance
+        run: npm run acceptance:accessibility
       - name: Create build provenance
         run: |
           mkdir build-provenance

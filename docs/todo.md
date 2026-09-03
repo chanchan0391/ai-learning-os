@@ -1024,3 +1024,8 @@
 
 - [x] 使用真实 Chromium 加载生产预览，验证首屏可渲染并采集 DOMContentLoaded、load、FCP、LCP、CLS、最长任务与资源数量
 - [x] 在 CI 安装固定 Playwright 版本对应的 Chromium，并以 Core Web Vitals 级 LCP/CLS 预算和有界导航、绘制、长任务预算阻止明显回退
+
+### P191：真实浏览器无障碍验收
+
+- [x] 使用真实 Chromium 对首次引导与已填充学习看板执行 axe-core 全规则扫描，覆盖 jsdom 无法验证的颜色对比
+- [x] 在 CI 中复用固定 Playwright Chromium 并阻止严重性不限的可检测无障碍回退，失败证据只包含规则与 DOM 定位而不包含学习正文
