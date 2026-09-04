@@ -3,6 +3,7 @@
 body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 12% 0%, #fff 0, transparent 30%), #f2f0e9; }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
+:where(button, a, input, textarea, [tabindex]):focus-visible { outline: 3px solid #b55232; outline-offset: 3px; }
 .launch-help { max-width: 620px; margin: 12vh auto; padding: 36px; color: #17201c; background: #fafaf7; border: 1px solid #d8ddd7; border-radius: 20px; box-shadow: 0 20px 60px rgba(30,50,40,.1); }
 .launch-help strong { display: block; margin-bottom: 12px; color: #153f32; font-family: Georgia, serif; font-size: 30px; }
 .launch-help p { color: #64706a; line-height: 1.7; }

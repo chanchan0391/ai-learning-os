@@ -211,6 +211,8 @@ export function App() {
   const [calendarMonth, setCalendarMonth] = useState(initialCalendarDate.slice(0, 7));
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(initialCalendarDate);
   const importInput = useRef<HTMLInputElement>(null);
+  const deleteDialog = useRef<HTMLElement>(null);
+  const deleteDialogTrigger = useRef<HTMLButtonElement>(null);
   const learningStateRef = useRef<LearningState | null>(initialLoad.state);
   const archivedGoalsRef = useRef<ArchivedLearningState[]>(learningStateRepository.loadArchived());
   const authStateRef = useRef<AuthState>({ status: "checking" });
@@ -371,6 +373,37 @@ export function App() {
     setCalendarMonth(latestDate.slice(0, 7));
     setSelectedCalendarDate(latestDate);
   }, [learningState?.plan.id, learningState?.currentDay]);
+
+  useEffect(() => {
+    if (!deleteConfirmationOpen) return;
+    const dialog = deleteDialog.current;
+    if (!dialog) return;
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ));
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDeleteConfirmationOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog.addEventListener("keydown", handleKeyDown);
+    return () => {
+      dialog.removeEventListener("keydown", handleKeyDown);
+      deleteDialogTrigger.current?.focus();
+    };
+  }, [deleteConfirmationOpen]);
 
   function saveState(next: LearningState | null, enqueueSync = true) {
     if (next) learningStateRepository.save(next);
@@ -1313,7 +1346,7 @@ export function App() {
 
   const importControl = (
     <>
-      <input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" aria-label="选择学习记录文件" onChange={selectImportFile} />
+      <input ref={importInput} className="visually-hidden" type="file" tabIndex={-1} accept="application/json,.json" aria-label="选择学习记录文件" onChange={selectImportFile} />
       <button className="text-button" disabled={activeGoals.length + archivedGoals.length === 0} onClick={exportAllLearningData}>导出全部数据</button>
       <button className="text-button" onClick={() => importInput.current?.click()}>导入学习记录</button>
     </>
@@ -1641,7 +1674,7 @@ export function App() {
           {isLearningPlanComplete(learningState) && (
             <button className="text-button" onClick={() => setArchiveConfirmationOpen(true)}>归档已完成目标</button>
           )}
-          <button className="text-button danger-text" onClick={() => setDeleteConfirmationOpen(true)}>删除本地数据</button>
+          <button ref={deleteDialogTrigger} className="text-button danger-text" onClick={() => setDeleteConfirmationOpen(true)}>删除本地数据</button>
         </div>
       </header>
       {storageNotice && <div className="storage-notice dashboard-notice" role={storageNoticeIsError ? "alert" : "status"}>{storageNotice}</div>}
@@ -1670,7 +1703,7 @@ export function App() {
         <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setDeleteConfirmationOpen(false);
         }}>
-          <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-dialog-title" aria-describedby="delete-dialog-description">
+          <section ref={deleteDialog} className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-dialog-title" aria-describedby="delete-dialog-description">
             <p className="eyebrow">不可撤销操作</p>
             <h2 id="delete-dialog-title">删除当前浏览器中的学习数据？</h2>
             <p id="delete-dialog-description">全部进行中计划、已归档目标、任务历史、教学回答、成果和评估都会被永久删除。需要保留副本时，请先逐个导出学习记录。</p>
