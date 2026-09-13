@@ -35,10 +35,10 @@
     "vite": "^8.2.2"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.6",
-    "@types/node": "^22.20.1",
+    "@playwright/test": "^1.63.0",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/node": "^22.20.2",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
@@ -46,7 +46,7 @@
     "concurrently": "^10.0.5",
     "jsdom": "^30.0.1",
     "pg-mem": "^3.0.14",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   }
